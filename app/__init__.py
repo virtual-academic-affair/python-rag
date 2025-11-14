@@ -1,0 +1,2 @@
+"""Email LangChain Application"""
+
