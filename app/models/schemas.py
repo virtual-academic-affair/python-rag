@@ -25,12 +25,22 @@ class ClassData(BaseModel):
     code: str = Field(..., description="Class code")
     day: str = Field(..., description="Day of the week (first 3 letters uppercase, e.g., MON, TUE, WED)")
     time: str = Field(..., description="Class start time in HH:MM:SS format")
+    action: Literal["join", "cancel"] = Field(..., description="Action: join (đăng ký) or cancel (hủy)")
 
 
 class CourseData(BaseModel):
     """Course information"""
     code: str = Field(..., description="Course code")
     name: str = Field(..., description="Course name")
+
+
+class CourseClassPair(BaseModel):
+    """Course with its associated classes"""
+    course: CourseData = Field(..., description="Course information")
+    classes: List[ClassData] = Field(..., alias="class", description="List of classes for this course")
+
+    class Config:
+        populate_by_name = True
 
 
 class RequestData(BaseModel):
@@ -45,23 +55,50 @@ class ClassRegistrationResponse(BaseModel):
     internal: InternalData
     types: List[Literal["class_registration"]] = Field(default=["class_registration"], description="Request types")
     student: StudentData
-    class_data: ClassData = Field(..., alias="class")
-    course: CourseData
+    courses: List[CourseClassPair] = Field(..., description="List of course-class pairs (each course with its classes)")
 
     class Config:
         populate_by_name = True
 
 
+class AdministrativeResponse(BaseModel):
+    """Response model for administrative requests"""
+    internal: InternalData
+    types: List[Literal["administrative"]] = Field(default=["administrative"], description="Request types")
+
+
+class GraduationResponse(BaseModel):
+    """Response model for graduation requests"""
+    internal: InternalData
+    types: List[Literal["graduation"]] = Field(default=["graduation"], description="Request types")
+
+
+class AcademicProgrammeResponse(BaseModel):
+    """Response model for academic programme requests"""
+    internal: InternalData
+    types: List[Literal["academic_programme"]] = Field(default=["academic_programme"], description="Request types")
+
+
+class DepartmentResponse(BaseModel):
+    """Response model for department requests"""
+    internal: InternalData
+    types: List[Literal["department"]] = Field(default=["department"], description="Request types")
+
+
 class OtherResponse(BaseModel):
     """Response model for other request types"""
     internal: InternalData
-    types: List[Literal["administrative_requests", "graduation", "academic_affairs", "other"]] = Field(
-        ..., 
-        description="Request types"
-    )
+    types: List[Literal["other"]] = Field(default=["other"], description="Request types")
 
 
-ResponseModel = Union[ClassRegistrationResponse, OtherResponse]
+ResponseModel = Union[
+    ClassRegistrationResponse,
+    AdministrativeResponse,
+    GraduationResponse,
+    AcademicProgrammeResponse,
+    DepartmentResponse,
+    OtherResponse
+]
 
 
 class ProcessResponse(BaseModel):

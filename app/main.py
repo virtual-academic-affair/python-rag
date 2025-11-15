@@ -30,12 +30,17 @@ async def lifespan(app: FastAPI):
     global classifier
     
     # Startup
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
+    from config.settings import settings
+    
+    if not settings.GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY environment variable is required")
     
-    classifier = LangChainClassifier(api_key)
-    logger.info("LangChain classifier initialized successfully")
+    classifier = LangChainClassifier(
+        api_key=settings.GOOGLE_API_KEY,
+        model=settings.LLM_MODEL,
+        temperature=settings.LLM_TEMPERATURE
+    )
+    logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
     
     yield
     
@@ -76,11 +81,13 @@ async def value_error_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
+    from config.settings import settings
+    
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.RELOAD,
+        log_level=settings.UVICORN_LOG_LEVEL
     )
 

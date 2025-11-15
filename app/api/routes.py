@@ -34,7 +34,7 @@ async def health_check():
     }
 
 
-@router.post("/process", response_model=ProcessResponse)
+@router.post("/process")
 async def process_request(
     request: RequestData,
     classifier_service: LangChainClassifier = Depends(get_classifier)
@@ -46,7 +46,7 @@ async def process_request(
         request: RequestData containing internal data, title, and content
         
     Returns:
-        ProcessResponse with classification results
+        Direct response object with classification results (ClassRegistrationResponse or OtherResponse)
     """
     try:
         logger.info(f"Processing request for mail_id: {request.internal.mail_id}")
@@ -61,13 +61,11 @@ async def process_request(
         
         logger.info(f"Successfully processed request with types: {result.types}")
         
-        return ProcessResponse(
-            success=True,
-            data=result
-        )
+        # Return the result directly (it will be serialized by FastAPI)
+        return result
         
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"

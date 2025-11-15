@@ -8,34 +8,59 @@ A FastAPI service that classifies student and class data using LangChain with Go
 email_langchain/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI application entry point
+│   ├── main.py                          # FastAPI application entry point
 │   ├── api/
 │   │   ├── __init__.py
-│   │   └── routes.py        # API route definitions
+│   │   └── routes.py                    # API route definitions
 │   ├── models/
 │   │   ├── __init__.py
-│   │   └── schemas.py       # Pydantic models and schemas
+│   │   └── schemas.py                   # Pydantic models and schemas
 │   └── services/
 │       ├── __init__.py
-│       └── langchain_service.py  # LangChain classification service
-├── tests/
-│   ├── __init__.py
-│   └── test_examples.py     # Test examples
+│       ├── langchain_service.py         # Main LangChain classifier and router
+│       ├── class_registration_service.py # Class registration service
+│       ├── administrative_service.py     # Administrative requests service
+│       ├── graduation_service.py         # Graduation requests service
+│       ├── academic_programme_service.py # Academic programme service
+│       ├── department_service.py         # Department requests service
+│       └── other_service.py             # Other requests service
 ├── config/
 │   ├── __init__.py
-│   └── settings.py          # Application settings
-├── requirements.txt
-└── README.md
+│   └── settings.py                      # Application settings
+├── .env.example                         # Environment variables template
+├── .gitignore                           # Git ignore rules
+├── requirements.txt                     # Python dependencies
+├── run.py                               # Application runner script
+├── README.md                            # Project documentation
+├── CURL_EXAMPLES.md                     # cURL examples for testing
+└── Email_Langchain_API.postman_collection.json  # Postman collection
 ```
 
 ## Features
 
-- Classifies student requests into predefined categories
-- Extracts structured data for class registration requests
-- Built with FastAPI, LangChain, and Google Gemini
-- Comprehensive logging and error handling
-- Pydantic models for request/response validation
-- Clean and organized folder structure
+- **Multi-category Classification**: Classifies student emails into 6 categories:
+  - `class_registration`: Đăng ký/hủy/đổi lớp học phần
+  - `administrative`: Đơn từ, thủ tục hành chính
+  - `graduation`: Tốt nghiệp
+  - `academic_programme`: Học vụ (vấn đề học tập, chương trình, môn học, giảng viên)
+  - `department`: Công việc từ các phòng khác (PDT, PKT)
+  - `other`: Khác
+
+- **Structured Data Extraction**: Extracts detailed information for class registration:
+  - Student information (code, name, class, year)
+  - Class information (code, day, time, action: join/cancel)
+  - Course information (code, name)
+  - Supports class change (returns 2 class objects: cancel old + join new)
+
+- **Service-based Architecture**: Each request type has its own dedicated service for better maintainability
+
+- **Built with FastAPI, LangChain, and Google Gemini**
+
+- **Comprehensive logging and error handling**
+
+- **Pydantic models for request/response validation**
+
+- **Clean and organized folder structure**
 
 ## Setup
 
@@ -45,14 +70,28 @@ pip install -r requirements.txt
 ```
 
 2. Set up environment variables:
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (you can copy from `.env.example`):
 ```bash
+# Required
 GOOGLE_API_KEY=your_google_api_key_here
+
+# Optional - LangChain/LLM Configuration
+LLM_MODEL=gemini-2.5-flash-lite
+LLM_TEMPERATURE=0.1
+
+# Optional - Server Configuration
+HOST=0.0.0.0
+PORT=8000
+RELOAD=true
+UVICORN_LOG_LEVEL=info
+
+# Optional - Application Logging
+LOG_LEVEL=INFO
 ```
 
 3. Run the service:
 ```bash
-python -m app.main
+python run.py
 ```
 
 Or:
@@ -86,31 +125,66 @@ Classifies email and extracts structured information from title and content.
 }
 ```
 
-**Response for class_registration:**
+**Response for class_registration (đăng ký):**
 ```json
 {
-    "success": true,
-    "data": {
-        "internal": {
-            "mail_id": "bhdn2ldnnx",
-            "id_record": "12n#a2@@"
-        },
-        "types": ["class_registration"],
-        "student": {
-            "code": "22127259",
-            "name": "Nguyen Van A",
-            "class": "22CLC01",
-            "year": 2022
-        },
-        "class": {
+    "internal": {
+        "mail_id": "bhdn2ldnnx",
+        "id_record": "12n#a2@@"
+    },
+    "types": ["class_registration"],
+    "student": {
+        "code": "22127259",
+        "name": "Nguyen Van A",
+        "class": "22CLC01",
+        "year": 2022
+    },
+    "class": [
+        {
             "code": "CNPM01",
             "day": "MON",
-            "time": "07:30:00"
-        },
-        "course": {
-            "code": "CSC101",
-            "name": "Nhập môn lập trình"
+            "time": "07:30:00",
+            "action": "join"
         }
+    ],
+    "course": {
+        "code": "CSC101",
+        "name": "Nhập môn lập trình"
+    }
+}
+```
+
+**Response for class_registration (đổi lớp):**
+```json
+{
+    "internal": {
+        "mail_id": "bhdn2ldnnx",
+        "id_record": "12n#a2@@"
+    },
+    "types": ["class_registration"],
+    "student": {
+        "code": "22127259",
+        "name": "Nguyen Van A",
+        "class": "22CLC01",
+        "year": 2022
+    },
+    "class": [
+        {
+            "code": "OLD01",
+            "day": "MON",
+            "time": "07:30:00",
+            "action": "cancel"
+        },
+        {
+            "code": "NEW01",
+            "day": "TUE",
+            "time": "09:00:00",
+            "action": "join"
+        }
+    ],
+    "course": {
+        "code": "CSC101",
+        "name": "Nhập môn lập trình"
     }
 }
 ```
@@ -118,14 +192,11 @@ Classifies email and extracts structured information from title and content.
 **Response for other types:**
 ```json
 {
-    "success": true,
-    "data": {
-        "internal": {
-            "mail_id": "bhdn2ldnnx",
-            "id_record": "12n#a2@@"
-        },
-        "types": ["administrative_requests"]
-    }
+    "internal": {
+        "mail_id": "bhdn2ldnnx",
+        "id_record": "12n#a2@@"
+    },
+    "types": ["administrative"]
 }
 ```
 
@@ -175,31 +246,69 @@ curl -X POST "http://localhost:8000/process" \
 
 ## Response Format
 
-The service returns data in the following structure:
+The service returns data directly (not wrapped in `success`/`data` structure):
 
 - **internal**: Contains `mail_id` and `id_record` (returned exactly as received)
 - **types**: Array of classification types (e.g., `["class_registration"]`)
-- **student**: Student information (code, name, class, year)
-- **class**: Class information (code, day, time)
-- **course**: Course information (code, name) - only for class_registration type
+- **student**: Student information (code, name, class, year) - only for class_registration
+- **class**: Array of class information objects, each with:
+  - `code`: Class code
+  - `day`: Day of week (MON, TUE, WED, etc.)
+  - `time`: Class start time (HH:MM:SS)
+  - `action`: "join" (đăng ký) or "cancel" (hủy)
+  - Only for class_registration, can contain 1-2 objects (2 for class change)
+- **course**: Course information (code, name) - only for class_registration
 
 ## Classification Categories
 
-- **class_registration**: Course enrollment, class registration
-- **administrative_requests**: Document requests, general admin matters
-- **graduation**: Thesis, final projects, graduation ceremonies
-- **academic_affairs**: Grades, transcripts, academic policies
-- **other**: Anything that doesn't fit above categories
+- **class_registration**: Đăng ký lớp học phần, hủy lớp, đổi lớp
+- **administrative**: Đơn từ, thủ tục hành chính, cấp bản sao, giấy tờ
+- **graduation**: Tốt nghiệp, bảo vệ khóa luận, đồ án
+- **academic_programme**: Học vụ, vấn đề học tập, chương trình học, môn học, giảng viên
+- **department**: Công việc từ các phòng khác (PDT, PKT gửi bảng điểm, đơn phúc khảo)
+- **other**: Khác
 
 ## Environment Variables
 
+### Required
 - `GOOGLE_API_KEY`: Your Google API key for Gemini access
+
+### Optional - LangChain/LLM Configuration
+- `LLM_MODEL`: Model name to use (default: `gemini-2.5-flash-lite`)
+  - Available models: `gemini-2.5-flash-lite`, `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-pro`, etc.
+- `LLM_TEMPERATURE`: Temperature for model responses, controls randomness (default: `0.1`)
+  - Range: 0.0 to 2.0
+  - Lower values = more deterministic, Higher values = more creative
+
+### Optional - Server Configuration
+- `HOST`: Server host (default: `0.0.0.0`)
+- `PORT`: Server port (default: `8000`)
+- `RELOAD`: Enable auto-reload on code changes (default: `true`)
+- `UVICORN_LOG_LEVEL`: Uvicorn log level - `critical`, `error`, `warning`, `info`, `debug`, `trace` (default: `info`)
+
+### Optional - Application Logging
+- `LOG_LEVEL`: Application log level - `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` (default: `INFO`)
 
 ## Testing
 
-Run the test examples:
+### Using Postman
+Import the Postman collection: `Email_Langchain_API.postman_collection.json`
+
+### Using cURL
+See `CURL_EXAMPLES.md` for detailed cURL examples.
+
+### Quick Test
 ```bash
-python tests/test_examples.py
+curl -X POST "http://localhost:8000/process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "internal": {
+      "mail_id": "test123",
+      "id_record": "record456"
+    },
+    "title": "Đăng ký lớp học phần",
+    "content": "Tôi muốn đăng ký lớp học phần..."
+  }'
 ```
 
 Make sure the server is running before executing tests.
