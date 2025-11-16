@@ -1,6 +1,6 @@
 """Pydantic models for request and response schemas"""
 from pydantic import BaseModel, Field
-from typing import Optional, Union, Literal, List
+from typing import Optional, Union, Literal, List, Dict, Any
 
 
 class InternalData(BaseModel):
@@ -107,3 +107,9 @@ class ProcessResponse(BaseModel):
     data: Optional[ResponseModel] = None
     error: Optional[str] = None
 
+
+class AuthVerifyResponse(BaseModel):
+    """Response model for auth verification"""
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
