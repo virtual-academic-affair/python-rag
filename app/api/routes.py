@@ -42,13 +42,13 @@ async def verify_token(
     auth_service = Depends(get_auth_service)
 ):
     """
-    Verify JWT token by decoding it and checking in Redis.
-    
+    Verify JWT token by decoding it and checking in RabbitMQ.
+
     Args:
         authorization: Bearer token from Authorization header (format: "Bearer <token>")
-        
+
     Returns:
-        AuthVerifyResponse with user data from Redis if token is valid
+        AuthVerifyResponse with user data from RabbitMQ if token is valid
     """
     try:
         # Extract token from Authorization header

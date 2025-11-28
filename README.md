@@ -64,16 +64,34 @@ email_langchain/
 
 ## Setup
 
+### Prerequisites
+- Python 3.8+
+- RabbitMQ server running (see [RABBITMQ_SETUP.md](RABBITMQ_SETUP.md))
+
+### Installation Steps
+
 1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Set up environment variables:
+2. Set up RabbitMQ:
+See [RABBITMQ_SETUP.md](RABBITMQ_SETUP.md) for detailed instructions on installing and configuring RabbitMQ.
+
+Quick start with Docker:
+```bash
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 \
+  -e RABBITMQ_DEFAULT_USER=guest \
+  -e RABBITMQ_DEFAULT_PASS=guest \
+  rabbitmq:3-management
+```
+
+3. Set up environment variables:
 Create a `.env` file in the root directory (you can copy from `.env.example`):
 ```bash
 # Required
 GOOGLE_API_KEY=your_google_api_key_here
+JWT_SECRET_KEY=your_jwt_secret_key_here
 
 # Optional - LangChain/LLM Configuration
 LLM_MODEL=gemini-2.5-flash-lite
@@ -87,9 +105,16 @@ UVICORN_LOG_LEVEL=info
 
 # Optional - Application Logging
 LOG_LEVEL=INFO
+
+# Optional - RabbitMQ Configuration
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+RABBITMQ_VHOST=/
 ```
 
-3. Run the service:
+4. Run the service:
 ```bash
 python run.py
 ```
@@ -328,3 +353,36 @@ The service logs:
 - Classification results
 - Extraction successes/failures
 - Error details for debugging
+
+## RabbitMQ Integration
+
+This service uses RabbitMQ for token management and message queuing.
+
+### Features
+- **Token Storage**: Tokens are stored in RabbitMQ with in-memory caching
+- **Message Queue**: Supports async message processing
+- **Persistence**: All messages are persisted in RabbitMQ
+- **Reliability**: Ensures message delivery with acknowledgment
+
+### Configuration
+See [RABBITMQ_SETUP.md](RABBITMQ_SETUP.md) for detailed setup instructions.
+
+### Testing RabbitMQ
+```bash
+python test_rabbitmq.py
+```
+
+### RabbitMQ Management Console
+Access at: `http://localhost:15672`
+- Username: guest
+- Password: guest
+
+## Migration from Redis
+
+If you're upgrading from a previous version that used Redis, see [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed migration instructions.
+
+## Documentation
+
+- [RABBITMQ_SETUP.md](RABBITMQ_SETUP.md) - RabbitMQ installation and configuration
+- [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration guide from Redis to RabbitMQ
+- [CHANGES_SUMMARY.md](CHANGES_SUMMARY.md) - Summary of all changes

@@ -28,23 +28,35 @@ classifier = None
 async def lifespan(app: FastAPI):
     """Initialize and cleanup resources."""
     global classifier
-    
+
     # Startup
     from config.settings import settings
-    
+    from app.services.rabbitmq_service import get_rabbitmq_service
+
     if not settings.GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY environment variable is required")
-    
+
+    # Initialize RabbitMQ service
+    try:
+        rabbitmq_service = get_rabbitmq_service()
+        logger.info("RabbitMQ service initialized")
+    except Exception as e:
+        logger.warning(f"RabbitMQ initialization warning: {str(e)}")
+
     classifier = LangChainClassifier(
         api_key=settings.GOOGLE_API_KEY,
         model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE
     )
     logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
-    
+
     yield
-    
+
     # Shutdown
+    try:
+        rabbitmq_service.close()
+    except:
+        pass
     logger.info("Application shutting down")
 
 
