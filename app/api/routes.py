@@ -3,8 +3,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional
 from app.models.schemas import RequestData, ProcessResponse, AuthVerifyResponse
-from app.services.langchain_service import LangChainClassifier
-from app.services.auth_service import get_auth_service
+from app.services.orchestration.langchain_service import LangChainClassifier
+from app.services.auth.auth_service import get_auth_service
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,14 @@
 """Main FastAPI application"""
 import os
 import logging
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 from app.api.routes import router
-from app.services.langchain_service import LangChainClassifier
+from app.services.orchestration.langchain_service import LangChainClassifier
 from app.models.schemas import ProcessResponse
 
 # Load environment variables
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
 
     # Startup
     from config.settings import settings
-    from app.services.rabbitmq_service import get_rabbitmq_service
+    from app.services.messaging.rabbitmq_service import get_rabbitmq_service
 
     if not settings.GOOGLE_API_KEY:
         raise ValueError("GOOGLE_API_KEY environment variable is required")
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
         logger.info("RabbitMQ service initialized")
     except Exception as e:
         logger.warning(f"RabbitMQ initialization warning: {str(e)}")
+        rabbitmq_service = None
 
     classifier = LangChainClassifier(
         api_key=settings.GOOGLE_API_KEY,
@@ -50,11 +52,23 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
 
+    consumer_thread = None
+    if rabbitmq_service is not None:
+        try:
+            from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
+
+            loop = asyncio.get_running_loop()
+            consumer_thread = start_email_ingest_consumer(classifier, loop=loop)
+            logger.info("Email ingest consumer started")
+        except Exception as e:
+            logger.warning(f"Email ingest consumer not started: {str(e)}")
+
     yield
 
     # Shutdown
     try:
-        rabbitmq_service.close()
+        if rabbitmq_service is not None:
+            rabbitmq_service.close()
     except:
         pass
     logger.info("Application shutting down")

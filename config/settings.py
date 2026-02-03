@@ -36,6 +36,7 @@ class Settings:
     RABBITMQ_USER: str = os.getenv("RABBITMQ_USER", "guest")
     RABBITMQ_PASSWORD: str = os.getenv("RABBITMQ_PASSWORD", "guest")
     RABBITMQ_VHOST: str = os.getenv("RABBITMQ_VHOST", "/")
+    RABBITMQ_INGEST_QUEUE: str = os.getenv("RABBITMQ_INGEST_QUEUE", "queue")
     
     @classmethod
     def validate(cls):

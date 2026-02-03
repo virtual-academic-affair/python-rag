@@ -7,17 +7,10 @@ logger = logging.getLogger(__name__)
 
 class AcademicProgrammeService:
     """Service for processing academic programme requests"""
-    
+
     async def process(
-        self,
-        internal_data: InternalData,
-        title: str,
-        content: str
+        self, internal_data: InternalData, title: str, content: str
     ) -> AcademicProgrammeResponse:
         """Process academic programme request and return response."""
         logger.info("Processing academic programme request")
-        return AcademicProgrammeResponse(
-            internal=internal_data,
-            types=["academic_programme"]
-        )
-
+        return AcademicProgrammeResponse(internal=internal_data, types=["academic_programme"])

@@ -23,8 +23,13 @@ class StudentData(BaseModel):
 class ClassData(BaseModel):
     """Class information"""
     code: str = Field(..., description="Class code")
-    day: str = Field(..., description="Day of the week (first 3 letters uppercase, e.g., MON, TUE, WED)")
-    time: str = Field(..., description="Class start time in HH:MM:SS format")
+    day: Optional[str] = Field(
+        default=None,
+        description="Day of the week (first 3 letters uppercase, e.g., MON, TUE, WED)",
+    )
+    time: Optional[str] = Field(
+        default=None, description="Class start time in HH:MM:SS format"
+    )
     action: Literal["join", "cancel"] = Field(..., description="Action: join (đăng ký) or cancel (hủy)")
 
 
@@ -56,6 +61,25 @@ class ClassRegistrationResponse(BaseModel):
     types: List[Literal["class_registration"]] = Field(default=["class_registration"], description="Request types")
     student: StudentData
     courses: List[CourseClassPair] = Field(..., description="List of course-class pairs (each course with its classes)")
+
+class IngestEmailData(BaseModel):
+    """Email data received from RabbitMQ ingest queue"""
+
+    email_id: int = Field(..., alias="emailId")
+    subject: str = Field(default="")
+    sender_email: str = Field(default="", alias="senderEmail")
+    sender_name: str = Field(default="", alias="senderName")
+    content: str = Field(default="")
+
+    class Config:
+        populate_by_name = True
+
+
+class IngestMessage(BaseModel):
+    """Wrapper message received from RabbitMQ (pattern optional)."""
+
+    pattern: Optional[str] = None
+    data: IngestEmailData
 
     class Config:
         populate_by_name = True
