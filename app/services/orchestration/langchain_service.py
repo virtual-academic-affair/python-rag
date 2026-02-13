@@ -1,6 +1,5 @@
 """LangChain service for classification and routing to specific services"""
 import logging
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -11,6 +10,7 @@ from app.services.domain.graduation_service import GraduationService
 from app.services.domain.academic_programme_service import AcademicProgrammeService
 from app.services.domain.department_service import DepartmentService
 from app.services.domain.other_service import OtherService
+from app.services.orchestration.llm_factory import build_classification_llm, chain_prompt, env_thinking_level
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +19,19 @@ class LangChainClassifier:
     """LangChain classifier for student email classification and data extraction"""
 
     def __init__(
-        self, api_key: str, model: str = "gemini-2.5-flash-lite", temperature: float = 0.1
+        self,
+        api_key: str,
+        model: str | None = None,
+        temperature: float = 0.1,
     ):
-        self.llm = ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=api_key,
+        from config.settings import settings
+
+        resolved_model = model or settings.LLM_MODEL
+        self.llm = build_classification_llm(
+            api_key=api_key,
+            model=resolved_model,
             temperature=temperature,
-            convert_system_message_to_human=True,
+            thinking_level=env_thinking_level(),
         )
 
         self.classification_prompt = ChatPromptTemplate.from_messages(
@@ -67,7 +73,7 @@ Return ONLY the category name, nothing else."""
 
     async def classify_request(self, title: str, content: str) -> str:
         try:
-            chain = self.classification_prompt | self.llm
+            chain = chain_prompt(self.classification_prompt, self.llm)
             result = await chain.ainvoke({"title": title, "content": content})
             classification = result.content.strip().lower()
 
