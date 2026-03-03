@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 from app.api.routes import router
-from app.services.orchestration.langchain_service import LangChainClassifier
+from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
 from app.models.schemas import ProcessResponse
 
 # Load environment variables
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"RabbitMQ initialization warning: {str(e)}")
         rabbitmq_service = None
 
-    classifier = LangChainClassifier(
+    classifier = EmailWorkflowOrchestrator(
         api_key=settings.GOOGLE_API_KEY,
         model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE

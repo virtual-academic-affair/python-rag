@@ -2,8 +2,14 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional
-from app.models.schemas import RequestData, ProcessResponse, AuthVerifyResponse
-from app.services.orchestration.langchain_service import LangChainClassifier
+from app.models.schemas import (
+    AuthVerifyResponse,
+    IngestMessage,
+    InternalData,
+    ProcessResponse,
+    RequestData,
+)
+from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
 from app.services.auth.auth_service import get_auth_service
 
 logger = logging.getLogger(__name__)
@@ -11,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_classifier() -> LangChainClassifier:
+def get_classifier() -> EmailWorkflowOrchestrator:
     """Dependency to get the classifier instance."""
     from app.main import classifier
     if classifier is None:
@@ -58,7 +64,7 @@ async def verify_token(
                 success=False,
                 error="Missing Authorization header"
             )
-        
+
         # Check if it's a Bearer token
         if not authorization.startswith("Bearer "):
             logger.warning("Invalid Authorization header format")
@@ -66,26 +72,26 @@ async def verify_token(
                 success=False,
                 error="Authorization header must start with 'Bearer '"
             )
-        
+
         # Extract token
         token = authorization.replace("Bearer ", "").strip()
-        
+
         if not token:
             logger.warning("Empty token")
             return AuthVerifyResponse(
                 success=False,
                 error="Token is empty"
             )
-        
+
         # Verify token
         user_data = auth_service.verify_token(token)
-        
+
         logger.info(f"Token verified successfully")
         return AuthVerifyResponse(
             success=True,
             data=user_data
         )
-        
+
     except HTTPException as e:
         # Re-raise HTTP exceptions (from auth_service)
         logger.warning(f"Token verification failed: {e.detail}")
@@ -104,37 +110,55 @@ async def verify_token(
 @router.post("/process")
 async def process_request(
     request: RequestData,
-    classifier_service: LangChainClassifier = Depends(get_classifier)
+    classifier_service: EmailWorkflowOrchestrator = Depends(get_classifier)
 ):
-    """
-    Process email title and content to classify and extract data.
-    
-    Args:
-        request: RequestData containing internal data, title, and content
-        
-    Returns:
-        Direct response object with classification results (ClassRegistrationResponse or OtherResponse)
-    """
+    """Process email title/content and return one of 4 supported labels."""
     try:
         logger.info(f"Processing request for mail_id: {request.internal.mail_id}")
         logger.debug(f"Title: {request.title[:100]}...")
-        
-        # Process the request using LangChain
+
         result = await classifier_service.process_request(
             internal_data=request.internal,
             title=request.title,
-            content=request.content
+            content=request.content,
         )
-        
-        logger.info(f"Successfully processed request with types: {result.types}")
-        
-        # Return the result directly (it will be serialized by FastAPI)
+
+        logger.info(f"Successfully processed request with label: {result.label}")
         return result
-        
+
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+@router.post("/api/test/classification/ingested", response_model=ProcessResponse)
+async def test_classification_from_ingested_payload(
+    payload: IngestMessage,
+    classifier_service: EmailWorkflowOrchestrator = Depends(get_classifier),
+):
+    """Test endpoint: process one RabbitMQ 'ingested' payload directly."""
+    try:
+        logger.info(
+            "Test classification from ingested payload, messageId=%s",
+            payload.data.email_id,
+        )
+
+        internal = InternalData(
+            mail_id=str(payload.data.email_id),
+            id_record=str(payload.data.email_id),
+        )
+
+        result = await classifier_service.process_request(
+            internal_data=internal,
+            title=payload.data.subject,
+            content=payload.data.content,
+        )
+
+        return ProcessResponse(success=True, data=result)
+    except Exception as e:
+        logger.error("Error in test ingested classification endpoint: %s", str(e), exc_info=True)
+        return ProcessResponse(success=False, error=f"Internal server error: {str(e)}")
 

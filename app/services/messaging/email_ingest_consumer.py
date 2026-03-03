@@ -92,9 +92,9 @@ def start_email_ingest_consumer(
             fut = asyncio.run_coroutine_threadsafe(_handle(), loop)
             result = fut.result(timeout=120)
             logger.info(
-                "Email ingested processed: emailId=%s types=%s",
+                "Email ingested processed: emailId=%s label=%s",
                 email_id,
-                getattr(result, "types", None),
+                getattr(result, "label", None),
             )
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:

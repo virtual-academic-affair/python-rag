@@ -1,35 +1,33 @@
-"""Models and schemas for the application"""
+"""Models and schemas for the application."""
 from .schemas import (
+    AuthVerifyResponse,
+    ClassRegistrationExtractResponse,
+    ClassRegistrationItem,
+    ClassRegistrationPayload,
+    IngestEmailData,
+    IngestMessage,
     InternalData,
-    StudentData,
-    ClassData,
-    CourseData,
-    CourseClassPair,
-    RequestData,
-    ClassRegistrationResponse,
-    AdministrativeResponse,
-    GraduationResponse,
-    AcademicProgrammeResponse,
-    DepartmentResponse,
-    OtherResponse,
+    LabelClassificationResponse,
     ProcessResponse,
-    ResponseModel
+    RegistrationAction,
+    RequestData,
+    ResponseModel,
+    SystemLabel,
 )
 
 __all__ = [
     "InternalData",
-    "StudentData",
-    "ClassData",
-    "CourseData",
-    "CourseClassPair",
+    "SystemLabel",
+    "RegistrationAction",
     "RequestData",
-    "ClassRegistrationResponse",
-    "AdministrativeResponse",
-    "GraduationResponse",
-    "AcademicProgrammeResponse",
-    "DepartmentResponse",
-    "OtherResponse",
+    "LabelClassificationResponse",
+    "ClassRegistrationItem",
+    "ClassRegistrationPayload",
+    "ClassRegistrationExtractResponse",
+    "IngestEmailData",
+    "IngestMessage",
     "ProcessResponse",
-    "ResponseModel"
+    "AuthVerifyResponse",
+    "ResponseModel",
 ]
 
