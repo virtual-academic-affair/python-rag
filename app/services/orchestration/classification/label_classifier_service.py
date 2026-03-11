@@ -4,7 +4,8 @@ import re
 
 from langchain.prompts import ChatPromptTemplate
 
-from app.models.schemas import SystemLabel
+from app.models.schemas import InternalData, SystemLabel
+from app.services.integrations.grpc_client import GrpcLabelClient
 from app.services.orchestration.llm_factory import (
     build_classification_llm,
     chain_prompt,
@@ -50,7 +51,14 @@ class LabelClassifierService:
         "ma hoc phan",
     ]
 
-    def __init__(self, api_key: str, model: str, temperature: float = 0.1):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        temperature: float = 0.1,
+        grpc_label_client: GrpcLabelClient | None = None,
+    ):
+        self.grpc_label_client = grpc_label_client
         self.llm = build_classification_llm(
             api_key=api_key,
             model=model,
@@ -132,7 +140,12 @@ Output constraints:
 
         return SystemLabel.Other.value
 
-    async def classify(self, title: str, content: str) -> SystemLabel:
+    async def classify(
+        self,
+        title: str,
+        content: str,
+        internal_data: InternalData | None = None,
+    ) -> SystemLabel:
         try:
             rendered_messages = self.classification_prompt.format_messages(
                 title=title,
@@ -164,6 +177,18 @@ Output constraints:
                 label = SystemLabel.ClassRegistration.value
 
             logger.info("[CLASSIFY RESULT] normalized_label=%s", label)
+
+            if self.grpc_label_client is not None and internal_data is not None:
+                grpc_ok = await self.grpc_label_client.update_label(
+                    internal_data=internal_data,
+                    label=SystemLabel(label),
+                    title=title,
+                )
+                if not grpc_ok:
+                    logger.warning(
+                        "gRPC label update failed/rejected in classifier for mail_id=%s",
+                        internal_data.mail_id,
+                    )
 
             if label == SystemLabel.Other.value and raw_label:
                 logger.warning("Could not normalize label from LLM: %r -> other", raw_label)

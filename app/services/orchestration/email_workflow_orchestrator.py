@@ -8,6 +8,7 @@ from app.models.schemas import (
     ResponseModel,
     SystemLabel,
 )
+from app.services.integrations.grpc_client import GrpcLabelClient
 from app.services.orchestration.classification.label_classifier_service import (
     LabelClassifierService,
 )
@@ -24,11 +25,18 @@ logger = logging.getLogger(__name__)
 class EmailWorkflowOrchestrator:
     """Coordinate label classification and workflow execution."""
 
-    def __init__(self, api_key: str, model: str, temperature: float = 0.1):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        temperature: float = 0.1,
+        grpc_label_client: GrpcLabelClient | None = None,
+    ):
         self.label_classifier = LabelClassifierService(
             api_key=api_key,
             model=model,
             temperature=temperature,
+            grpc_label_client=grpc_label_client,
         )
         self.class_registration_service = ClassRegistrationService(
             api_key=api_key,
@@ -42,7 +50,11 @@ class EmailWorkflowOrchestrator:
     async def process_request(
         self, internal_data: InternalData, title: str, content: str
     ) -> ResponseModel:
-        label = await self.label_classifier.classify(title=title, content=content)
+        label = await self.label_classifier.classify(
+            title=title,
+            content=content,
+            internal_data=internal_data,
+        )
         logger.info("Classification result: %s", label.value)
 
         message_id = int(internal_data.mail_id) if str(internal_data.mail_id).isdigit() else None

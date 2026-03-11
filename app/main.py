@@ -1,15 +1,19 @@
 """Main FastAPI application"""
-import os
 import logging
 import asyncio
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
-from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
 from app.models.schemas import ProcessResponse
+from app.services.integrations.grpc_client import (
+    GrpcLabelClient,
+    GrpcLabelClientConfig,
+)
+from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -26,7 +30,7 @@ classifier = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     """Initialize and cleanup resources."""
     global classifier
 
@@ -45,20 +49,30 @@ async def lifespan(app: FastAPI):
         logger.warning(f"RabbitMQ initialization warning: {str(e)}")
         rabbitmq_service = None
 
+    host, port = settings.GRPC_URL.split(":", 1)
+    grpc_client = GrpcLabelClient(
+        GrpcLabelClientConfig(
+            enabled=settings.GRPC_ENABLED,
+            host=host,
+            port=int(port),
+            timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
+        )
+    )
+
     classifier = EmailWorkflowOrchestrator(
         api_key=settings.GOOGLE_API_KEY,
         model=settings.LLM_MODEL,
-        temperature=settings.LLM_TEMPERATURE
+        temperature=settings.LLM_TEMPERATURE,
+        grpc_label_client=grpc_client,
     )
     logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
 
-    consumer_thread = None
     if rabbitmq_service is not None:
         try:
             from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
 
             loop = asyncio.get_running_loop()
-            consumer_thread = start_email_ingest_consumer(classifier, loop=loop)
+            start_email_ingest_consumer(classifier, loop=loop)
             logger.info("Email ingest consumer started")
         except Exception as e:
             logger.warning(f"Email ingest consumer not started: {str(e)}")
@@ -96,7 +110,7 @@ app.include_router(router)
 
 
 @app.exception_handler(ValueError)
-async def value_error_handler(request, exc):
+async def value_error_handler(_, exc):
     """Handle validation errors."""
     logger.error(f"Validation error: {str(exc)}")
     return ProcessResponse(

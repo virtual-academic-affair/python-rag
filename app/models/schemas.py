@@ -39,7 +39,7 @@ class LabelClassificationResponse(BaseModel):
 class IngestEmailData(BaseModel):
     """Email data received from RabbitMQ ingest queue."""
 
-    email_id: int = Field(..., alias="emailId")
+    message_id: int = Field(..., alias="messageId")
     subject: str = Field(default="")
     sender_email: str = Field(default="", alias="senderEmail")
     sender_name: str = Field(default="", alias="senderName")

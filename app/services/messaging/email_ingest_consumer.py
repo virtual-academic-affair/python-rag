@@ -19,10 +19,10 @@ def _safe_json_loads(body: bytes) -> Optional[Dict[str, Any]]:
 
 def _build_internal_data(payload: Dict[str, Any]) -> InternalData:
     data = payload.get("data") or {}
-    email_id = data.get("emailId")
+    message_id = data.get("messageId")
     return InternalData(
-        mail_id=str(email_id) if email_id is not None else "",
-        id_record=str(email_id) if email_id is not None else "",
+        mail_id=str(message_id) if message_id is not None else "",
+        id_record=str(message_id) if message_id is not None else "",
     )
 
 
@@ -60,15 +60,15 @@ def start_email_ingest_consumer(
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        email_id = msg.data.email_id
+        message_id = msg.data.message_id
         title = msg.data.subject
         content = msg.data.content
 
-        internal = InternalData(mail_id=str(email_id), id_record=str(email_id))
+        internal = InternalData(mail_id=str(message_id), id_record=str(message_id))
 
         logger.info(
-            "Parsed ingest message: emailId=%s senderEmail=%s senderName=%s subject=%r content_len=%s",
-            email_id,
+            "Parsed ingest message: messageId=%s senderEmail=%s senderName=%s subject=%r content_len=%s",
+            message_id,
             msg.data.sender_email,
             msg.data.sender_name,
             title,
@@ -92,8 +92,8 @@ def start_email_ingest_consumer(
             fut = asyncio.run_coroutine_threadsafe(_handle(), loop)
             result = fut.result(timeout=120)
             logger.info(
-                "Email ingested processed: emailId=%s label=%s",
-                email_id,
+                "Email ingested processed: messageId=%s label=%s",
+                message_id,
                 getattr(result, "label", None),
             )
             ch.basic_ack(delivery_tag=method.delivery_tag)

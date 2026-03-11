@@ -37,7 +37,16 @@ class Settings:
     RABBITMQ_PASSWORD: str = os.getenv("RABBITMQ_PASSWORD", "guest")
     RABBITMQ_VHOST: str = os.getenv("RABBITMQ_VHOST", "/")
     RABBITMQ_INGEST_QUEUE: str = os.getenv("RABBITMQ_INGEST_QUEUE", "queue")
-    
+
+    # gRPC settings (shared for multiple workflows)
+    GRPC_ENABLED: bool = os.getenv("GRPC_ENABLED", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    GRPC_URL: str = os.getenv("GRPC_URL", "103.20.96.59:5000")
+    GRPC_TIMEOUT_SECONDS: float = float(os.getenv("GRPC_TIMEOUT_SECONDS", "3"))
+
     @classmethod
     def validate(cls):
         """Validate required settings"""
