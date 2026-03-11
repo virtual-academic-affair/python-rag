@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from importlib import import_module
 
 import grpc
+from google.protobuf.json_format import MessageToDict
 
 from app.models.schemas import InternalData, SystemLabel
 
@@ -51,6 +52,17 @@ class GrpcClient:
                 "gRPC stubs are not available yet. Run proto generation first. Details: %s",
                 exc,
             )
+        try:
+            pb2 = import_module("app.proto.class_registration.class_registration_pb2")
+            pb2_grpc = import_module("app.proto.class_registration.class_registration_pb2_grpc")
+            self._requests["class_registration_create"] = pb2.CreateRegistrationRequest
+            self._stubs["class_registration"] = pb2_grpc.ClassRegistrationServiceStub
+        except Exception as exc:
+            logger.warning(
+                "Class registration gRPC stubs are not available yet. Run proto generation first. Details: %s",
+                exc,
+            )
+
 
     @property
     def is_ready(self) -> bool:
@@ -103,7 +115,10 @@ class GrpcClient:
             messageId=message_id,
             systemLabels=[label.value],
         )
-        logger.info("gRPC update_labels request: %s", request)
+        logger.info(
+            "gRPC update_labels request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
         response = await self._call(
             service_key="message",
             rpc_name="UpdateLabels",
@@ -112,12 +127,73 @@ class GrpcClient:
         if response is None:
             return False
 
-        logger.info("gRPC update_labels response: %s", response)
+        logger.info(
+            "gRPC update_labels response: %s",
+            MessageToDict(response, preserving_proto_field_name=True),
+        )
         if not response.success:
             logger.warning("gRPC update_labels rejected: %s", response.message)
             return False
 
         logger.info("gRPC update_labels success: %s", response.message)
+        return True
+
+    async def create_class_registration(
+        self,
+        *,
+        payload,
+    ) -> bool:
+        if not self._config.enabled:
+            return True
+
+        request_cls = self._requests.get("class_registration_create")
+        if request_cls is None:
+            logger.warning("Skip gRPC class registration because request class is not ready")
+            return False
+
+        items = []
+        for item in payload.items:
+            items.append(
+                {
+                    "action": item.action.value,
+                    "subjectName": item.subject_name,
+                    "subjectCode": item.subject_code,
+                    "className": item.class_name,
+                    "slotInfo": item.slot_info,
+                    "isInCurriculum": item.is_in_curriculum,
+                }
+            )
+
+        request = request_cls(
+            messageId=payload.message_id or 0,
+            status=getattr(payload, "status", "") or "",
+            studentCode=payload.student_code,
+            academicYear=payload.academic_year or 0,
+            studentName=payload.student_name,
+            note=payload.note or "",
+            items=items,
+        )
+        logger.info(
+            "gRPC class registration request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
+        response = await self._call(
+            service_key="class_registration",
+            rpc_name="Create",
+            request=request,
+        )
+        if response is None:
+            return False
+
+        logger.info(
+            "gRPC class registration response: %s",
+            MessageToDict(response, preserving_proto_field_name=True),
+        )
+        if hasattr(response, "success") and not response.success:
+            logger.warning("gRPC class registration rejected: %s", getattr(response, "message", ""))
+            return False
+
+        logger.info("gRPC class registration success: %s", getattr(response, "message", ""))
         return True
 
 

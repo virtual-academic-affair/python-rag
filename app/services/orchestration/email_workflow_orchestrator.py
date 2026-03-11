@@ -32,6 +32,7 @@ class EmailWorkflowOrchestrator:
         temperature: float = 0.1,
         grpc_label_client: GrpcLabelClient | None = None,
     ):
+        self.grpc_label_client = grpc_label_client
         self.label_classifier = LabelClassifierService(
             api_key=api_key,
             model=model,
@@ -69,6 +70,15 @@ class EmailWorkflowOrchestrator:
                 "classRegistration extracted payload: %s",
                 extracted.model_dump_json(by_alias=True, exclude_none=False),
             )
+            if self.grpc_label_client is not None:
+                grpc_ok = await self.grpc_label_client.create_class_registration(
+                    payload=extracted,
+                )
+                if not grpc_ok:
+                    logger.warning(
+                        "gRPC class registration create failed/rejected for message_id=%s",
+                        extracted.message_id,
+                    )
             return ClassRegistrationExtractResponse(
                 internal=internal_data,
                 label=SystemLabel.ClassRegistration,

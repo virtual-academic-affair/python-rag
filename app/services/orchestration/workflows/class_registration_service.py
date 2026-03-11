@@ -34,17 +34,18 @@ class ClassRegistrationService:
 Your job is to produce ONE strict JSON object following this exact schema:
 
 {{
-  "studentCode": string,
-  "studentName": string,
-  "academicYear": number|null,
-  "note": string,
   "messageId": number|null,
+  "status": string,
+  "studentCode": string,
+  "academicYear": number|null,
+  "studentName": string,
+  "note": string,
   "items": [
     {{
       "action": "register"|"cancel"|"requestOpen",
       "subjectName": string,
-      "subjectCode": string,
       "className": string,
+      "subjectCode": string,
       "slotInfo": string,
       "isInCurriculum": boolean
     }}
@@ -59,7 +60,8 @@ Extraction policy:
    - boolean -> false
    - list -> []
 3) messageId must be copied from provided input messageId if available.
-4) items can contain multiple operations when email mentions many subjects/classes.
+4) status should be empty string unless email explicitly provides a status keyword.
+5) items can contain multiple operations when email mentions many subjects/classes.
 
 Action mapping rules (critical):
 - action="register": add/register/enroll học phần, thêm môn, đăng ký lớp.

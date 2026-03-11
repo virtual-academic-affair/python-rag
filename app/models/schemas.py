@@ -85,11 +85,12 @@ class ClassRegistrationItem(BaseModel):
 class ClassRegistrationPayload(BaseModel):
     """Structured payload for classRegistration emails."""
 
-    student_code: str = Field(default="", alias="studentCode")
-    student_name: str = Field(default="", alias="studentName")
-    academic_year: Optional[int] = Field(default=None, alias="academicYear")
-    note: str = Field(default="")
     message_id: Optional[int] = Field(default=None, alias="messageId")
+    status: str = Field(default="")
+    student_code: str = Field(default="", alias="studentCode")
+    academic_year: Optional[int] = Field(default=None, alias="academicYear")
+    student_name: str = Field(default="", alias="studentName")
+    note: str = Field(default="")
     items: List[ClassRegistrationItem] = Field(default_factory=list)
 
     class Config:

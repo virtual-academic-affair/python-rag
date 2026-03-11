@@ -11,6 +11,16 @@ from config.settings import settings
 PROTO_STUBS = (
     Path(__file__).resolve().parent / "app" / "proto" / "label" / "label_pb2.py",
     Path(__file__).resolve().parent / "app" / "proto" / "label" / "label_pb2_grpc.py",
+    Path(__file__).resolve().parent
+    / "app"
+    / "proto"
+    / "class_registration"
+    / "class_registration_pb2.py",
+    Path(__file__).resolve().parent
+    / "app"
+    / "proto"
+    / "class_registration"
+    / "class_registration_pb2_grpc.py",
 )
 
 
