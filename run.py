@@ -1,6 +1,6 @@
 """Entry point script to run the application"""
 import uvicorn
-from config.settings import settings
+from app.core.config import settings
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -4,6 +4,8 @@ import logging
 from app.models.schemas import (
     ClassRegistrationExtractResponse,
     InternalData,
+    InquiryResponse,
+    InquiryPayload,
     LabelClassificationResponse,
     ResponseModel,
     SystemLabel,
@@ -40,7 +42,12 @@ class EmailWorkflowOrchestrator:
         self.other_service = OtherService()
 
     async def process_request(
-        self, internal_data: InternalData, title: str, content: str
+        self,
+        internal_data: InternalData,
+        title: str,
+        content: str,
+        sender_email: str = "",
+        sender_name: str = "",
     ) -> ResponseModel:
         label = await self.label_classifier.classify(title=title, content=content)
         logger.info("Classification result: %s", label.value)
@@ -66,7 +73,23 @@ class EmailWorkflowOrchestrator:
         if label == SystemLabel.Task:
             await self.task_service.process(title=title, content=content, message_id=message_id)
         elif label == SystemLabel.Inquiry:
-            await self.inquiry_service.process(title=title, content=content, message_id=message_id)
+            draft_result = await self.inquiry_service.process(
+                title=title,
+                content=content,
+                message_id=message_id,
+                sender_email=sender_email,
+                sender_name=sender_name,
+            )
+            return InquiryResponse(
+                internal=internal_data,
+                label=SystemLabel.Inquiry,
+                answer=InquiryPayload(
+                    draft_subject=draft_result["draft_subject"],
+                    draft_body=draft_result["draft_body"],
+                    sources=draft_result["sources"],
+                    message_id=message_id,
+                ),
+            )
         else:
             await self.other_service.process(title=title, content=content, message_id=message_id)
 

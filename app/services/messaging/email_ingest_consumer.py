@@ -17,15 +17,6 @@ def _safe_json_loads(body: bytes) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _build_internal_data(payload: Dict[str, Any]) -> InternalData:
-    data = payload.get("data") or {}
-    email_id = data.get("emailId")
-    return InternalData(
-        mail_id=str(email_id) if email_id is not None else "",
-        id_record=str(email_id) if email_id is not None else "",
-    )
-
-
 def start_email_ingest_consumer(
     classifier,
     *,
@@ -60,9 +51,9 @@ def start_email_ingest_consumer(
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        email_id = msg.data.email_id
-        title = msg.data.subject
-        content = msg.data.content
+        email_id = msg.data.id
+        title = msg.data.subject or ""
+        content = msg.data.content or ""
 
         internal = InternalData(mail_id=str(email_id), id_record=str(email_id))
 
@@ -86,6 +77,8 @@ def start_email_ingest_consumer(
                 internal_data=internal,
                 title=title,
                 content=content,
+                sender_email=msg.data.sender_email,
+                sender_name=msg.data.sender_name,
             )
 
         try:
@@ -102,10 +95,24 @@ def start_email_ingest_consumer(
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
     def _run():
-        try:
-            rabbitmq_service.start_email_ingest_consumer(on_message_callback=on_message)
-        except Exception as e:
-            logger.error("Email ingest consumer crashed: %s", str(e), exc_info=True)
+        max_retries = 10
+        retry_delay = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info("Email ingest consumer starting (attempt %d/%d)", attempt, max_retries)
+                rabbitmq_service.start_email_ingest_consumer(on_message_callback=on_message)
+            except Exception as e:
+                logger.error(
+                    "Email ingest consumer crashed (attempt %d/%d): %s",
+                    attempt, max_retries, str(e), exc_info=True,
+                )
+                if attempt < max_retries:
+                    import time as _time
+                    sleep_sec = min(retry_delay * attempt, 60)
+                    logger.info("Reconnecting in %ds...", sleep_sec)
+                    _time.sleep(sleep_sec)
+                else:
+                    logger.error("Email ingest consumer exhausted all retries, giving up.")
 
     t = threading.Thread(target=_run, name="email-ingest-consumer", daemon=True)
     t.start()

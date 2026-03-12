@@ -1,18 +1,18 @@
-"""Main FastAPI application"""
-import os
+"""
+AI Service - Main Application Entry Point
+Unified microservice combining email classification and RAG-based document search.
+"""
+
 import logging
 import asyncio
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import time
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api.routes import router
-from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
-from app.models.schemas import ProcessResponse
-
-# Load environment variables
-load_dotenv()
+from app.core.config import settings
+from app.models.schemas import HealthCheckResponse, ErrorResponse
 
 # Configure logging
 logging.basicConfig(
@@ -21,99 +21,251 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global classifier instance
-classifier = None
+# Global instances (initialized in lifespan)
+email_orchestrator = None
+rabbitmq_service = None
 
+
+# ====================================
+# LIFESPAN EVENTS
+# ====================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize and cleanup resources."""
-    global classifier
-
+    """
+    Initialize and cleanup resources.
+    - MongoDB connection
+    - MinIO storage client
+    - RabbitMQ service + email consumer
+    - Email workflow orchestrator
+    """
+    global email_orchestrator, rabbitmq_service
+    
     # Startup
-    from config.settings import settings
-    from app.services.messaging.rabbitmq_service import get_rabbitmq_service
-
-    if not settings.GOOGLE_API_KEY:
-        raise ValueError("GOOGLE_API_KEY environment variable is required")
-
-    # Initialize RabbitMQ service
+    print("=" * 80)
+    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION}")
+    print("=" * 80)
+    print(f"📡 Server: {settings.HOST}:{settings.PORT}")
+    print(f"🤖 LLM Model: {settings.LLM_MODEL}")
+    print(f"🤖 Gemini Model: {settings.GEMINI_MODEL}")
+    print(f"💾 Database: {settings.MONGODB_DB_NAME}")
+    print(f"📦 Storage: MinIO ({settings.MINIO_ENDPOINT})")
+    print(f"🐰 Messaging: RabbitMQ ({settings.RABBITMQ_HOST})")
+    print(f"🐛 Debug Mode: {settings.DEBUG}")
+    print("=" * 80)
+    
+    # 1. Connect to MongoDB
     try:
-        rabbitmq_service = get_rabbitmq_service()
-        logger.info("RabbitMQ service initialized")
+        from app.core.database import Database
+        await Database.connect()
+        logger.info("✅ MongoDB connected")
     except Exception as e:
-        logger.warning(f"RabbitMQ initialization warning: {str(e)}")
+        logger.error(f"❌ Failed to connect to MongoDB: {e}")
+        raise
+    
+    # 2. Initialize MinIO storage
+    try:
+        from app.storage.minio_client import minio_storage
+        # MinIO client initializes on import, test connection
+        buckets = minio_storage.client.list_buckets()
+        logger.info(f"✅ MinIO storage initialized ({len(buckets)} buckets)")
+    except Exception as e:
+        logger.warning(f"⚠️  MinIO initialization warning: {e}")
+    
+    # 3. Initialize RabbitMQ service
+    try:
+        from app.services.messaging.rabbitmq_service import get_rabbitmq_service
+        rabbitmq_service = get_rabbitmq_service()
+        logger.info("✅ RabbitMQ service initialized")
+    except Exception as e:
+        logger.warning(f"⚠️  RabbitMQ not available: {e}")
         rabbitmq_service = None
-
-    classifier = EmailWorkflowOrchestrator(
-        api_key=settings.GOOGLE_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=settings.LLM_TEMPERATURE
-    )
-    logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
-
+    
+    # 4. Initialize Email Workflow Orchestrator
+    try:
+        from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
+        email_orchestrator = EmailWorkflowOrchestrator(
+            api_key=settings.GOOGLE_API_KEY,
+            model=settings.LLM_MODEL,
+            temperature=settings.LLM_TEMPERATURE
+        )
+        logger.info(f"✅ Email orchestrator initialized (model: {settings.LLM_MODEL})")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize email orchestrator: {e}")
+        raise
+    
+    # 5. Start email ingest consumer (RabbitMQ → Classification)
     consumer_thread = None
-    if rabbitmq_service is not None:
+    if rabbitmq_service is not None and email_orchestrator is not None:
         try:
             from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
-
             loop = asyncio.get_running_loop()
-            consumer_thread = start_email_ingest_consumer(classifier, loop=loop)
-            logger.info("Email ingest consumer started")
+            consumer_thread = start_email_ingest_consumer(email_orchestrator, loop=loop)
+            logger.info("✅ Email ingest consumer started")
         except Exception as e:
-            logger.warning(f"Email ingest consumer not started: {str(e)}")
-
-    yield
-
-    # Shutdown
+            logger.warning(f"⚠️  Email consumer not started: {e}")
+    
+    # 6. Test Gemini API
     try:
-        if rabbitmq_service is not None:
+        from app.services.rag.gemini_service import gemini_service
+        logger.info("✅ Gemini service initialized")
+    except Exception as e:
+        logger.warning(f"⚠️  Gemini service warning: {e}")
+    
+    print(f"🟢 {settings.APP_NAME} is ready!\n")
+    
+    yield
+    
+    # Shutdown
+    print("\n" + "=" * 80)
+    print(f"🔴 Shutting down {settings.APP_NAME}...")
+    print("=" * 80)
+    
+    # Close RabbitMQ connection
+    if rabbitmq_service is not None:
+        try:
             rabbitmq_service.close()
-    except:
-        pass
-    logger.info("Application shutting down")
+            logger.info("✅ RabbitMQ connection closed")
+        except Exception as e:
+            logger.warning(f"⚠️  Error closing RabbitMQ: {e}")
+    
+    # Disconnect from MongoDB
+    try:
+        from app.core.database import Database
+        await Database.disconnect()
+        logger.info("✅ MongoDB disconnected")
+    except Exception as e:
+        logger.warning(f"⚠️  Error disconnecting MongoDB: {e}")
+    
+    logger.info("👋 Shutdown complete")
 
 
-# Create FastAPI app
+# ====================================
+# CREATE FASTAPI APP
+# ====================================
+
 app = FastAPI(
-    title="Student Classification Service",
-    description="A FastAPI service that classifies student and class data using LangChain with Gemini",
-    version="1.0.0",
-    lifespan=lifespan
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="Unified microservice for email classification and RAG-based document search",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
+
+# ====================================
+# MIDDLEWARE
+# ====================================
+
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(router)
+
+# Request Timing Middleware
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    """Add X-Process-Time header to all responses."""
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    response.headers["X-Process-Time"] = f"{process_time:.4f}"
+    return response
 
 
-@app.exception_handler(ValueError)
-async def value_error_handler(request, exc):
-    """Handle validation errors."""
-    logger.error(f"Validation error: {str(exc)}")
-    return ProcessResponse(
-        success=False,
-        error=f"Validation error: {str(exc)}"
+# ====================================
+# GLOBAL EXCEPTION HANDLERS
+# ====================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=ErrorResponse(
+            error="internal_server_error",
+            message=str(exc) if settings.DEBUG else "An internal error occurred",
+            details={"path": str(request.url)} if settings.DEBUG else None,
+        ).model_dump(),
     )
 
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle validation errors."""
+    logger.error(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=ErrorResponse(
+            error="validation_error",
+            message=str(exc),
+            details={"path": str(request.url)} if settings.DEBUG else None,
+        ).model_dump(),
+    )
+
+
+# ====================================
+# HEALTH CHECK ENDPOINT
+# ====================================
+
+@app.get("/health", response_model=HealthCheckResponse, tags=["Health"])
+async def health_check():
+    """
+    Health check endpoint.
+    Returns service status, version, and dependency connectivity.
+    """
+    gemini_connected = False
+    mongodb_connected = False
+    
+    try:
+        from app.services.rag.gemini_service import gemini_service
+        gemini_connected = gemini_service.client is not None
+    except Exception:
+        pass
+    
+    try:
+        from app.core.database import Database
+        mongodb_connected = Database._db is not None
+    except Exception:
+        pass
+    
+    return HealthCheckResponse(
+        status="healthy" if (gemini_connected and mongodb_connected) else "degraded",
+        service=settings.APP_NAME,
+        version=settings.APP_VERSION,
+        gemini_api_connected=gemini_connected,
+        mongodb_connected=mongodb_connected,
+    )
+
+
+# ====================================
+# INCLUDE API ROUTERS
+# ====================================
+
+from app.api.router import api_router
+app.include_router(api_router)
+logger.info("✅ API routers included")
+
+
+# ====================================
+# MAIN (for direct execution)
+# ====================================
+
 if __name__ == "__main__":
     import uvicorn
-    from config.settings import settings
     
     uvicorn.run(
         "app.main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=settings.RELOAD,
-        log_level=settings.UVICORN_LOG_LEVEL
+        reload=settings.DEBUG,
+        log_level="info",
     )
 

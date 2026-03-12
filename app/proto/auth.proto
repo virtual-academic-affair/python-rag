@@ -1,0 +1,14 @@
+syntax = "proto3";
+package app_server;
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  map<string, string> payload = 1;
+}
+
+service AuthService {
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+}

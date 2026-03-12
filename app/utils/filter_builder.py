@@ -1,0 +1,240 @@
+"""
+Filter Builder - Phase 4.
+Builds Gemini filter string from metadata dict with role-based access control.
+
+Logic:
+- Single value → exact match: key="value"
+- Array value → OR same key: (key="v1" OR key="v2")
+- has AllowedValue(value="all") → auto add OR key="all"
+- Keys joined with AND
+- Enforce access_scope by role:
+    * student → override access_scope="cong_khai"
+    * staff/admin → no access_scope filter
+
+Uses AllowedValue.value (NOT display_name) for filter string.
+"""
+
+import logging
+import time
+from typing import Dict, Any, Optional, List
+
+from app.models.database import AllowedValue, MetadataTypeDocument
+from app.services.rag.metadata_service import MetadataService
+
+logger = logging.getLogger(__name__)
+
+# Cache TTL in seconds (5 minutes)
+_CACHE_TTL = 300
+
+
+class FilterBuilder:
+    """
+    Builds Gemini metadata filter string from metadata dict.
+    Handles role-based access control and has_all_value logic
+    (auto-adds OR key='all' when AllowedValue with value='all' exists).
+    """
+    
+    def __init__(self):
+        """Initialize filter builder with metadata service."""
+        self._metadata_service = None
+        self._metadata_types_cache: Optional[Dict[str, MetadataTypeDocument]] = None
+        self._cache_loaded_at: float = 0.0
+    
+    @property
+    def metadata_service(self) -> MetadataService:
+        """Lazy load metadata service."""
+        if self._metadata_service is None:
+            self._metadata_service = MetadataService()
+        return self._metadata_service
+    
+    async def _load_metadata_types_cache(self) -> None:
+        """Load all metadata types into cache, with TTL-based expiry."""
+        now = time.monotonic()
+        if self._metadata_types_cache is None or (now - self._cache_loaded_at) > _CACHE_TTL:
+            all_types = await self.metadata_service.list_all_metadata_types()
+            self._metadata_types_cache = {mt.key: mt for mt in all_types}
+            self._cache_loaded_at = now
+    
+    def _build_key_filter(
+        self,
+        key: str,
+        values: List[str],
+        support_all_value: bool
+    ) -> str:
+        """
+        Build filter string for single metadata key.
+        
+        Args:
+            key: Metadata key
+            values: List of values (can be single-item list)
+            support_all_value: If True, add OR key="all"
+        
+        Returns:
+            Filter string like: key="value" or (key="v1" OR key="v2")
+        """
+        # Add "all" value if support_all_value is True
+        if support_all_value and "all" not in values:
+            values = values + ["all"]
+        
+        # Single value - no parentheses needed
+        if len(values) == 1:
+            return f'{key}="{values[0]}"'
+        
+        # Multiple values - wrap in parentheses
+        or_parts = [f'{key}="{v}"' for v in values]
+        return "(" + " OR ".join(or_parts) + ")"
+    
+    async def build_filter(
+        self,
+        metadata: Dict[str, Any],
+        user_role: str = "student",
+        skip_validation: bool = False
+    ) -> str:
+        """
+        Build Gemini filter string from metadata dict.
+        
+        Args:
+            metadata: Metadata dict (e.g., {"academic_year": "2024-2025", "cohort": ["K20", "K21"]})
+            user_role: User role (student, staff, admin) for access_scope enforcement
+            skip_validation: If True, skip validation (useful when metadata already validated at upload)
+        
+        Returns:
+            Gemini filter string (e.g., 'access_scope="cong_khai" AND (academic_year="2024-2025" OR academic_year="all")')
+        
+        Raises:
+            ValueError: If metadata validation fails (when skip_validation=False)
+        
+        Note:
+            For student role, access_scope is enforced to "cong_khai" regardless of input.
+            For staff/admin, access_scope filter is removed (can see all documents).
+        """
+        # Load metadata types cache
+        await self._load_metadata_types_cache()
+        
+        # Copy metadata to avoid mutation
+        filter_metadata = dict(metadata)
+        
+        # Enforce access_scope by role BEFORE validation
+        # This prevents validation error when student doesn't provide access_scope
+        if user_role == "student":
+            # Student can only see public documents
+            filter_metadata["access_scope"] = "cong_khai"
+            logger.debug(f"Role={user_role}: enforcing access_scope=cong_khai")
+        elif user_role in ["staff", "admin"]:
+            # Staff/admin can see all - remove access_scope filter
+            filter_metadata.pop("access_scope", None)
+            logger.debug(f"Role={user_role}: no access_scope filter")
+        
+        # Validate metadata if requested (after role enforcement)
+        if not skip_validation:
+            # For staff/admin, access_scope is not in filter_metadata so validation might fail
+            # Only validate if we have access_scope in metadata (for student) or if it's not required by role
+            if user_role != "staff" and user_role != "admin":
+                is_valid, errors = await self.metadata_service.validate_metadata(filter_metadata)
+                if not is_valid:
+                    raise ValueError(f"Invalid metadata: {', '.join(errors)}")
+        
+        # Build filter parts for each key
+        filter_parts = []
+        
+        for key, value in filter_metadata.items():
+            # Get metadata type definition
+            meta_type = self._metadata_types_cache.get(key)
+            if not meta_type:
+                logger.warning(f"Metadata key '{key}' not found in cache, skipping")
+                continue
+            
+            # Convert value to list
+            values = value if isinstance(value, list) else [value]
+            
+            # Build filter for this key
+            key_filter = self._build_key_filter(
+                key=key,
+                values=values,
+                support_all_value=meta_type.has_all_value
+            )
+            filter_parts.append(key_filter)
+        
+        # Join all parts with AND
+        if not filter_parts:
+            return ""
+        
+        filter_string = " AND ".join(filter_parts)
+        logger.info(f"Built filter (role={user_role}): {filter_string}")
+        return filter_string
+
+
+# ====================================
+# SINGLETON INSTANCE
+# ====================================
+
+_filter_builder_instance: Optional[FilterBuilder] = None
+
+
+def get_filter_builder() -> FilterBuilder:
+    """Get singleton FilterBuilder instance."""
+    global _filter_builder_instance
+    if _filter_builder_instance is None:
+        _filter_builder_instance = FilterBuilder()
+    return _filter_builder_instance
+
+
+# ====================================
+# CONVENIENCE FUNCTION
+# ====================================
+
+async def build_metadata_filter(
+    metadata: Dict[str, Any],
+    user_role: str = "student",
+    skip_validation: bool = False
+) -> str:
+    """
+    Convenience function to build Gemini filter string.
+    
+    Args:
+        metadata: Metadata dict
+        user_role: User role (student, staff, admin)
+        skip_validation: If True, skip validation (default False)
+    
+    Returns:
+        Gemini filter string
+    """
+    builder = get_filter_builder()
+    return await builder.build_filter(metadata, user_role, skip_validation)
+
+
+def convert_metadata_filter_to_gemini_format(metadata_filter: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Convert metadata filter from JSON key-value format to Gemini FileSearch format.
+    Simple conversion without DB validation — use build_metadata_filter() for
+    role-based, validated filter building.
+
+    Input format (JSON):
+        {"department": "Đào tạo", "category": "policy"}
+
+    Output format (Gemini):
+        'department="Đào tạo" AND category="policy"'
+
+    Args:
+        metadata_filter: Dictionary of metadata key-value pairs
+
+    Returns:
+        Gemini-compatible metadata filter string, or None if no filter
+    """
+    if not metadata_filter or not isinstance(metadata_filter, dict):
+        return None
+
+    filter_parts = []
+    for key, value in metadata_filter.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            filter_parts.append(f'{key}="{value}"')
+        elif isinstance(value, (int, float)):
+            filter_parts.append(f'{key}={value}')
+        elif isinstance(value, list):
+            list_parts = [f'{key}="{v}"' for v in value if isinstance(v, str)]
+            if list_parts:
+                filter_parts.append(f"({' OR '.join(list_parts)})")
+
+    return " AND ".join(filter_parts) if filter_parts else None

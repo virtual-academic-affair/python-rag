@@ -1,6 +1,5 @@
 """Models and schemas for the application."""
 from .schemas import (
-    AuthVerifyResponse,
     ClassRegistrationExtractResponse,
     ClassRegistrationItem,
     ClassRegistrationPayload,
@@ -27,7 +26,6 @@ __all__ = [
     "IngestEmailData",
     "IngestMessage",
     "ProcessResponse",
-    "AuthVerifyResponse",
     "ResponseModel",
 ]
 
