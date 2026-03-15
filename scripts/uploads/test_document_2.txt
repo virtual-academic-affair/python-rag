@@ -1,0 +1,16 @@
+# Quy dinh hoc bong khuyen khich hoc tap
+
+## Dieu 1: Doi tuong
+Sinh vien he chinh quy dat ket qua hoc tap xuat sac.
+
+## Dieu 2: Muc hoc bong
+- Loai xuat sac (GPA >= 3.6): 100% hoc phi
+- Loai gioi (GPA 3.2-3.59): 80% hoc phi
+- Loai kha (GPA 2.5-3.19): 50% hoc phi
+
+## Dieu 3: Dieu kien xet
+- Khong co hoc phan F trong hoc ky xet
+- Dang ky du so tin chi toi thieu
+
+---
+Cap nhat: 2026 | Phong Dao tao

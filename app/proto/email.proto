@@ -1,0 +1,18 @@
+syntax = "proto3";
+package app_server;
+
+// Request to create a Gmail draft reply for a given email message.
+// Called after AI generates the draft body via RAG.
+message CreateEmailDraftRequest {
+  int32 messageId = 1;   // DB message ID in nest-api
+  string draftSubject = 2;
+  string draftBody = 3;
+}
+
+message CreateEmailDraftResponse {
+  bool success = 1;
+}
+
+service EmailService {
+  rpc CreateDraft(CreateEmailDraftRequest) returns (CreateEmailDraftResponse);
+}

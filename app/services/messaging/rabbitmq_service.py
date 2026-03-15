@@ -3,7 +3,7 @@ import logging
 import json
 import pika
 from typing import Optional, Dict, Any
-from config.settings import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

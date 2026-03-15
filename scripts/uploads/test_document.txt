@@ -1,0 +1,29 @@
+# Quy che dao tao Dai hoc
+
+## Chuong 1: Quy dinh chung
+
+### Dieu 1: Pham vi ap dung
+Quy che nay ap dung cho tat ca sinh vien he chinh quy cua truong.
+
+### Dieu 2: Thoi gian dao tao
+- Thoi gian dao tao chuan: 4 nam (8 hoc ky)
+- Thoi gian toi da: 6 nam
+
+### Dieu 3: Dieu kien tot nghiep
+1. Hoan thanh tat ca cac hoc phan trong chuong trinh dao tao
+2. Diem trung binh tich luy >= 2.0
+3. Khong con hoc phan bi diem F
+4. Dat chuan dau ra ngoai ngu (TOEIC 450 hoac tuong duong)
+
+## Chuong 2: Dang ky hoc phan
+
+### Dieu 4: Thoi gian dang ky
+- Dang ky chinh: 2 tuan truoc khi bat dau hoc ky
+- Dang ky bo sung: Tuan dau tien cua hoc ky
+
+### Dieu 5: So tin chi
+- Toi thieu: 14 tin chi/hoc ky
+- Toi da: 25 tin chi/hoc ky
+
+---
+Cap nhat: 2026 | Phong Dao tao

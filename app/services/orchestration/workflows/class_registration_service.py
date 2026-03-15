@@ -3,7 +3,7 @@ import json
 import logging
 import re
 
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 from app.models.schemas import ClassRegistrationPayload
 from app.services.orchestration.llm_factory import (

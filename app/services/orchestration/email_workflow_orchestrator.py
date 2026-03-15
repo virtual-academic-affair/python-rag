@@ -5,6 +5,8 @@ import logging
 from app.models.schemas import (
     ClassRegistrationExtractResponse,
     InternalData,
+    InquiryResponse,
+    InquiryPayload,
     LabelClassificationResponse,
     ResponseModel,
     SystemLabel,
@@ -55,7 +57,12 @@ class EmailWorkflowOrchestrator:
         self.other_service = OtherService()
 
     async def process_request(
-        self, internal_data: InternalData, title: str, content: str
+        self,
+        internal_data: InternalData,
+        title: str,
+        content: str,
+        sender_email: str = "",
+        sender_name: str = "",
     ) -> ResponseModel:
         label = await self.label_classifier.classify(
             title=title,
