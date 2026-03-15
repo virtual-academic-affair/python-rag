@@ -1,4 +1,5 @@
 """Orchestrator that routes email to workflow by label."""
+import asyncio
 import logging
 
 from app.models.schemas import (
@@ -7,6 +8,7 @@ from app.models.schemas import (
     LabelClassificationResponse,
     ResponseModel,
     SystemLabel,
+    TaskExtractResponse,
 )
 from app.services.integrations.grpc_client import GrpcLabelClient
 from app.services.orchestration.classification.label_classifier_service import (
@@ -44,7 +46,11 @@ class EmailWorkflowOrchestrator:
             model=model,
             temperature=temperature,
         )
-        self.task_service = TaskService()
+        self.task_service = TaskService(
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+        )
         self.inquiry_service = InquiryService()
         self.other_service = OtherService()
 
@@ -86,8 +92,48 @@ class EmailWorkflowOrchestrator:
             )
 
         if label == SystemLabel.Task:
-            await self.task_service.process(title=title, content=content, message_id=message_id)
-        elif label == SystemLabel.Inquiry:
+            extracted = await self.task_service.process(
+                title=title,
+                content=content,
+                message_id=message_id,
+            )
+            logger.info(
+                "task extracted payload: %s",
+                extracted.model_dump_json(by_alias=True, exclude_none=False),
+            )
+            if self.grpc_label_client is not None:
+                resolved_assignee_ids: list[int] = []
+                seen_ids: set[int] = set()
+                keywords = [item.strip() for item in (extracted.assignee_ids or []) if item.strip()]
+
+                tasks = [
+                    self.grpc_label_client.find_auth_user_by_keyword(keyword)
+                    for keyword in keywords
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in results:
+                    if isinstance(result, Exception) or not result:
+                        continue
+                    user_id = result.get("id")
+                    if isinstance(user_id, int) and user_id not in seen_ids:
+                        seen_ids.add(user_id)
+                        resolved_assignee_ids.append(user_id)
+
+                extracted.assignee_ids = resolved_assignee_ids
+                grpc_ok = await self.grpc_label_client.create_task(payload=extracted)
+                if not grpc_ok:
+                    logger.warning(
+                        "gRPC task create failed/rejected for message_id=%s",
+                        extracted.message_id,
+                    )
+
+            return TaskExtractResponse(
+                internal=internal_data,
+                label=SystemLabel.Task,
+                extracted=extracted,
+            )
+        if label == SystemLabel.Inquiry:
             await self.inquiry_service.process(title=title, content=content, message_id=message_id)
         else:
             await self.other_service.process(title=title, content=content, message_id=message_id)

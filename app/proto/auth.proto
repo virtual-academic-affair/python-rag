@@ -1,0 +1,34 @@
+syntax = "proto3";
+package app_server;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+message UserResponse {
+  int32 id = 1;
+  string email = 2;
+  string name = 3;
+  string role = 4;
+  string picture = 5;
+  bool isActive = 6;
+  string createdAt = 7;
+  string updatedAt = 8;
+}
+
+message FindOneByKeywordRequest {
+  string keyword = 1;
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  map<string, string> payload = 1;
+}
+
+service AuthService {
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+  rpc FindOneByKeyword(FindOneByKeywordRequest) returns (UserResponse);
+}
+
