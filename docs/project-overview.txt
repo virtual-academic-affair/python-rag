@@ -1,0 +1,1058 @@
+================================================================================
+AI SERVICE — PROJECT OVERVIEW
+Version 3.0.0 | March 2026
+================================================================================
+
+MUC LUC
+──────────────────────────────────────────────────────────────────────────────
+ 1.  Tổng quan & mục đích
+ 2.  Kiến trúc tổng thể
+ 3.  Cấu trúc thư mục
+ 4.  Khởi động ứng dụng (Lifespan)
+ 5.  Luồng xử lý email (Classification Pipeline)
+ 6.  LabelClassifierService — phân loại email
+ 7.  LLM Factory — xây dựng model Gemini
+ 8.  Các workflow service
+ 9.  Email Draft Service — soạn email tự động
+10.  Upload File Flow
+11.  Hệ thống Metadata Types
+12.  Filter Builder & Role-based Access
+13.  GeminiService — RAG với Gemini File Search
+14.  Store Management
+15.  Chat API (query + streaming)
+16.  Auth Service — xác thực JWT
+17.  Cấu trúc MongoDB (3 collections)
+18.  Repository Layer
+19.  Storage Layer — MinIO
+20.  RabbitMQ Consumer
+21.  Exception Hierarchy
+22.  REST API Endpoints (ảy đủ)
+23.  Cấu hình (Settings & .env)
+24.  Scripts hỗ trợ
+25.  Prompts AI (centralized)
+
+
+================================================================================
+1. TONG QUAN & MUC DICH
+================================================================================
+
+AI Service là một FastAPI microservice kết hợp hai chức năng lớn:
+
+  A) EMAIL CLASSIFICATION
+     Nhận email từ NestJS qua RabbitMQ, dùng Gemini AI phân loại thành 4 nhãn:
+       classRegistration — Yêu cầu đăng ký / hủy / đổi học phần
+       inquiry           — Câu hỏi, thắc mắc cần tư vấn
+       task              — Nhiệm vụ nội bộ từ phòng ban → phòng giáo vụ
+       other             — Không xác định / không liên quan
+
+  B) RAG DOCUMENT SERVICE
+     Quản lý kho tài liệu (Gemini File Search + MinIO) và cung cấp
+     chat hỏi đáp dựa trên nội dung tài liệu thực. Bao gồm:
+       - Upload / quản lý file (PDF, DOCX, DOC, TXT, MD, HTML)
+       - Quản lý Store (Gemini File Search Store)
+       - Quản lý Metadata Type (định nghĩa các trường tag)
+       - Chat API: hỏi đáp (query) và streaming (SSE)
+       - Tự động soạn email trả lời cho email loại inquiry
+
+Service chạy tại: http://localhost:8000
+Swagger UI:       http://localhost:8000/docs
+
+Giao tiếp với:
+  - NestJS Backend  → gửi email qua RabbitMQ, nhận kết quả classification
+  - Gemini API      → phân loại email + RAG File Search + soạn email
+  - MongoDB Atlas   → lưu metadata store / file / metadata_types
+  - MinIO           → lưu file binary (PDF, DOCX...)
+  - RabbitMQ        → nhận email từ queue email_ingest_queue
+
+
+================================================================================
+2. KIEN TRUC TONG THE
+================================================================================
+
+  NestJS Backend
+       |
+       | 1. Publish message (pattern="ingested")
+       v
+  RabbitMQ: email_ingest_queue
+       |
+       | 2. EmailIngestConsumer.on_message()
+       |    Thread riêng, không block FastAPI event loop
+       v
+  Validate IngestMessage schema
+  asyncio.run_coroutine_threadsafe() → chạy coroutine async
+       |
+       | 3. EmailWorkflowOrchestrator.process_request()
+       v
+  LabelClassifierService.classify()
+  (Gemini AI + keyword pre-check)
+       |
+       | 4. Dispatch theo label
+       |--[classRegistration]--> ClassRegistrationService
+       |                          Gemini trích xuất JSON cấu trúc
+       |                          { studentCode, items:[{action,subjectCode,...}] }
+       |
+       |--[inquiry]-----------> draft_inquiry_email_reply()
+       |                          resolve_store() → Gemini RAG
+       |                          Soạn email trả lời tự động
+       |
+       |--[task]-------------> TaskService (ghi log)
+       |
+       +--[other]------------> OtherService (ghi log)
+                  |
+                  | 5. Trả ResponseModel về NestJS
+                  v
+       NestJS lưu kết quả, gửi email phản hồi...
+
+  Ngoài luồng async RabbitMQ, service expose REST API:
+
+  Client (NestJS / Postman)
+       |
+       v
+  FastAPI Router (/api/...)
+       |-- /api/stores    --> StoreService (CRUD + Gemini sync)
+       |-- /api/files     --> FileService (upload, download, retry, batch)
+       |-- /api/metadata  --> MetadataService (CRUD metadata types)
+       |-- /api/chat      --> GeminiService (query + SSE stream)
+       +-- /process       --> EmailWorkflowOrchestrator (manual classify)
+
+
+================================================================================
+3. CAU TRUC THU MUC
+================================================================================
+
+  python-rag/
+  |
+  |-- run.py                   Entry point: chạy Uvicorn
+  |-- .env                     Biến môi trường thực tế (gitignore)
+  |-- .env.example             Template .env
+  |-- requirements.txt         Dependencies Python
+  |-- start.sh / stop.sh       Script khởi động / dừng server
+  |
+  |-- app/
+  |   |-- main.py              FastAPI app: lifespan, CORS, routes, health check
+  |   |
+  |   |-- core/
+  |   |   |-- config.py        Settings (Pydantic BaseSettings, load từ .env)
+  |   |   |-- database.py      MongoDB connection (Motor async driver)
+  |   |   |-- exceptions.py    Exception hierarchy (EmailAIException + subclasses)
+  |   |   +-- prompts.py       System prompts / templates cho Gemini AI
+  |   |
+  |   |-- models/
+  |   |   |-- database.py      MongoDB document models (StoreDocument, FileDocument,
+  |   |   |                    MetadataTypeDocument, AllowedValue)
+  |   |   |-- schemas.py       Pydantic schemas cho request/response API
+  |   |   +-- enums.py         Enums (FileStatus: UPLOADING/PROCESSING/ACTIVE/FAILED)
+  |   |
+  |   |-- api/
+  |   |   |-- routes.py        Router chính: /process,
+  |   |   |                    /api/test/classification/ingested
+  |   |   +-- endpoints/
+  |   |       |-- stores.py    CRUD store + Gemini sync
+  |   |       |-- files.py     Upload, download, retry, batch, delete
+  |   |       |-- metadata.py  CRUD metadata types
+  |   |       |-- chat.py      POST /api/chat/query, /api/chat/stream
+  |   |       +-- email.py     /api/test/classification/ingested
+  |   |
+  |   |-- dependencies/
+  |   |   +-- auth.py             require_auth, require_admin (FastAPI Depends)
+  |   |                           Gọi gRPC nest-api để verify token
+  |   |
+  |   |-- proto/
+  |   |   |-- __init__.py
+  |   |   |-- auth.proto           gRPC AuthService.VerifyToken (package app_server)
+  |   |   |-- auth_pb2.py          Compiled protobuf
+  |   |   |-- auth_pb2_grpc.py     AuthServiceStub (client-only)
+  |   |   |-- email.proto          gRPC EmailService.CreateDraft (package app_server)
+  |   |   |-- email_pb2.py         Compiled protobuf
+  |   |   +-- email_pb2_grpc.py    EmailServiceStub (client-only)
+  |   |
+  |   |-- services/
+  |   |   |-- auth/
+  |   |   |   +-- grpc_nest_auth.py        GrpcNestAuthClient — verify qua gRPC
+  |   |   |
+  |   |   |-- grpc/
+  |   |   |   +-- nest_email_client.py     GrpcNestEmailClient — tạo Gmail draft
+  |   |   |
+  |   |   |-- messaging/
+  |   |   |   |-- rabbitmq_service.py      Kết nối, declare queue, publish
+  |   |   |   +-- email_ingest_consumer.py Thread consumer, on_message callback
+  |   |   |
+  |   |   |-- orchestration/
+  |   |   |   |-- email_workflow_orchestrator.py  Điều phối + dispatch
+  |   |   |   |-- llm_factory.py           Build GeminiGenAIChat
+  |   |   |   |-- classification/
+  |   |   |   |   +-- label_classifier_service.py  Phân loại email
+  |   |   |   +-- workflows/
+  |   |   |       |-- class_registration_service.py  Trích xuất đăng ký học phần
+  |   |   |       |-- inquiry_service.py              Xử lý inquiry
+  |   |   |       |-- task_service.py                 Ghi log nhiệm vụ
+  |   |   |       +-- other_service.py                Ghi log other
+  |   |   |
+  |   |   +-- rag/
+  |   |       |-- gemini_service.py      Singleton: chat, stream, draft_email_reply
+  |   |       |-- store_service.py       CRUD store + Gemini File Search API
+  |   |       |-- file_service.py        Upload/download/delete (MinIO + Gemini)
+  |   |       |-- metadata_service.py    CRUD metadata type definitions
+  |   |       +-- email_draft_service.py Pure function: draft email reply qua RAG
+  |   |
+  |   |-- repositories/
+  |   |   |-- base.py             BaseRepository: CRUD MongoDB
+  |   |   |-- store_repository.py
+  |   |   |-- file_repository.py
+  |   |   +-- metadata_repository.py
+  |   |
+  |   |-- storage/
+  |   |   |-- base.py             Abstract StorageBase
+  |   |   +-- minio_client.py     MinIO singleton: upload/download/delete/presigned
+  |   |
+  |   +-- utils/
+  |       |-- db_utils.py         ObjectId<->str, doc->model helpers
+  |       |-- file_utils.py       validate_file_size, validate_extension, detect_mime
+  |       |-- filter_builder.py   dict metadata → Gemini filter string
+  |       |-- pagination.py       Pagination helper
+  |       +-- store_utils.py      resolve_store() theo priority
+  |
+  |-- docs/
+  |   |-- api.txt                       Tài liệu API đầy đủ
+  |   |-- project-overview.txt          File này
+  |   +-- AI_Service.postman_collection.json  Postman 31 endpoints
+  |
+  +-- scripts/
+      |-- seed_metadata.py       Tạo 3 system metadata (chạy 1 lần)
+      |-- init_db.py             Tạo indexes MongoDB (chạy 1 lần)
+      |-- drop_database.py       XÓA toàn bộ DB (chỉ dev)
+      |-- test_all_apis.sh       Bash script test 36 API
+      +-- uploads/               Files mẫu cho test
+
+
+================================================================================
+4. KHOI DONG UNG DUNG (LIFESPAN)
+================================================================================
+
+Khi chạy `python run.py`, Uvicorn khởi động FastAPI và hàm lifespan()
+trong app/main.py thực hiện 5 bước tuần tự:
+
+  BUOC 1: Kết nối MongoDB (Motor async client)
+    Database.connect() → tạo pool kết nối (min=10, max=100)
+    Nếu thất bại → raise exception, server không khởi động
+
+  BUOC 2: Khởi tạo MinIO client (singleton)
+    minio_storage → kiểm tra kết nối, list S3 buckets
+    Nếu thất bại → chỉ warning (không crash), file upload sẽ lỗi sau
+
+  BUOC 3: Khởi tạo RabbitMQ service
+    get_rabbitmq_service() → tạo connection object (lazy connect)
+    Nếu thất bại → chỉ warning, RabbitMQ classification không hoạt động
+
+  BUOC 4: Khởi tạo EmailWorkflowOrchestrator
+    EmailWorkflowOrchestrator(api_key, model, temperature)
+    Tạo: LabelClassifierService + ClassRegistrationService + TaskService + ...
+    Nếu thất bại → raise exception (bắt buộc để classification hoạt động)
+
+  BUOC 5: Start RabbitMQ Consumer thread
+    Chỉ start nếu cả rabbitmq_service và email_orchestrator đều sẵn sàng
+    start_email_ingest_consumer(classifier, loop=event_loop)
+    Thread chạy vô tận (daemon=True), lắng nghe queue
+
+
+================================================================================
+5. LUONG XU LY EMAIL (CLASSIFICATION PIPELINE)
+================================================================================
+
+Input từ RabbitMQ (NestJS publish):
+  {
+    "pattern": "ingested",
+    "data": {
+      "id": 123,
+      "subject": "Xin đăng ký môn học",
+      "senderEmail": "sv001@example.com",
+      "senderName": "Nguyễn Văn A",
+      "content": "Em muốn đăng ký..."
+    }
+  }
+
+Buoc 1: EmailIngestConsumer.on_message()
+  - Parse JSON từ bytes → dict
+  - Validate với IngestMessage schema (Pydantic)
+  - Nếu JSON không hợp lệ → basic_ack (hủy message, tránh poison loop)
+  - asyncio.run_coroutine_threadsafe() → gọi orchestrator trong event loop chính
+  - Timeout: 120 giây
+  - Thành công → basic_ack | Thất bại → basic_nack + requeue=True
+
+Buoc 2: EmailWorkflowOrchestrator.process_request()
+  - Gọi LabelClassifierService.classify(title, content) → label
+  - Dispatch theo label
+
+Buoc 3: Trả kết quả về NestJS:
+
+  classRegistration:
+    { "label": "classRegistration", "internal": {...},
+      "extracted": { "studentCode":"SV001", "messageId":123,
+                     "items":[{"action":"register","subjectCode":"MATH101",...}] } }
+
+  inquiry:
+    { "label": "inquiry", "internal": {...},
+      "answer": { "draftSubject":"Re:...", "draftBody":"Kính gửi...",
+                  "sources":[...], "messageId":123 } }
+
+  task / other:
+    { "label": "task" }  hoặc  { "label": "other" }
+
+
+================================================================================
+6. LABELCLASSIFIERSERVICE - PHAN LOAI EMAIL
+================================================================================
+
+File: app/services/orchestration/classification/label_classifier_service.py
+
+CƠ CHE PHAN LOAI:
+
+  Buoc 1: Keyword pre-check (trước khi gọi Gemini — tiết kiệm API)
+    Nếu content/title chứa keywords như:
+      "đăng ký học phần", "hủy học phần", "xin mở lớp", "mã học phần"...
+    → Short-circuit về classRegistration (không gọi Gemini)
+
+  Buoc 2: Gemini AI classification
+    Dùng LangChain ChatPromptTemplate + GeminiGenAIChat
+    System prompt định nghĩa 4 nhãn + rule ưu tiên:
+      classRegistration > task > inquiry > other
+    Model trả về 1 token duy nhất (không explanation)
+
+  Buoc 3: Parse & normalize
+    Lowercase → kiểm tra VALID_LABELS set
+    Aliases: "class_registration" → "classRegistration",
+             "question" → "inquiry", "todo" → "task"...
+    Fallback: không nhận ra → "other"
+
+4 NHAN CHI TIET:
+  classRegistration — sinh viên yêu cầu đăng ký, hủy, đổi, thêm, bật học phần/lớp
+  inquiry           — sinh viên hỏi thông tin, xin tư vấn (không yêu cầu hành động)
+  task              — yêu cầu từ phòng ban nội bộ giao việc cho phòng Giáo vụ
+  other             — spam, không xác định, thiếu ngữ cảnh
+
+
+================================================================================
+7. LLM FACTORY - XAY DUNG MODEL GEMINI
+================================================================================
+
+File: app/services/orchestration/llm_factory.py
+
+Lop GeminiGenAIChat (dùng google-genai SDK):
+  Tham số: api_key, model, temperature, thinking_level, max_output_tokens
+  ainvoke(inputs: dict) → GeminiResponse(content: str)
+    Input: {"title": ..., "content": ...} hoặc {"text": ...}
+    Gọi asyncio.to_thread() → không block event loop
+
+Thinking level (kiểm soát độ suy nghĩ của model):
+  Đọc từ biến môi trường LLM_THINKING_LEVEL
+  "none"   → không bật (nhanh, rẻ)
+  "low"    → thinking nhẹ
+  "medium" → mặc định
+  "high"   → thinking sâu (chậm, chính xác hơn với email phức tạp)
+  Khi bật → ThinkingConfig(include_thoughts=True)
+
+build_classification_llm() → GeminiGenAIChat với temperature=0.1
+chain_prompt(prompt, llm) → LangChain-style chain (prompt | llm)
+
+
+================================================================================
+8. CAC WORKFLOW SERVICE
+================================================================================
+
+ClassRegistrationService
+  Gọi Gemini trích xuất học phần đăng ký dạng JSON:
+  {
+    "studentCode": "SV001",
+    "studentName": "Nguyễn Văn A",
+    "academicYear": 2026,
+    "note": "",
+    "messageId": 123,
+    "items": [
+      {
+        "action": "register",        // register | cancel | change
+        "subjectName": "Toán cao cấp",
+        "subjectCode": "MATH101",
+        "className": "L01",
+        "slotInfo": "",
+        "isInCurriculum": true
+      }
+    ]
+  }
+
+InquiryService
+  1. Gọi draft_inquiry_email_reply() → Gemini RAG soạn draft
+  2. Nếu messageId != None: gọi GrpcNestEmailClient.create_draft(messageId, subject, body)
+     → gRPC CreateDraft tới nest-api Email Service → tạo Gmail draft
+     → Graceful: bỏ qua nếu nest-api trả UNIMPLEMENTED
+  3. Trả về InquiryResponse (draft_subject, draft_body, sources)
+
+TaskService
+  Ghi log nội dung nhiệm vụ. Trả về label="task".
+
+OtherService
+  Ghi log. Trả về label="other".
+
+
+================================================================================
+9. EMAIL DRAFT SERVICE - SOAN EMAIL TU DONG
+================================================================================
+
+File: app/services/rag/email_draft_service.py
+
+Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inquiry.
+
+  draft_inquiry_email_reply(subject, body, sender_name, sender_email,
+                             additional_context, store_id, metadata_filter) → dict
+
+  Quy trinh:
+  1. resolve_store(store_id)
+     → store_id có trong request? dùng ngay
+     → không? lấy default store từ DB (is_default=True)
+     → không có default? raise HTTPException 400
+
+  2. convert_metadata_filter_to_gemini_format(metadata_filter)
+     → {"department":"dao_tao"} → 'department="dao_tao"'
+
+  3. Build context string: sender_name + sender_email + additional_context
+
+  4. gemini_service.draft_email_reply(original_subject, original_body,
+         sender_name, additional_context, store_name, metadata_filter)
+     → Gemini tìm tài liệu liên quan + soạn email trả lời
+
+  5. Trả về:
+     {
+       "draft_subject": "Re: Hỏi về điều kiện tốt nghiệp",
+       "draft_body": "Kính gửi em Nguyễn Văn A...",
+       "sources": [{"title":"...", "text":"...", "url":"..."}],
+       "token_usage": {...}
+     }
+
+  Nếu lỗi → log warning, trả về fallback email (tránh crash toàn luồng)
+
+  6. (InquiryService, sau bước 5) Nếu message_id != None:
+     GrpcNestEmailClient.create_draft(message_id, draft_subject, draft_body)
+     → gRPC CreateEmailDraftRequest(messageId, draftSubject, draftBody)
+     → nest-api tạo Gmail draft, response CreateEmailDraftResponse { success }
+     → UNIMPLEMENTED → log warning, tiếp tục (không raise exception)
+
+
+================================================================================
+10. UPLOAD FILE FLOW
+================================================================================
+
+File: app/services/rag/file_service.py
+
+  POST /api/files
+
+  STEP 1: Validation
+    validate_file_size()       ← max 20MB (MAX_FILE_SIZE_MB)
+    validate_file_extension()  ← pdf, docx, doc, txt, md, html
+    Kiểm tra file trùng tên trong cùng store (ConflictException)
+
+  STEP 2: Validate metadata (BẮT BUỘC)
+    access_scope BẮT BUỘC phải có (ValidationException nếu thiếu)
+    Phải có ít nhất academic_year HOẶC cohort (ValidationException nếu thiếu)
+    Từng key phải là metadata type đã đăng ký và is_active=True
+    Từng value phải nằm trong allowed_values và AllowedValue.is_active=True
+
+  STEP 3: Tạo record MongoDB
+    status = UPLOADING
+
+  STEP 4: Upload lên MinIO
+    storage_path = {store_name}/{timestamp}_{filename}
+    status → PROCESSING
+
+  STEP 5: Upload Gemini (đồng bộ)
+    Upload binary lên Gemini Files API
+    Gắn vào File Search store
+    Cập nhật MongoDB: gemini_document_name + status = ACTIVE
+    Nếu lỗi: status = FAILED (file vẫn còn trong MinIO, có thể retry)
+    → Trả về response với status="active"
+
+  UploadState — Rollback thông minh:
+    @dataclass theo dõi từng bước: DB_CREATED, MINIO_UPLOADED, GEMINI_UPLOADED
+    Khi lỗi: chỉ rollback các bước đã hoàn thành
+
+  Retry file failed:
+    POST /api/files/{file_id}/retry
+    → File phải ở status FAILED và còn trong MinIO
+    → Gọi lại Gemini upload → status → ACTIVE
+
+
+================================================================================
+11. HE THONG METADATA TYPES
+================================================================================
+
+Metadata Type định nghĩa các "trường tag" có thể gắn lên file khi upload.
+Dùng để filter documents trong RAG query.
+
+CẤU TRUC MetadataTypeDocument:
+  key               : Khóa duy nhất (vd: "academic_year", "access_scope")
+  display_name      : Tên hiển thị trên UI (vd: "Năm học")
+  description       : Mô tả ngắn
+  allowed_values    : List[AllowedValue] hoặc null (null = free text)
+  support_all_value : bool — nếu true, filter tự thêm OR key="all"
+  is_active         : bool — false = ẩn, không validate
+  is_system         : bool — true = không cho phép xóa qua API
+
+CẤU TRUC AllowedValue:
+  value        : Giá trị trong filter (vd: "cong_khai", "2024-2025")
+  display_name : Hiển thị UI (vd: "Công khai", "Năm học 2024-2025")
+  is_active    : bool — false = ẩn, không nhận khi upload
+  color        : Hex color (vd: "#3498DB")
+
+3 SYSTEM METADATA (seed bởi scripts/seed_metadata.py, is_system=True):
+
+  academic_year (Năm học):
+    has_all_value = True (allowedValues chứa value="all")
+    Giá trị: 2020-2021, 2021-2022, 2022-2023, 2023-2024, 2024-2025, 2025-2026, all
+
+  cohort (Khóa sinh viên):
+    has_all_value = True (allowedValues chứa value="all")
+    Giá trị: K62, K63, K64, K65, K66, K67, K68, all
+
+  access_scope (Phạm vi truy cập):
+    has_all_value = False
+    Giá trị: cong_khai (Công khai), noi_bo (Nội bộ)
+
+QUY TAC VALIDATE khi upload file:
+  1. access_scope BAT BUOC phải có
+  2. Phải có ít nhất academic_year HOAC cohort
+  3. Mỗi key phải là metadata type đã đăng ký và is_active=True
+  4. Mỗi value phải nằm trong allowed_values và AllowedValue.is_active=True
+
+  Vi dụ custom_metadata hợp lệ:
+    {"academic_year":"2024-2025","cohort":"K65","access_scope":"cong_khai"}
+
+
+================================================================================
+12. FILTER BUILDER & ROLE-BASED ACCESS
+================================================================================
+
+File: app/utils/filter_builder.py
+
+convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
+
+  Vi dụ đơn giản:
+    Input:  {"academic_year": "2024-2025", "department": "dao_tao"}
+    Output: 'academic_year="2024-2025" AND department="dao_tao"'
+
+  Vi dụ list (OR condition):
+    Input:  {"cohort": ["K65", "K66"]}
+    Output: '(cohort="K65" OR cohort="K66")'
+
+  Vi dụ support_all_value=True (academic_year):
+    Input:  {"academic_year": "2024-2025"}
+    Output: '(academic_year="2024-2025" OR academic_year="all")'
+    → has_all_value=True khi allowed_values chứa entry với value="all"
+
+  Input null / empty → Trả về None (không filter Gemini)
+
+Phan quyen theo role trong Chat API:
+  role="student"  → BAT BUOC thêm access_scope="cong_khai" vào filter
+                     (sinh viên chỉ thấy tài liệu công khai)
+  role="staff"    → Xóa access_scope khỏi filter (thấy cả nội bộ + công khai)
+  role="admin"    → Xóa access_scope khỏi filter (quyền cao nhất)
+
+
+================================================================================
+13. GEMINISERVICE - RAG VOI GEMINI FILE SEARCH
+================================================================================
+
+File: app/services/rag/gemini_service.py
+
+Singleton pattern: __new__() → một instance duy nhất.
+Client: google-genai SDK (genai.Client)
+Model: gemini-2.5-flash (cấu hình qua GEMINI_MODEL)
+
+3 PHUONG THUC CHINH:
+
+1. generate_chat_response(question, user_context, chat_history,
+                           store_name, metadata_filter) → dict
+   Trả về câu trả lời đầy đủ (không streaming).
+   Dùng CHAT_SYSTEM_PROMPT + CHAT_WITH_CONTEXT_TEMPLATE
+   Kết quả: { "answer", "sources", "token_usage", "processing_time_ms" }
+
+2. stream_chat_response(question, user_context, chat_history,
+                         store_name, metadata_filter) → AsyncGenerator
+   Streaming response qua SSE (Server-Sent Events)
+   Mỗi chunk: {"chunk": "text", "done": false}
+   Chunk cuối: {"done": true, "sources": [...], "token_usage": {...}}
+   Lỗi: {"error": "...", "done": true}
+
+3. draft_email_reply(original_subject, original_body, sender_name,
+                      additional_context, store_name, metadata_filter) → dict
+   Soạn email trả lời cho inquiry emails
+   Dùng EMAIL_DRAFT_REPLY_PROMPT
+   Kết quả: { "draft_subject", "draft_body", "tone", "sources" }
+
+Co che Gemini File Search:
+  types.FileSearch(fileSearchStoreNames=[store_name], metadataFilter=filter_str)
+  Gemini tự tìm tài liệu liên quan (không cần embed/vector thủ công)
+
+Extract sources:
+  Từ grounding metadata (response.candidates[0].grounding_metadata)
+  → lấy retrieved_context → gemini_document_name
+  → tra MinIO presigned URL (1 giờ)
+  → Sources kèm URL download trực tiếp từ MinIO
+
+
+================================================================================
+14. STORE MANAGEMENT
+================================================================================
+
+File: app/services/rag/store_service.py
+
+Store là Gemini File Search Store, container chứa documents.
+Mỗi store tương ứng một chủ đề (vd: "Văn bản Đào tạo 2026").
+
+THUOC TINH STORE:
+  store_name   : "fileSearchStores/van-ban-dao-tao-abc123" (immutable, unique)
+  display_name : Tên hiển thị
+  file_count   : Số file active (sync từ Gemini)
+  total_size   : Tổng bytes (sync từ Gemini)
+  is_default   : bool — chỉ 1 store là default tại một thời điểm
+
+CAC THAO TAC:
+  create_store(display_name, set_as_default)
+    → Gọi Gemini API tạo store → lưu MongoDB
+  list_stores(is_default, page, limit) → query MongoDB
+  get_store(store_id) → find MongoDB by ObjectId
+  update_store(store_id, display_name, is_default)
+  delete_store(store_id, force)
+    force=False: Từ chối nếu store còn files
+    force=True:  Xóa store và toàn bộ files
+  sync_store_stats(store_id)
+    → Gọi Gemini API lấy activeDocumentsCount + sizeBytes
+  delete_all_stores() → xóa toàn bộ (NGUY HIEM)
+  list_gemini_stores() → list trực tiếp từ Gemini (debug)
+
+Auto Store Resolution (app/utils/store_utils.py):
+  resolve_store(request_store_id) → (store_id, store_name)
+  Priority: request_store_id > default store > raise 400
+  Dùng trong: upload file, chat API, email draft service
+
+
+================================================================================
+15. CHAT API (QUERY + STREAMING)
+================================================================================
+
+File: app/api/endpoints/chat.py
+
+POST /api/chat/query — Chat thường (blocking)
+  Request body:
+    {
+      "question": "Điều kiện tốt nghiệp là gì?",
+      "user_context": {
+        "user_id": "sv001",
+        "name": "Nguyễn Văn A",
+        "cohort": "K20",
+        "role": "student"           ← ảnh hưởng phân quyền filter
+      },
+      "chat_history": [...],        ← tối đa 5-10 lượt gần nhất
+      "store_id": "67a5...",        ← optional, dùng default nếu bỏ qua
+      "metadata_filter": {          ← optional
+        "academic_year": "2024-2025"
+      }
+    }
+
+  Quy trinh:
+    1. resolve_store(store_id) → (store_id, store_name)
+    2. build_filter(user_context.role, metadata_filter) → filter string
+    3. gemini_service.generate_chat_response(...)
+    4. Trả về: { "answer", "sources", "token_usage", "processing_time_ms" }
+
+POST /api/chat/stream — Chat streaming (SSE)
+  Cùng request body với /api/chat/query.
+  Response: EventSourceResponse (text/event-stream)
+    data: {"chunk": "Để tốt ", "done": false}
+    data: {"chunk": "nghiệp, sinh viên...", "done": false}
+    data: {"done": true, "sources": [...], "token_usage": {...}}
+
+
+================================================================================
+16. AUTH SERVICE - XAC THUC JWT QUA gRPC
+================================================================================
+
+CƠ CHẾ AUTH:
+
+1. require_admin / require_auth — FastAPI Depends guard
+   File: app/dependencies/auth.py
+   Dùng cho: tất cả endpoint quản lý (stores, files, metadata write, download)
+   Quy trinh:
+     1. Tách Bearer token từ Authorization header
+     2. GrpcNestAuthClient.verify_token(token)
+        → gRPC call tới nest-api (NEST_GRPC_URL)
+        → AuthService.VerifyToken(VerifyTokenRequest{token})
+        → VerifyTokenResponse.payload {sub, email, role, ...}
+     3. require_auth: trả về payload nếu hợp lệ, 401 nếu không
+     4. require_admin: kiểm tra payload["role"] == "admin", 403 nếu không
+
+   File gRPC: app/services/auth/grpc_nest_auth.py
+   Proto:     app/proto/auth.proto (package app_server)
+   Stub:      app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
+   Env:       NEST_GRPC_URL (default: localhost:5000)
+
+   Lỗi kết nối gRPC:
+     401 — Token không tồn tại / sai format
+     401 — gRPC trả về lỗi hoặc token không hợp lệ  
+     403 — Token hợp lệ nhưng role != admin (cho require_admin)
+     503 — Không thể kết nối nest-api gRPC
+
+PHÂN QUYỀN CÁC ENDPOINT:
+  require_admin: POST/DELETE /api/stores, POST/DELETE /api/files,
+                 DELETE /api/files/..., POST/PATCH/DELETE /api/metadata
+  require_auth:  GET /api/files/{id}/download
+  Public:        GET /api/metadata, GET /api/metadata/{key},
+                 /api/chat, /health, /process
+
+
+================================================================================
+17. CAU TRUC MONGODB (3 COLLECTIONS)
+================================================================================
+
+Database name: cấu hình qua MONGODB_DB_NAME (default: "email_ai_service")
+
+Collection: file_search_stores
+  _id           ObjectId  → store_id trong API
+  store_name    string    → "fileSearchStores/van-ban-dao-tao-abc123" (unique)
+  display_name  string    → "Văn bản Đào tạo 2026"
+  file_count    int       → Số file active (sync từ Gemini)
+  total_size    int       → Tổng bytes (sync từ Gemini)
+  is_default    bool      → Chỉ 1 store là default tại một thời điểm
+  created_at    datetime
+  updated_at    datetime
+
+Collection: file_documents
+  _id                  ObjectId  → file_id trong API
+  store_id             string    → ObjectId (FK → file_search_stores)
+  display_name         string    → "Quy chế đào tạo 2026"
+  original_filename    string    → "document.pdf"
+  storage_path         string    → "van-ban-dao-tao/2026/03/document.pdf"
+  storage_bucket       string    → "rag-files"
+  file_size            int       → bytes
+  mime_type            string    → "application/pdf"
+  gemini_document_name string?   → "fileSearchStores/xxx/documents/yyy"
+  custom_metadata      object    → {"academic_year":"2024-2025","access_scope":"cong_khai"}
+  status               string    → UPLOADING | PROCESSING | ACTIVE | FAILED
+  created_at           datetime
+  updated_at           datetime
+
+Collection: metadata_types
+  _id               ObjectId
+  key               string UNIQUE  → "academic_year"
+  display_name      string         → "Năm học"
+  description       string
+  allowed_values    array?         → [{value, display_name, is_active, color}] | null
+  support_all_value bool           → true = filter thêm OR key="all"
+  is_active         bool           → false = ẩn / không validate
+  is_system         bool           → true = không cho xóa
+  created_at        datetime
+  updated_at        datetime
+
+Indexes (tạo bởi scripts/init_db.py):
+  file_search_stores: unique(store_name), index(is_default)
+  file_documents: index(store_id), index(status), unique(store_id + original_filename)
+  metadata_types: unique(key)
+
+
+================================================================================
+18. REPOSITORY LAYER
+================================================================================
+
+File: app/repositories/base.py + subclasses
+
+BaseRepository(collection_name: str):
+  Tất cả repository kế thừa BaseRepository.
+  collection property → lazy load Motor async collection
+
+  create(document: dict) → dict
+    Tự động thêm created_at, updated_at
+    Trả về dict với _id là string
+
+  find_by_id(doc_id: str) → dict | None
+    Tìm theo ObjectId, _id trả về là string
+
+  find_one(filter: dict) → dict | None
+
+  find_many(filter, sort, skip, limit) → list[dict]
+    Với pagination
+
+  update_by_id(doc_id, updates: dict) → dict | None
+    Dùng $set, tự động cập nhật updated_at
+
+  delete_by_id(doc_id: str) → bool
+
+  count(filter: dict) → int
+
+StoreRepository: collection "file_search_stores"
+  find_default_store() → dict | None
+  unset_all_defaults() → bỏ is_default tất cả stores
+  find_by_store_name(store_name) → dict | None
+
+FileRepository: collection "file_documents"
+  find_by_store_id(store_id, status, page, limit) → list
+  find_by_filename_in_store(store_id, filename) → dict | None
+  count_by_store(store_id) → int
+
+MetadataRepository: collection "metadata_types"
+  find_by_key(key: str) → dict | None
+  find_all_active() → list[dict]
+
+
+================================================================================
+19. STORAGE LAYER - MINIO
+================================================================================
+
+File: app/storage/minio_client.py
+
+Singleton: minio_storage (khởi tạo 1 lần khi import)
+Client: minio.Minio (sync, dùng asyncio.to_thread trong async context)
+
+Config:
+  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+  MINIO_BUCKET_NAME = "rag-files"
+  MINIO_USE_SSL = False (localhost) | True (production)
+
+Cac phuong thuc:
+  upload_file(bucket, path, data, size, mime_type) → True
+    Upsert (overwrite nếu đã tồn tại)
+
+  download_file(bucket, path) → bytes | None
+
+  delete_file(bucket, path) → True
+    Không raise nếu không tồn tại
+
+  generate_presigned_url(bucket, path, expires=3600) → str
+    URL download trực tiếp có thời hạn 1 giờ
+    Dùng trong chat sources để client download file
+
+  list_files(bucket, prefix) → list[str]
+
+  ensure_bucket_exists(bucket) → bool
+    Tạo bucket nếu chưa tồn tại
+
+
+================================================================================
+20. RABBITMQ CONSUMER
+================================================================================
+
+File: app/services/messaging/email_ingest_consumer.py
+
+Chạy trong thread riêng biệt (không trong FastAPI event loop).
+
+start_email_ingest_consumer(classifier, loop) → threading.Thread
+  - declare_email_ingest_queue() → đảm bảo queue tồn tại (durable=True)
+  - channel.basic_consume(queue, on_message, auto_ack=False)
+  - Chạy channel.start_consuming() trong thread daemon
+
+on_message(ch, method, properties, body):
+  1. _safe_json_loads(body) → parse bytes → dict
+     Lỗi JSON → basic_ack (hủy message)
+  2. IngestMessage.model_validate(payload)
+     Lỗi schema → basic_ack (tránh poison loop)
+  3. asyncio.run_coroutine_threadsafe(classifier.process_request(...), loop)
+     Kết nối thread RabbitMQ với asyncio event loop
+  4. fut.result(timeout=120)
+     Thành công → basic_ack
+     Timeout / exception → basic_nack + requeue=True
+
+Retry ket noi RabbitMQ:
+  Tối đa 10 lần, delay bắt đầu từ 5s, tăng dần, tối đa 60s
+  Exponential backoff
+
+RabbitMQ Service (rabbitmq_service.py):
+  get_rabbitmq_service() → singleton
+  declare_email_ingest_queue() → idempotent, durable=True
+  publish(queue, message) → gửi message dạng JSON
+
+
+================================================================================
+21. EXCEPTION HIERARCHY
+================================================================================
+
+File: app/core/exceptions.py
+
+EmailAIException(Exception):           Base class
+  message: str, status_code: int, details: dict | None
+
+  NotFoundException    (404) — Store/File/Metadata không tồn tại
+  ConflictException    (409) — Trùng tên store, trùng tên file, trùng key metadata
+  ForbiddenException   (403) — Xóa system metadata, xóa default store...
+  ValidationException  (400) — File quá lớn, sai extension, metadata không hợp lệ
+  StorageException     (500) — Lỗi MinIO
+  GeminiException      (502) — Lỗi Gemini API
+  RabbitMQException    (500) — Lỗi kết nối RabbitMQ
+  DatabaseException    (500) — Lỗi MongoDB
+
+HTTP endpoints tự động map exception → JSONResponse:
+  { "error": "ConflictException", "message": "Store name already exists", "details": {...} }
+
+DEBUG=true → response kèm thêm stack trace và request path
+
+
+================================================================================
+22. REST API ENDPOINTS (TOAN BO - 33 ENDPOINTS)
+================================================================================
+
+  HEALTH CHECK
+    GET  /health                           Kiểm tra service + kết nối Gemini/MongoDB
+    GET  /                                 Root — verify service running
+
+  EMAIL CLASSIFICATION
+    POST /process                          Phân loại email thủ công (NestJS gọi)
+    POST /api/test/classification/ingested Mô phỏng RabbitMQ message (dev/debug)
+
+  STORE MANAGEMENT (9 endpoints)
+    POST   /api/stores                     Tạo store mới
+    GET    /api/stores                     Liệt kê (? is_default, page, limit)
+    GET    /api/stores/gemini/list         Discovery từ Gemini API
+    GET    /api/stores/{store_id}          Chi tiết store
+    PATCH  /api/stores/{store_id}          Cập nhật display_name hoặc is_default
+    DELETE /api/stores/{store_id}          Xóa store (? force=false/true)
+    DELETE /api/stores/all                 Xóa TAT CA stores
+    DELETE /api/stores/gemini/all          Xóa tất cả stores trên Gemini (giữ MongoDB)
+    POST   /api/stores/{store_id}/syncs    Sync file_count + total_size từ Gemini
+
+  METADATA TYPES (5 endpoints)
+    POST   /api/metadata                   Tạo metadata type mới
+    GET    /api/metadata                   Liệt kê (? is_active)
+    GET    /api/metadata/{key}             Chi tiết theo key
+    PATCH  /api/metadata/{key}             Cập nhật (không đổi được key, is_system)
+                                           allowedValues: merge — value bất biến,
+                                           chỉ sửa displayName/isActive/color;
+                                           entry mới được thêm; entry vắng mặt giữ nguyên
+    DELETE /api/metadata/{key}             Soft delete: đặt isActive=false (200 + body)
+                                           Từ chối nếu is_system=true (403)
+
+  FILE MANAGEMENT (12 endpoints)
+    POST   /api/files                          Upload file (luôn đồng bộ)
+    GET    /api/files                          Liệt kê (? store_id, file_status, page, limit)
+    GET    /api/files/gemini/list              Discovery từ Gemini (? store_name)
+    GET    /api/files/check-sync               Kiểm tra đồng bộ DB/MinIO/Gemini
+    GET    /api/files/{file_id}                Chi tiết file
+    GET    /api/files/{file_id}/download       Download file từ MinIO
+    DELETE /api/files/{file_id}                Xóa file (MinIO + Gemini + MongoDB)
+    POST   /api/files/{file_id}/retry          Retry upload FAILED file lên Gemini
+    POST   /api/files/batch                    Batch upload nhiều file
+    POST   /api/files/sync                     Đồng bộ files giữa DB/MinIO/Gemini
+    DELETE /api/files/store/{store_id}/all     Xóa TAT CA files trong store
+    DELETE /api/files/store/{store_id}/gemini  Xóa files trên Gemini (giữ MinIO/MongoDB)
+
+  CHAT (2 endpoints)
+    POST /api/chat/query                   Chat RAG — response đầy đủ
+    POST /api/chat/stream                  Chat RAG — streaming SSE
+
+
+================================================================================
+23. CAU HINH (SETTINGS & .ENV)
+================================================================================
+
+File: app/core/config.py (Pydantic BaseSettings)
+Tự động load từ file .env trong thư mục gốc.
+
+BAT BUOC (server không khởi động nếu thiếu):
+  GOOGLE_API_KEY       Gemini API key
+  MONGODB_URL          MongoDB connection string
+  MINIO_ACCESS_KEY     MinIO access key
+  MINIO_SECRET_KEY     MinIO secret key
+
+GRPC (kết nối tới nest-api):
+  NEST_GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
+                       Dùng cho: AuthService.VerifyToken + EmailService.CreateDraft
+                       nest-api cần: START_GRPC=true và đang lắng nghe port 5000
+
+QUAN TRONG (có default):
+  LLM_MODEL            Model phân loại email     default: gemini-2.5-flash
+  GEMINI_MODEL         Model RAG chat/draft     default: gemini-2.5-flash
+  LLM_TEMPERATURE      Temperature classify     default: 0.1
+  GEMINI_TEMPERATURE   Temperature RAG          default: 0.7
+  GEMINI_MAX_OUTPUT_TOKENS                      default: 2048
+  MONGODB_DB_NAME      Tên database             default: email_ai_service
+  MINIO_ENDPOINT       MinIO server             default: localhost:9000
+  MINIO_BUCKET_NAME    MinIO bucket             default: rag-files
+  RABBITMQ_HOST        RabbitMQ host            default: localhost
+  RABBITMQ_PORT        RabbitMQ port            default: 5672
+  RABBITMQ_USER        RabbitMQ username        default: guest
+  RABBITMQ_PASSWORD    RabbitMQ password        default: guest
+  RABBITMQ_INGEST_QUEUE  Queue nhận email       default: email_ingest_queue
+
+TUY CHON:
+  MAX_FILE_SIZE_MB     Giới hạn upload          default: 20
+  ALLOWED_EXTENSIONS   Extension cho phép       default: .pdf,.docx,.doc,.txt,.md,.html
+  DEBUG                Bật debug mode          default: false
+  RELOAD               Uvicorn auto-reload       default: true
+  HOST                 Bind address              default: 0.0.0.0
+  PORT                 Bind port                 default: 8000
+  LLM_THINKING_LEVEL   Thinking level Gemini     default: (không bật)
+  CHUNKING_ENABLED     Bật chunking file        default: false
+
+
+================================================================================
+24. SCRIPTS HO TRO
+================================================================================
+
+scripts/seed_metadata.py
+  Tạo 3 system metadata type vào MongoDB.
+  Chạy 1 lần sau khi reset DB hoặc deploy lần đầu.
+  Idempotent: tự skip nếu key đã tồn tại.
+  CHAY: python scripts/seed_metadata.py
+        (từ thư mục python-rag, không dùng -m)
+
+scripts/init_db.py
+  Tạo indexes MongoDB cho 3 collection.
+  Chạy 1 lần khi deploy lần đầu.
+  CHAY: python scripts/init_db.py
+
+scripts/drop_database.py
+  XOA TOAN BO DATABASE. Chỉ dùng môi trường dev.
+  KHONG CHAY TREN PRODUCTION.
+  CHAY: python scripts/drop_database.py
+
+scripts/test_all_apis.sh
+  Bash script test 36 API endpoints:
+    Health → Classification → Stores → Metadata → Files → Chat
+  Tự động lưu STORE_ID và FILE_ID của test vừa tạo.
+  Hiển thị PASS / FAIL / SKIP cho từng test.
+  CHAY: bash scripts/test_all_apis.sh
+  TUY BIEN BIEN MOI TRUONG: AI_SERVICE_URL, JWT_TOKEN
+
+scripts/uploads/
+  test_document.txt   — Quy chế đào tạo (upload test)
+  test_document_2.txt — Quy định học bổng (batch upload test)
+
+
+================================================================================
+25. PROMPTS AI (CENTRALIZED)
+================================================================================
+
+File: app/core/prompts.py
+
+CHAT_SYSTEM_PROMPT
+  Vai tro: Trợ lý ảo hỗ trợ sinh viên về học vụ.
+  Nguyen tac:
+    - Chỉ trả lời dựa trên tài liệu RAG, KHONG bọa đặt
+    - Lịch sự, chuyên nghiệp, thân thiện
+    - Nếu không có thông tin: nói rõ, hướng dẫn liên hệ phòng Đào tạo
+    - Không tiết lộ thông tin cá nhân sinh viên khác
+    - Kết thúc bằng: "Bạn còn cần hỗ trợ gì nữa không?"
+
+CHAT_WITH_CONTEXT_TEMPLATE
+  Template kết hợp thông tin sinh viên + lịch sử chat + câu hỏi.
+  Bien: {student_name}, {student_id}, {cohort}, {chat_history}, {current_question}
+
+EMAIL_DRAFT_REPLY_PROMPT
+  Vai tro: Trợ lý soạn email trả lời cho phòng Giáo vụ.
+  Nguyen tac:
+    - BAT BUOC dùng thông tin từ tài liệu RAG
+    - Formal nhưng thân thiện, rõ ràng
+    - Nếu không có thông tin: nói rõ, hướng dẫn liên hệ trực tiếp
+    - Cấu trúc: Lời chào → Nội dung chính → Lời kết → Chữ ký Phòng Giáo vụ
+
+Classification prompt (inline trong LabelClassifierService):
+  System message định nghĩa 4 nhãn + rule ưu tiên
+  Output constraint: CHỈ 1 token duy nhất, không explanation
+
+================================================================================
+END OF PROJECT OVERVIEW
+================================================================================
