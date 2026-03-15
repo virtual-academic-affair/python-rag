@@ -41,6 +41,8 @@ def main() -> int:
     proto_targets = {
         "label": "label.proto",
         "class_registration": "class_registration.proto",
+        "auth": "auth.proto",
+        "task": "task.proto",
     }
 
     for target_dir, proto_name in proto_targets.items():

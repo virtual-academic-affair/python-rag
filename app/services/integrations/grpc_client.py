@@ -63,6 +63,28 @@ class GrpcClient:
                 exc,
             )
 
+        try:
+            pb2 = import_module("app.proto.auth.auth_pb2")
+            pb2_grpc = import_module("app.proto.auth.auth_pb2_grpc")
+            self._requests["auth_find_one_by_keyword"] = pb2.FindOneByKeywordRequest
+            self._requests["auth_verify_token"] = pb2.VerifyTokenRequest
+            self._stubs["auth"] = pb2_grpc.AuthServiceStub
+        except Exception as exc:
+            logger.warning(
+                "Auth gRPC stubs are not available yet. Run proto generation first. Details: %s",
+                exc,
+            )
+
+        try:
+            pb2 = import_module("app.proto.task.task_pb2")
+            pb2_grpc = import_module("app.proto.task.task_pb2_grpc")
+            self._requests["task_create"] = pb2.CreateTaskRequest
+            self._stubs["task"] = pb2_grpc.TaskServiceStub
+        except Exception as exc:
+            logger.warning(
+                "Task gRPC stubs are not available yet. Run proto generation first. Details: %s",
+                exc,
+            )
 
     @property
     def is_ready(self) -> bool:
@@ -194,6 +216,99 @@ class GrpcClient:
             return False
 
         logger.info("gRPC class registration success: %s", getattr(response, "message", ""))
+        return True
+
+    async def find_auth_user_by_keyword(self, keyword: str) -> dict | None:
+        if not self._config.enabled:
+            return None
+
+        request_cls = self._requests.get("auth_find_one_by_keyword")
+        if request_cls is None:
+            logger.warning("Skip gRPC auth lookup because request class is not ready")
+            return None
+
+        request = request_cls(keyword=keyword)
+        logger.info(
+            "gRPC auth FindOneByKeyword request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
+        response = await self._call(
+            service_key="auth",
+            rpc_name="FindOneByKeyword",
+            request=request,
+        )
+        if response is None:
+            return None
+
+        response_dict = MessageToDict(response, preserving_proto_field_name=True)
+        logger.info("gRPC auth FindOneByKeyword response: %s", response_dict)
+        return response_dict
+
+    async def verify_auth_token(self, token: str) -> dict | None:
+        if not self._config.enabled:
+            return None
+
+        request_cls = self._requests.get("auth_verify_token")
+        if request_cls is None:
+            logger.warning("Skip gRPC auth verify because request class is not ready")
+            return None
+
+        request = request_cls(token=token)
+        logger.info(
+            "gRPC auth VerifyToken request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
+        response = await self._call(
+            service_key="auth",
+            rpc_name="VerifyToken",
+            request=request,
+        )
+        if response is None:
+            return None
+
+        response_dict = MessageToDict(response, preserving_proto_field_name=True)
+        logger.info("gRPC auth VerifyToken response: %s", response_dict)
+        return response_dict
+
+    async def create_task(self, *, payload) -> bool:
+        if not self._config.enabled:
+            return True
+
+        request_cls = self._requests.get("task_create")
+        if request_cls is None:
+            logger.warning("Skip gRPC task create because request class is not ready")
+            return False
+
+        request = request_cls(
+            name=payload.name,
+            description=payload.description,
+            due=payload.due or "",
+            priority=payload.priority.value if hasattr(payload.priority, "value") else payload.priority,
+            assigners=list(payload.assigners or []),
+            assigneeIds=[int(item) for item in payload.assignee_ids or []],
+            messageId=int(payload.message_id or 0),
+        )
+        logger.info(
+            "gRPC task create request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
+        response = await self._call(
+            service_key="task",
+            rpc_name="Create",
+            request=request,
+        )
+        if response is None:
+            return False
+
+        logger.info(
+            "gRPC task create response: %s",
+            MessageToDict(response, preserving_proto_field_name=True),
+        )
+        if hasattr(response, "success") and not response.success:
+            logger.warning("gRPC task create rejected: %s", getattr(response, "message", ""))
+            return False
+
+        logger.info("gRPC task create success: %s", getattr(response, "message", ""))
         return True
 
 

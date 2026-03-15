@@ -105,7 +105,34 @@ class ClassRegistrationExtractResponse(BaseModel):
     extracted: ClassRegistrationPayload
 
 
-ResponseModel = LabelClassificationResponse | ClassRegistrationExtractResponse
+class TaskPayload(BaseModel):
+    """Structured payload for task emails."""
+
+    name: str = Field(default="")
+    description: str = Field(default="")
+    due: Optional[str] = Field(default=None)
+    priority: str = Field(default="")
+    assigners: List[str] = Field(default_factory=list)
+    assignee_ids: List[str] = Field(default_factory=list, alias="assigneeIds")
+    message_id: Optional[int] = Field(default=None, alias="messageId")
+
+    class Config:
+        populate_by_name = True
+
+
+class TaskExtractResponse(BaseModel):
+    """Classification + extracted payload for task emails."""
+
+    internal: InternalData
+    label: SystemLabel = Field(default=SystemLabel.Task)
+    extracted: TaskPayload
+
+
+ResponseModel = (
+    LabelClassificationResponse
+    | ClassRegistrationExtractResponse
+    | TaskExtractResponse
+)
 
 
 class ProcessResponse(BaseModel):
