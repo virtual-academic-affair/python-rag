@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from app.services.rag.email_draft_service import draft_inquiry_email_reply
-from app.services.grpc.nest_email_client import get_grpc_email_client
+from app.services.integrations.grpc_client import get_grpc_email_client
 
 logger = logging.getLogger(__name__)
 

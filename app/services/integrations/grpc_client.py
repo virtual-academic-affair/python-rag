@@ -15,6 +15,48 @@ from google.protobuf.json_format import MessageToDict
 
 from app.models.schemas import InternalData, SystemLabel
 
+
+class GrpcNestEmailClient:
+    def __init__(self, config: GrpcClientConfig):
+        self._config = config
+
+    async def create_draft(
+        self,
+        message_id: int,
+        draft_subject: str,
+        draft_body: str,
+    ) -> bool:
+        if not self._config.enabled:
+            return False
+        target = f"{self._config.host}:{self._config.port}"
+        try:
+            from importlib import import_module
+
+            pb2 = import_module("app.proto.email.email_pb2")
+            pb2_grpc = import_module("app.proto.email.email_pb2_grpc")
+            async with grpc.aio.insecure_channel(target) as channel:
+                stub = pb2_grpc.EmailServiceStub(channel)
+                request = pb2.CreateEmailDraftRequest(
+                    messageId=message_id,
+                    draftSubject=draft_subject,
+                    draftBody=draft_body,
+                )
+                response = await stub.CreateDraft(request, timeout=self._config.timeout_seconds)
+                logger.info("Gmail draft created via gRPC for messageId=%s", message_id)
+                return response.success
+        except grpc.aio.AioRpcError as exc:
+            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+                logger.warning(
+                    "EmailService.CreateDraft is not yet implemented on nest-api (messageId=%s). Skipping.",
+                    message_id,
+                )
+            else:
+                logger.warning("gRPC CreateDraft failed: %s — %s", exc.code(), exc.details())
+            return False
+        except Exception as exc:
+            logger.warning("gRPC CreateDraft unexpected error: %s", exc)
+            return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -315,4 +357,33 @@ class GrpcClient:
 # Backward compatibility with old names
 GrpcLabelClient = GrpcClient
 GrpcLabelClientConfig = GrpcClientConfig
+
+
+class GrpcNestEmailClientAdapter:
+    def __init__(self, config: GrpcClientConfig):
+        self._client = GrpcNestEmailClient(config)
+
+    async def create_draft(
+        self,
+        message_id: int,
+        draft_subject: str,
+        draft_body: str,
+    ) -> bool:
+        return await self._client.create_draft(
+            message_id=message_id,
+            draft_subject=draft_subject,
+            draft_body=draft_body,
+        )
+
+
+def get_grpc_email_client() -> GrpcNestEmailClientAdapter:
+    from app.core.config import settings
+    host, port = settings.NEST_GRPC_URL.split(":", 1)
+    config = GrpcClientConfig(
+        enabled=settings.GRPC_ENABLED,
+        host=host,
+        port=int(port),
+        timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
+    )
+    return GrpcNestEmailClientAdapter(config)
 
