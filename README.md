@@ -330,7 +330,7 @@ RABBITMQ_PASSWORD=guest
 RABBITMQ_INGEST_QUEUE=email.ingest
 
 # === gRPC (nest-api) ===
-NEST_GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + EmailService.CreateDraft
+GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + EmailService.CreateDraft
                                 # nest-api cần chạy với START_GRPC=true
 
 # === Upload ===
@@ -361,7 +361,7 @@ nest-api gửi email đến python-rag qua RabbitMQ queue `email.ingest`:
 
 ### Chiều gửi (gRPC) — python-rag → nest-api
 
-python-rag gọi nest-api qua gRPC theo hai luồng (cùng dùng `NEST_GRPC_URL`, port 5000):
+python-rag gọi nest-api qua gRPC theo hai luồng (cùng dùng `GRPC_URL`, port 5000):
 
 | Service | Method | Khi nào |
 |---|---|---|

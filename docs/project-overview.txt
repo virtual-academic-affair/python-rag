@@ -682,7 +682,7 @@ CƠ CHẾ AUTH:
    Quy trinh:
      1. Tách Bearer token từ Authorization header
      2. GrpcNestAuthClient.verify_token(token)
-        → gRPC call tới nest-api (NEST_GRPC_URL)
+        → gRPC call tới nest-api (GRPC_URL)
         → AuthService.VerifyToken(VerifyTokenRequest{token})
         → VerifyTokenResponse.payload {sub, email, role, ...}
      3. require_auth: trả về payload nếu hợp lệ, 401 nếu không
@@ -691,7 +691,7 @@ CƠ CHẾ AUTH:
    File gRPC: app/services/auth/grpc_nest_auth.py
    Proto:     app/proto/auth.proto (package app_server)
    Stub:      app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
-   Env:       NEST_GRPC_URL (default: localhost:5000)
+   Env:       GRPC_URL (default: localhost:5000)
 
    Lỗi kết nối gRPC:
      401 — Token không tồn tại / sai format
@@ -958,7 +958,7 @@ BAT BUOC (server không khởi động nếu thiếu):
   MINIO_SECRET_KEY     MinIO secret key
 
 GRPC (kết nối tới nest-api):
-  NEST_GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
+  GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
                        Dùng cho: AuthService.VerifyToken + EmailService.CreateDraft
                        nest-api cần: START_GRPC=true và đang lắng nghe port 5000
 

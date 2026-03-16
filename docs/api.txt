@@ -1034,7 +1034,7 @@ FLOW:
                                                InquiryResponse trả về /process
 
 GHI CHÚ gRPC CreateDraft:
-  - Gọi gRPC tới nest-api (NEST_GRPC_URL, port 5000) để tạo Gmail draft
+  - Gọi gRPC tới nest-api (GRPC_URL, port 5000) để tạo Gmail draft
   - Nếu nest-api trả UNIMPLEMENTED → bỏ qua (log warning), không crash
   - messageId = null (khi gọi từ /process HTTP) → không gọi gRPC, chỉ trả draft text
   - Proto: app/proto/email.proto, package app_server, EmailService.CreateDraft
@@ -1055,7 +1055,7 @@ python-rag gọi nest-api qua gRPC theo hai luồng:
    Stub:    app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
    Client:  app/services/auth/grpc_nest_auth.py (GrpcNestAuthClient)
    Dùng khi: Mọi request tới endpoint cần auth (require_auth / require_admin)
-   Env:     NEST_GRPC_URL (default: localhost:5000)
+   Env:     GRPC_URL (default: localhost:5000)
 
    Quy trinh:
      Authorization: Bearer <token>
@@ -1071,7 +1071,7 @@ python-rag gọi nest-api qua gRPC theo hai luồng:
    Stub:    app/proto/email_pb2_grpc.py (EmailServiceStub — client only)
    Client:  app/services/grpc/nest_email_client.py (GrpcNestEmailClient)
    Dùng khi: Sau khi Gemini soạn xong draft cho email inquiry
-   Env:     NEST_GRPC_URL (dùng chung với auth)
+   Env:     GRPC_URL (dùng chung với auth)
 
    Request:  CreateEmailDraftRequest { messageId, draftSubject, draftBody }
    Response: CreateEmailDraftResponse { success }

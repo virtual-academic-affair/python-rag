@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 from fastapi import Depends, Header, HTTPException, status
 
-from app.services.auth.grpc_nest_auth import get_grpc_auth_client
+from app.services.integrations.grpc_client import get_grpc_client
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,33 @@ async def _extract_token(authorization: str = Header(None, alias="Authorization"
 
 
 async def require_auth(token: str = Depends(_extract_token)) -> Dict[str, Any]:
-    client = get_grpc_auth_client()
-    payload = await client.verify_token(token)
-    if not payload:
+    client = get_grpc_client()
+
+    # If gRPC is disabled, reject all protected requests
+    if not client._config.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is disabled",
+        )
+
+    try:
+        payload = await client.verify_token(token)
+    except Exception as e:
+        logger.error(f"Unexpected error during token verification: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service error",
+        )
+
+    if payload is None:
+        # Distinguish between unavailable server and invalid token via client logs.
+        # verify_token() logs detailed reason internally, return generic 401 to client.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is invalid or expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     return payload
 
 

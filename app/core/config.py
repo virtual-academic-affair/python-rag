@@ -73,15 +73,10 @@ class Settings(BaseSettings):
     MINIO_DISABLED: bool = False
 
     # ====================================
-    # gRPC (nest-api)
-    # ====================================
-    NEST_GRPC_URL: str = "localhost:5000"
-
-    # ====================================
     # gRPC (shared workflows)
     # ====================================
     GRPC_ENABLED: bool = False
-    GRPC_URL: str = "103.20.96.59:5000"
+    GRPC_URL: str = "localhost:5000"
     GRPC_TIMEOUT_SECONDS: float = 3.0
 
     # ====================================
