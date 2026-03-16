@@ -286,31 +286,48 @@ class GrpcClient:
         logger.info("gRPC auth FindOneByKeyword response: %s", response_dict)
         return response_dict
 
-    async def verify_auth_token(self, token: str) -> dict | None:
+    async def verify_token(self, token: str) -> dict | None:
+        """
+        Verify a JWT token via gRPC AuthService.VerifyToken.
+
+        Returns:
+            dict — decoded JWT payload (e.g. {sub, email, role, ...}) if valid
+            None — if token is invalid/expired or gRPC is unavailable
+        """
         if not self._config.enabled:
+            logger.debug("gRPC is disabled (GRPC_ENABLED=False). Skipping token verification.")
             return None
 
+        stub_cls = self._stubs.get("auth")
         request_cls = self._requests.get("auth_verify_token")
-        if request_cls is None:
-            logger.warning("Skip gRPC auth verify because request class is not ready")
+        if stub_cls is None or request_cls is None:
+            logger.warning("Skip gRPC token verify because auth stubs are not ready")
             return None
 
-        request = request_cls(token=token)
-        logger.info(
-            "gRPC auth VerifyToken request: %s",
-            MessageToDict(request, preserving_proto_field_name=True),
-        )
-        response = await self._call(
-            service_key="auth",
-            rpc_name="VerifyToken",
-            request=request,
-        )
-        if response is None:
+        target = f"{self._config.host}:{self._config.port}"
+        try:
+            async with grpc.aio.insecure_channel(target) as channel:
+                stub = stub_cls(channel)
+                request = request_cls(token=token)
+                response = await stub.VerifyToken(request, timeout=self._config.timeout_seconds)
+                payload = dict(response.payload)
+                logger.debug("gRPC token verified, user: %s", payload.get("email", "unknown"))
+                return payload
+        except grpc.aio.AioRpcError as exc:
+            if exc.code() == grpc.StatusCode.UNAUTHENTICATED:
+                logger.info("gRPC token rejected (invalid/expired): %s", exc.details())
+            elif exc.code() == grpc.StatusCode.UNAVAILABLE:
+                logger.error("gRPC auth server unavailable at %s: %s", target, exc.details())
+            elif exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                logger.error(
+                    "gRPC token verification timed out after %.1fs", self._config.timeout_seconds
+                )
+            else:
+                logger.warning("gRPC VerifyToken error: %s — %s", exc.code(), exc.details())
             return None
-
-        response_dict = MessageToDict(response, preserving_proto_field_name=True)
-        logger.info("gRPC auth VerifyToken response: %s", response_dict)
-        return response_dict
+        except Exception as exc:
+            logger.warning("gRPC verify_token unexpected error: %s", exc)
+            return None
 
     async def create_task(self, *, payload) -> bool:
         if not self._config.enabled:
@@ -359,6 +376,30 @@ GrpcLabelClient = GrpcClient
 GrpcLabelClientConfig = GrpcClientConfig
 
 
+# ---------------------------------------------------------------------------
+# Singleton factory — use this for dependency injection (e.g. auth middleware)
+# ---------------------------------------------------------------------------
+
+_grpc_client_instance: GrpcClient | None = None
+
+
+def get_grpc_client() -> GrpcClient:
+    """Return the shared GrpcClient singleton, initialised from settings."""
+    global _grpc_client_instance
+    if _grpc_client_instance is None:
+        from app.core.config import settings
+        host, port = settings.GRPC_URL.split(":", 1)
+        _grpc_client_instance = GrpcClient(
+            GrpcClientConfig(
+                enabled=settings.GRPC_ENABLED,
+                host=host,
+                port=int(port),
+                timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
+            )
+        )
+    return _grpc_client_instance
+
+
 class GrpcNestEmailClientAdapter:
     def __init__(self, config: GrpcClientConfig):
         self._client = GrpcNestEmailClient(config)
@@ -378,7 +419,7 @@ class GrpcNestEmailClientAdapter:
 
 def get_grpc_email_client() -> GrpcNestEmailClientAdapter:
     from app.core.config import settings
-    host, port = settings.NEST_GRPC_URL.split(":", 1)
+    host, port = settings.GRPC_URL.split(":", 1)
     config = GrpcClientConfig(
         enabled=settings.GRPC_ENABLED,
         host=host,
