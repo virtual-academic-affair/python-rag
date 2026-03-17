@@ -338,24 +338,68 @@ class GrpcClient:
             logger.warning("Skip gRPC task create because request class is not ready")
             return False
 
+        assignee_ids: list[int] = []
+        for item in payload.assignee_ids or []:
+            try:
+                value = int(item)
+            except (TypeError, ValueError):
+                logger.warning("Skip non-numeric assignee id: %s", item)
+                continue
+            if value < -(2**31) or value > 2**31 - 1:
+                logger.warning("Skip out-of-range assignee id: %s", value)
+                continue
+            assignee_ids.append(value)
+
+        priority_value = payload.priority.value if hasattr(payload.priority, "value") else payload.priority
+        normalized_priority = priority_value or "medium"
         request = request_cls(
-            name=payload.name,
-            description=payload.description,
+            name=payload.name or "",
+            description=payload.description or "",
             due=payload.due or "",
-            priority=payload.priority.value if hasattr(payload.priority, "value") else payload.priority,
+            priority=normalized_priority,
             assigners=list(payload.assigners or []),
-            assigneeIds=[int(item) for item in payload.assignee_ids or []],
+            assigneeIds=assignee_ids,
             messageId=int(payload.message_id or 0),
         )
         logger.info(
             "gRPC task create request: %s",
-            MessageToDict(request, preserving_proto_field_name=True),
+            MessageToDict(
+                request,
+                preserving_proto_field_name=True,
+                including_default_value_fields=True,
+            ),
         )
         response = await self._call(
             service_key="task",
             rpc_name="Create",
             request=request,
         )
+        if response is None and assignee_ids:
+            logger.warning(
+                "gRPC task create failed with assigneeIds. Retrying without assigneeIds to avoid proto mismatch.",
+            )
+            request = request_cls(
+                name=payload.name or "",
+                description=payload.description or "",
+                due=payload.due or "",
+                priority=normalized_priority,
+                assigners=list(payload.assigners or []),
+                assigneeIds=[],
+                messageId=int(payload.message_id or 0),
+            )
+            logger.info(
+                "gRPC task create retry request: %s",
+                MessageToDict(
+                    request,
+                    preserving_proto_field_name=True,
+                    including_default_value_fields=True,
+                ),
+            )
+            response = await self._call(
+                service_key="task",
+                rpc_name="Create",
+                request=request,
+            )
         if response is None:
             return False
 

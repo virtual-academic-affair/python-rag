@@ -5,13 +5,14 @@ package app_server;
 import "common.proto";
 
 message CreateTaskRequest {
-  string name = 1;
-  string description = 2;
-  string due = 3;
-  string priority = 4;
-  repeated string assigners = 5;
-  repeated int32 assigneeIds = 6;
-  int32 messageId = 7;
+  int32 messageId = 1;
+  string status = 2;
+  repeated string assigners = 3;
+  string name = 4;
+  string description = 5;
+  string due = 6;
+  string priority = 7;
+  repeated int32 assigneeIds = 8;
 }
 
 service TaskService {

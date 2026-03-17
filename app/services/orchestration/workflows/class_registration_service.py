@@ -136,6 +136,7 @@ Output constraints (must follow):
             payload = ClassRegistrationPayload.model_validate(json.loads(json_str))
             if message_id is not None:
                 payload.message_id = message_id
+            payload.note = ""
             return payload
         except Exception as e:
             logger.error("ClassRegistration extraction failed: %s", str(e), exc_info=True)
