@@ -16,15 +16,16 @@ from google.protobuf.json_format import MessageToDict
 from app.models.schemas import InternalData, SystemLabel
 
 
-class GrpcNestEmailClient:
+class GrpcInquiryClient:
     def __init__(self, config: GrpcClientConfig):
         self._config = config
 
-    async def create_draft(
+    async def create_inquiry(
         self,
         message_id: int,
-        draft_subject: str,
         draft_body: str,
+        extracted_question: str | None = None,
+        inquiry_types: list[str] | None = None,
     ) -> bool:
         if not self._config.enabled:
             return False
@@ -32,29 +33,35 @@ class GrpcNestEmailClient:
         try:
             from importlib import import_module
 
-            pb2 = import_module("app.proto.email.email_pb2")
-            pb2_grpc = import_module("app.proto.email.email_pb2_grpc")
+            pb2 = import_module("app.proto.inquiry.inquiry_pb2")
+            pb2_grpc = import_module("app.proto.inquiry.inquiry_pb2_grpc")
             async with grpc.aio.insecure_channel(target) as channel:
-                stub = pb2_grpc.EmailServiceStub(channel)
-                request = pb2.CreateEmailDraftRequest(
-                    messageId=message_id,
-                    draftSubject=draft_subject,
-                    draftBody=draft_body,
-                )
-                response = await stub.CreateDraft(request, timeout=self._config.timeout_seconds)
-                logger.info("Gmail draft created via gRPC for messageId=%s", message_id)
+                stub = pb2_grpc.InquiryServiceStub(channel)
+                
+                kwargs = {
+                    "messageId": message_id,
+                    "answer": draft_body,
+                }
+                if extracted_question is not None:
+                    kwargs["question"] = extracted_question
+                if inquiry_types is not None:
+                    kwargs["types"] = inquiry_types
+                
+                request = pb2.CreateInquiryRequest(**kwargs)
+                response = await stub.Create(request, timeout=self._config.timeout_seconds)
+                logger.info("Inquiry created via gRPC for messageId=%s", message_id)
                 return response.success
         except grpc.aio.AioRpcError as exc:
             if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
                 logger.warning(
-                    "EmailService.CreateDraft is not yet implemented on nest-api (messageId=%s). Skipping.",
+                    "InquiryService.Create is not yet implemented on nest-api (messageId=%s). Skipping.",
                     message_id,
                 )
             else:
-                logger.warning("gRPC CreateDraft failed: %s — %s", exc.code(), exc.details())
+                logger.warning("gRPC InquiryService.Create failed: %s — %s", exc.code(), exc.details())
             return False
         except Exception as exc:
-            logger.warning("gRPC CreateDraft unexpected error: %s", exc)
+            logger.warning("gRPC Inquiry unexpected error: %s", exc)
             return False
 
 logger = logging.getLogger(__name__)
@@ -400,24 +407,26 @@ def get_grpc_client() -> GrpcClient:
     return _grpc_client_instance
 
 
-class GrpcNestEmailClientAdapter:
+class GrpcInquiryClientAdapter:
     def __init__(self, config: GrpcClientConfig):
-        self._client = GrpcNestEmailClient(config)
+        self._client = GrpcInquiryClient(config)
 
-    async def create_draft(
+    async def create_inquiry(
         self,
         message_id: int,
-        draft_subject: str,
         draft_body: str,
+        extracted_question: str = None,
+        inquiry_types: list[str] = None,
     ) -> bool:
-        return await self._client.create_draft(
+        return await self._client.create_inquiry(
             message_id=message_id,
-            draft_subject=draft_subject,
             draft_body=draft_body,
+            extracted_question=extracted_question,
+            inquiry_types=inquiry_types,
         )
 
 
-def get_grpc_email_client() -> GrpcNestEmailClientAdapter:
+def get_grpc_inquiry_client() -> GrpcInquiryClientAdapter:
     from app.core.config import settings
     host, port = settings.GRPC_URL.split(":", 1)
     config = GrpcClientConfig(
@@ -426,5 +435,5 @@ def get_grpc_email_client() -> GrpcNestEmailClientAdapter:
         port=int(port),
         timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
     )
-    return GrpcNestEmailClientAdapter(config)
+    return GrpcInquiryClientAdapter(config)
 
