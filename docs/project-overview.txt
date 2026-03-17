@@ -162,16 +162,13 @@ Giao tiếp với:
   |   |   |-- auth.proto           gRPC AuthService.VerifyToken (package app_server)
   |   |   |-- auth_pb2.py          Compiled protobuf
   |   |   |-- auth_pb2_grpc.py     AuthServiceStub (client-only)
-  |   |   |-- email.proto          gRPC EmailService.CreateDraft (package app_server)
-  |   |   |-- email_pb2.py         Compiled protobuf
-  |   |   +-- email_pb2_grpc.py    EmailServiceStub (client-only)
+  |   |   |-- inquiry.proto          gRPC InquiryService.Create (package app_server)
+  |   |   |-- inquiry_pb2.py         Compiled protobuf
+  |   |   +-- inquiry_pb2_grpc.py    EmailServiceStub (client-only)
   |   |
   |   |-- services/
-  |   |   |-- auth/
-  |   |   |   +-- grpc_nest_auth.py        GrpcNestAuthClient — verify qua gRPC
-  |   |   |
-  |   |   |-- grpc/
-  |   |   |   +-- nest_email_client.py     GrpcNestEmailClient — tạo Gmail draft
+  |   |   |-- integrations/
+  |   |   |   +-- grpc_client.py           Unified GrpcClient singleton (Auth, Inquiry, Label, Task...)
   |   |   |
   |   |   |-- messaging/
   |   |   |   |-- rabbitmq_service.py      Kết nối, declare queue, publish
@@ -381,10 +378,10 @@ ClassRegistrationService
 
 InquiryService
   1. Gọi draft_inquiry_email_reply() → Gemini RAG soạn draft
-  2. Nếu messageId != None: gọi GrpcNestEmailClient.create_draft(messageId, subject, body)
-     → gRPC CreateDraft tới nest-api Email Service → tạo Gmail draft
+  2. Nếu messageId != None: gọi GrpcClient.create_inquiry(messageId, answer, ...)
+     → gRPC InquiryService.Create tới nest-api → tạo Gmail draft
      → Graceful: bỏ qua nếu nest-api trả UNIMPLEMENTED
-  3. Trả về InquiryResponse (draft_subject, draft_body, sources)
+  3. Trả về InquiryResponse (answer, question, types, sources)
 
 TaskService
   Ghi log nội dung nhiệm vụ. Trả về label="task".
@@ -421,8 +418,8 @@ Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inqui
 
   5. Trả về:
      {
-       "draft_subject": "Re: Hỏi về điều kiện tốt nghiệp",
-       "draft_body": "Kính gửi em Nguyễn Văn A...",
+       "question": "Điều kiện tốt nghiệp là gì?",
+       "answer": "Kính gửi em Nguyễn Văn A...",
        "sources": [{"title":"...", "text":"...", "url":"..."}],
        "token_usage": {...}
      }
@@ -430,8 +427,8 @@ Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inqui
   Nếu lỗi → log warning, trả về fallback email (tránh crash toàn luồng)
 
   6. (InquiryService, sau bước 5) Nếu message_id != None:
-     GrpcNestEmailClient.create_draft(message_id, draft_subject, draft_body)
-     → gRPC CreateEmailDraftRequest(messageId, draftSubject, draftBody)
+     GrpcClient.create_inquiry(message_id, answer, question, types, sources)
+     → gRPC CreateInquiryRequest(messageId, answer, question, types, sources)
      → nest-api tạo Gmail draft, response CreateEmailDraftResponse { success }
      → UNIMPLEMENTED → log warning, tiếp tục (không raise exception)
 
@@ -584,7 +581,7 @@ Model: gemini-2.5-flash (cấu hình qua GEMINI_MODEL)
                       additional_context, store_name, metadata_filter) → dict
    Soạn email trả lời cho inquiry emails
    Dùng EMAIL_DRAFT_REPLY_PROMPT
-   Kết quả: { "draft_subject", "draft_body", "tone", "sources" }
+   Kết quả: { "answer", "question", "types", "sources" }
 
 Co che Gemini File Search:
   types.FileSearch(fileSearchStoreNames=[store_name], metadataFilter=filter_str)
@@ -681,14 +678,14 @@ CƠ CHẾ AUTH:
    Dùng cho: tất cả endpoint quản lý (stores, files, metadata write, download)
    Quy trinh:
      1. Tách Bearer token từ Authorization header
-     2. GrpcNestAuthClient.verify_token(token)
+     2. GrpcClient.verify_token(token)
         → gRPC call tới nest-api (GRPC_URL)
         → AuthService.VerifyToken(VerifyTokenRequest{token})
         → VerifyTokenResponse.payload {sub, email, role, ...}
      3. require_auth: trả về payload nếu hợp lệ, 401 nếu không
      4. require_admin: kiểm tra payload["role"] == "admin", 403 nếu không
 
-   File gRPC: app/services/auth/grpc_nest_auth.py
+   File gRPC: app/services/integrations/grpc_client.py
    Proto:     app/proto/auth.proto (package app_server)
    Stub:      app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
    Env:       GRPC_URL (default: localhost:5000)
@@ -959,7 +956,7 @@ BAT BUOC (server không khởi động nếu thiếu):
 
 GRPC (kết nối tới nest-api):
   GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
-                       Dùng cho: AuthService.VerifyToken + EmailService.CreateDraft
+                       Dùng cho: AuthService.VerifyToken + InquiryService.Create
                        nest-api cần: START_GRPC=true và đang lắng nghe port 5000
 
 QUAN TRONG (có default):

@@ -1,0 +1,16 @@
+syntax = "proto3";
+package app_server;
+
+import "common.proto";
+
+message CreateInquiryRequest {
+  int32 messageId = 1;
+  repeated string types = 2;
+  string question = 3;
+  string answer = 4;
+  repeated string sources = 5;
+}
+
+service InquiryService {
+  rpc Create(CreateInquiryRequest) returns (app_server.SuccessResponse);
+}

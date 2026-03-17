@@ -1,7 +1,7 @@
 """Common gRPC client for external integration calls.
 
 Keep all gRPC methods in this file. Services can call the corresponding
-method they need (e.g. update_label, notify_task, ...).
+method they need (e.g. update_label, notify_task, create_inquiry).
 """
 
 from __future__ import annotations
@@ -15,55 +15,6 @@ from google.protobuf.json_format import MessageToDict
 
 from app.models.schemas import InternalData, SystemLabel
 
-
-class GrpcInquiryClient:
-    def __init__(self, config: GrpcClientConfig):
-        self._config = config
-
-    async def create_inquiry(
-        self,
-        message_id: int,
-        draft_body: str,
-        extracted_question: str | None = None,
-        inquiry_types: list[str] | None = None,
-    ) -> bool:
-        if not self._config.enabled:
-            return False
-        target = f"{self._config.host}:{self._config.port}"
-        try:
-            from importlib import import_module
-
-            pb2 = import_module("app.proto.inquiry.inquiry_pb2")
-            pb2_grpc = import_module("app.proto.inquiry.inquiry_pb2_grpc")
-            async with grpc.aio.insecure_channel(target) as channel:
-                stub = pb2_grpc.InquiryServiceStub(channel)
-                
-                kwargs = {
-                    "messageId": message_id,
-                    "answer": draft_body,
-                }
-                if extracted_question is not None:
-                    kwargs["question"] = extracted_question
-                if inquiry_types is not None:
-                    kwargs["types"] = inquiry_types
-                
-                request = pb2.CreateInquiryRequest(**kwargs)
-                response = await stub.Create(request, timeout=self._config.timeout_seconds)
-                logger.info("Inquiry created via gRPC for messageId=%s", message_id)
-                return response.success
-        except grpc.aio.AioRpcError as exc:
-            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
-                logger.warning(
-                    "InquiryService.Create is not yet implemented on nest-api (messageId=%s). Skipping.",
-                    message_id,
-                )
-            else:
-                logger.warning("gRPC InquiryService.Create failed: %s — %s", exc.code(), exc.details())
-            return False
-        except Exception as exc:
-            logger.warning("gRPC Inquiry unexpected error: %s", exc)
-            return False
-
 logger = logging.getLogger(__name__)
 
 
@@ -76,86 +27,129 @@ class GrpcClientConfig:
 
 
 class GrpcClient:
-    """Shared gRPC client used by multiple services."""
+    """Shared gRPC client used by multiple services.
+    
+    This client maintains a single persistent gRPC channel for performance,
+    re-using it across all function calls.
+    """
 
     def __init__(self, config: GrpcClientConfig):
         self._config = config
         self._stubs: dict[str, object] = {}
         self._requests: dict[str, object] = {}
-        self._load_stubs()
+        self._channel: grpc.aio.Channel | None = None
+        
+        if self._config.enabled:
+            target = f"{self._config.host}:{self._config.port}"
+            self._channel = grpc.aio.insecure_channel(target)
+            self._load_stubs()
+
+    async def close(self):
+        """Close the underlying gRPC channel."""
+        if self._channel:
+            await self._channel.close()
+            self._channel = None
+
+    def _load_module(self, service_key: str, path_prefix: str, request_map: dict[str, str], stub_class_name: str) -> None:
+        """Helper to load a gRPC stub module gracefully."""
+        try:
+            pb2 = import_module(f"app.proto.{path_prefix}_pb2")
+            pb2_grpc = import_module(f"app.proto.{path_prefix}_pb2_grpc")
+            
+            for req_key, req_class_name in request_map.items():
+                self._requests[req_key] = getattr(pb2, req_class_name)
+                
+            self._stubs[service_key] = getattr(pb2_grpc, stub_class_name)(self._channel)
+        except Exception as exc:
+            logger.warning(
+                "%s gRPC stubs are not available yet. Run proto generation first. Details: %s",
+                service_key.capitalize(),
+                exc,
+            )
 
     def _load_stubs(self) -> None:
-        """Load generated protobuf stubs at runtime.
-
-        Expected generated modules:
-        - app/proto/label/label_pb2.py
-        - app/proto/label/label_pb2_grpc.py
-        """
-        try:
-            pb2 = import_module("app.proto.label.label_pb2")
-            pb2_grpc = import_module("app.proto.label.label_pb2_grpc")
-            self._requests["update_labels"] = pb2.UpdateLabelsRequest
-            self._stubs["message"] = pb2_grpc.MessageServiceStub
-        except Exception as exc:
-            logger.warning(
-                "gRPC stubs are not available yet. Run proto generation first. Details: %s",
-                exc,
-            )
-        try:
-            pb2 = import_module("app.proto.class_registration.class_registration_pb2")
-            pb2_grpc = import_module("app.proto.class_registration.class_registration_pb2_grpc")
-            self._requests["class_registration_create"] = pb2.CreateRegistrationRequest
-            self._stubs["class_registration"] = pb2_grpc.ClassRegistrationServiceStub
-        except Exception as exc:
-            logger.warning(
-                "Class registration gRPC stubs are not available yet. Run proto generation first. Details: %s",
-                exc,
-            )
-
-        try:
-            pb2 = import_module("app.proto.auth.auth_pb2")
-            pb2_grpc = import_module("app.proto.auth.auth_pb2_grpc")
-            self._requests["auth_find_one_by_keyword"] = pb2.FindOneByKeywordRequest
-            self._requests["auth_verify_token"] = pb2.VerifyTokenRequest
-            self._stubs["auth"] = pb2_grpc.AuthServiceStub
-        except Exception as exc:
-            logger.warning(
-                "Auth gRPC stubs are not available yet. Run proto generation first. Details: %s",
-                exc,
-            )
-
-        try:
-            pb2 = import_module("app.proto.task.task_pb2")
-            pb2_grpc = import_module("app.proto.task.task_pb2_grpc")
-            self._requests["task_create"] = pb2.CreateTaskRequest
-            self._stubs["task"] = pb2_grpc.TaskServiceStub
-        except Exception as exc:
-            logger.warning(
-                "Task gRPC stubs are not available yet. Run proto generation first. Details: %s",
-                exc,
-            )
+        """Load generated protobuf stubs at runtime and attach them to the channel."""
+        self._load_module(
+            service_key="message",
+            path_prefix="label.label",
+            request_map={"update_labels": "UpdateLabelsRequest"},
+            stub_class_name="MessageServiceStub"
+        )
+        
+        self._load_module(
+            service_key="class_registration",
+            path_prefix="class_registration.class_registration",
+            request_map={"class_registration_create": "CreateRegistrationRequest"},
+            stub_class_name="ClassRegistrationServiceStub"
+        )
+        
+        self._load_module(
+            service_key="auth",
+            path_prefix="auth.auth",
+            request_map={
+                "auth_find_one_by_keyword": "FindOneByKeywordRequest",
+                "auth_verify_token": "VerifyTokenRequest"
+            },
+            stub_class_name="AuthServiceStub"
+        )
+        
+        self._load_module(
+            service_key="task",
+            path_prefix="task.task",
+            request_map={"task_create": "CreateTaskRequest"},
+            stub_class_name="TaskServiceStub"
+        )
+        
+        self._load_module(
+            service_key="inquiry",
+            path_prefix="inquiry.inquiry",
+            request_map={"inquiry_create": "CreateInquiryRequest"},
+            stub_class_name="InquiryServiceStub"
+        )
 
     @property
     def is_ready(self) -> bool:
-        return self._config.enabled and bool(self._stubs)
+        return self._config.enabled and bool(self._stubs) and self._channel is not None
 
     async def _call(self, *, service_key: str, rpc_name: str, request) -> object | None:
+        """Centralized RPC executor using the persistent channel."""
         if not self._config.enabled:
             return None
-        stub_cls = self._stubs.get(service_key)
-        if stub_cls is None:
+            
+        stub = self._stubs.get(service_key)
+        if stub is None:
             logger.warning("Skip gRPC call %s because service '%s' is not ready", rpc_name, service_key)
             return None
 
-        target = f"{self._config.host}:{self._config.port}"
         try:
-            async with grpc.aio.insecure_channel(target) as channel:
-                stub = stub_cls(channel)
-                rpc = getattr(stub, rpc_name)
-                return await rpc(request, timeout=self._config.timeout_seconds)
+            rpc = getattr(stub, rpc_name)
+            return await rpc(request, timeout=self._config.timeout_seconds)
+        except grpc.aio.AioRpcError as exc:
+            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+                logger.warning(
+                    "%s.%s is not yet implemented on nest-api. Skipping.",
+                    service_key.capitalize(), rpc_name
+                )
+            elif exc.code() == grpc.StatusCode.UNAUTHENTICATED:
+                logger.info("gRPC call %s unauthenticated/rejected: %s", rpc_name, exc.details())
+            elif exc.code() == grpc.StatusCode.UNAVAILABLE:
+                logger.error("gRPC server unavailable for %s: %s", rpc_name, exc.details())
+            elif exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                logger.error("gRPC call %s timed out after %.1fs", rpc_name, self._config.timeout_seconds)
+            else:
+                logger.warning("gRPC call %s failed: %s — %s", rpc_name, exc.code(), exc.details())
+            
+            # Specific handling for verify token which uses these exceptions as expected flow
+            if rpc_name == "VerifyToken":
+                raise exc
+            return None
         except Exception as exc:
             logger.error("gRPC call %s failed: %s", rpc_name, exc, exc_info=True)
             return None
+
+    # =========================================================================
+    # Service Endpoints
+    # =========================================================================
 
     async def update_label(
         self,
@@ -203,17 +197,13 @@ class GrpcClient:
             MessageToDict(response, preserving_proto_field_name=True),
         )
         if not response.success:
-            logger.warning("gRPC update_labels rejected: %s", response.message)
+            logger.warning("gRPC update_labels rejected: %s", getattr(response, "message", "No message"))
             return False
 
-        logger.info("gRPC update_labels success: %s", response.message)
+        logger.info("gRPC update_labels success: %s", getattr(response, "message", "Ok"))
         return True
 
-    async def create_class_registration(
-        self,
-        *,
-        payload,
-    ) -> bool:
+    async def create_class_registration(self, *, payload) -> bool:
         if not self._config.enabled:
             return True
 
@@ -305,35 +295,25 @@ class GrpcClient:
             logger.debug("gRPC is disabled (GRPC_ENABLED=False). Skipping token verification.")
             return None
 
-        stub_cls = self._stubs.get("auth")
         request_cls = self._requests.get("auth_verify_token")
-        if stub_cls is None or request_cls is None:
+        if request_cls is None:
             logger.warning("Skip gRPC token verify because auth stubs are not ready")
             return None
 
-        target = f"{self._config.host}:{self._config.port}"
+        request = request_cls(token=token)
         try:
-            async with grpc.aio.insecure_channel(target) as channel:
-                stub = stub_cls(channel)
-                request = request_cls(token=token)
-                response = await stub.VerifyToken(request, timeout=self._config.timeout_seconds)
+            response = await self._call(
+                service_key="auth",
+                rpc_name="VerifyToken",
+                request=request
+            )
+            if response:
                 payload = dict(response.payload)
                 logger.debug("gRPC token verified, user: %s", payload.get("email", "unknown"))
                 return payload
-        except grpc.aio.AioRpcError as exc:
-            if exc.code() == grpc.StatusCode.UNAUTHENTICATED:
-                logger.info("gRPC token rejected (invalid/expired): %s", exc.details())
-            elif exc.code() == grpc.StatusCode.UNAVAILABLE:
-                logger.error("gRPC auth server unavailable at %s: %s", target, exc.details())
-            elif exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
-                logger.error(
-                    "gRPC token verification timed out after %.1fs", self._config.timeout_seconds
-                )
-            else:
-                logger.warning("gRPC VerifyToken error: %s — %s", exc.code(), exc.details())
             return None
-        except Exception as exc:
-            logger.warning("gRPC verify_token unexpected error: %s", exc)
+        except grpc.aio.AioRpcError:
+            # Errors already logged in _call method
             return None
 
     async def create_task(self, *, payload) -> bool:
@@ -377,18 +357,62 @@ class GrpcClient:
         logger.info("gRPC task create success: %s", getattr(response, "message", ""))
         return True
 
+    async def create_inquiry(
+        self,
+        message_id: int,
+        answer: str,
+        extracted_question: str | None = None,
+        inquiry_types: list[str] | None = None,
+        sources: list[str] | None = None,
+    ) -> bool:
+        """Service method: create an inquiry record via gRPC."""
+        if not self._config.enabled:
+            return True
+            
+        request_cls = self._requests.get("inquiry_create")
+        if request_cls is None:
+            logger.warning("Skip gRPC inquiry create because request class is not ready")
+            return False
 
-# Backward compatibility with old names
+        kwargs = {
+            "messageId": message_id,
+            "answer": answer,
+        }
+        if extracted_question is not None:
+            kwargs["question"] = extracted_question
+        if inquiry_types is not None:
+            kwargs["types"] = inquiry_types
+        if sources is not None:
+            import json
+            kwargs["sources"] = [json.dumps(s, ensure_ascii=False) if isinstance(s, dict) else str(s) for s in sources]
+            
+        request = request_cls(**kwargs)
+        response = await self._call(
+            service_key="inquiry",
+            rpc_name="Create",
+            request=request,
+        )
+        if response is None:
+            return False
+
+        if hasattr(response, "success") and not response.success:
+            logger.warning("gRPC inquiry create rejected")
+            return False
+            
+        logger.info("Inquiry created via gRPC for messageId=%s", message_id)
+        return True
+
+
+# Backward compatibility bindings
 GrpcLabelClient = GrpcClient
 GrpcLabelClientConfig = GrpcClientConfig
 
 
 # ---------------------------------------------------------------------------
-# Singleton factory — use this for dependency injection (e.g. auth middleware)
+# Singleton factory
 # ---------------------------------------------------------------------------
 
 _grpc_client_instance: GrpcClient | None = None
-
 
 def get_grpc_client() -> GrpcClient:
     """Return the shared GrpcClient singleton, initialised from settings."""
@@ -406,34 +430,7 @@ def get_grpc_client() -> GrpcClient:
         )
     return _grpc_client_instance
 
-
-class GrpcInquiryClientAdapter:
-    def __init__(self, config: GrpcClientConfig):
-        self._client = GrpcInquiryClient(config)
-
-    async def create_inquiry(
-        self,
-        message_id: int,
-        draft_body: str,
-        extracted_question: str = None,
-        inquiry_types: list[str] = None,
-    ) -> bool:
-        return await self._client.create_inquiry(
-            message_id=message_id,
-            draft_body=draft_body,
-            extracted_question=extracted_question,
-            inquiry_types=inquiry_types,
-        )
-
-
-def get_grpc_inquiry_client() -> GrpcInquiryClientAdapter:
-    from app.core.config import settings
-    host, port = settings.GRPC_URL.split(":", 1)
-    config = GrpcClientConfig(
-        enabled=settings.GRPC_ENABLED,
-        host=host,
-        port=int(port),
-        timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
-    )
-    return GrpcInquiryClientAdapter(config)
+def get_grpc_inquiry_client() -> GrpcClient:
+    """Backward compatibility alias."""
+    return get_grpc_client()
 

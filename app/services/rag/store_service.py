@@ -38,10 +38,10 @@ class StoreService:
     
     @property
     def gemini_client(self):
-        """Share Gemini client from GeminiService singleton."""
+        """Share Gemini client from GeminiClient singleton."""
         if self._gemini_client is None:
-            from app.services.rag.gemini_service import gemini_service
-            self._gemini_client = gemini_service.client
+            from app.services.rag.gemini_client import gemini_client
+            self._gemini_client = gemini_client.client
         return self._gemini_client
     
     @property

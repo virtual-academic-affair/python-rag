@@ -5,7 +5,7 @@ import sys
 
 import uvicorn
 
-from config.settings import settings
+from app.core.config import settings
 
 
 PROTO_STUBS = (

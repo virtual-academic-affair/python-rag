@@ -13,8 +13,8 @@ from app.api.router import api_router
 from app.models.schemas import ErrorResponse, HealthCheckResponse
 from app.core.config import settings
 from app.services.integrations.grpc_client import (
-    GrpcLabelClient,
-    GrpcLabelClientConfig,
+    GrpcClient,
+    GrpcClientConfig,
 )
 from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
 
@@ -40,7 +40,8 @@ rabbitmq_service = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Initialize and cleanup resources."""
-    global classifier
+    global email_orchestrator
+    global rabbitmq_service
 
     # Startup
     print("=" * 80)
@@ -89,8 +90,8 @@ async def lifespan(_: FastAPI):
         rabbitmq_service = None
 
     host, port = settings.GRPC_URL.split(":", 1)
-    grpc_client = GrpcLabelClient(
-        GrpcLabelClientConfig(
+    grpc_client = GrpcClient(
+        GrpcClientConfig(
             enabled=settings.GRPC_ENABLED,
             host=host,
             port=int(port),
@@ -102,22 +103,23 @@ async def lifespan(_: FastAPI):
         api_key=settings.GOOGLE_API_KEY,
         model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE,
-        grpc_label_client=grpc_client,
+        grpc_client=grpc_client,
     )
-    logger.info(f"LangChain classifier initialized with model: {settings.LLM_MODEL}")
+    email_orchestrator = classifier
+    logger.info(f"Email Workflow Orchestrator initialized with model: {settings.LLM_MODEL}")
 
     if rabbitmq_service is not None:
         try:
             from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
             loop = asyncio.get_running_loop()
-            start_email_ingest_consumer(classifier, loop=loop)
+            start_email_ingest_consumer(email_orchestrator, loop=loop)
             logger.info("Email ingest consumer started")
         except Exception as e:
             logger.warning(f"⚠️  Email consumer not started: {e}")
     
     # 6. Test Gemini API
     try:
-        from app.services.rag.gemini_service import gemini_service
+        from app.services.rag.gemini_client import gemini_client
         logger.info("✅ Gemini service initialized")
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
@@ -235,8 +237,8 @@ async def health_check():
     mongodb_connected = False
     
     try:
-        from app.services.rag.gemini_service import gemini_service
-        gemini_connected = gemini_service.client is not None
+        from app.services.rag.gemini_client import gemini_client
+        gemini_connected = gemini_client.client is not None
     except Exception:
         pass
     
@@ -274,7 +276,7 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=settings.DEBUG,
-        log_level="info",
+        reload=settings.RELOAD,
+        log_level=settings.UVICORN_LOG_LEVEL,
     )
 

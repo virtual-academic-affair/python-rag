@@ -60,9 +60,9 @@ python-rag/
 │   │   ├── auth.proto                  # gRPC AuthService.VerifyToken
 │   │   ├── auth_pb2.py                 # Compiled protobuf
 │   │   ├── auth_pb2_grpc.py            # AuthServiceStub (client-only)
-│   │   ├── email.proto                 # gRPC EmailService.CreateDraft
-│   │   ├── email_pb2.py                # Compiled protobuf
-│   │   └── email_pb2_grpc.py           # EmailServiceStub (client-only)
+│   │   ├── inquiry.proto                 # gRPC InquiryService.Create
+│   │   ├── inquiry_pb2.py                # Compiled protobuf
+│   │   └── inquiry_pb2_grpc.py           # EmailServiceStub (client-only)
 │   ├── repositories/
 │   │   ├── base.py                     # BaseRepository (CRUD generic)
 │   │   ├── file_repository.py
@@ -70,9 +70,9 @@ python-rag/
 │   │   └── metadata_repository.py
 │   ├── services/
 │   │   ├── auth/
-│   │   │   └── grpc_nest_auth.py       # GrpcNestAuthClient (verify qua gRPC)
+│   │   │   └── grpc_nest_auth.py       # GrpcClient (verify qua gRPC)
 │   │   ├── grpc/
-│   │   │   └── nest_email_client.py    # GrpcNestEmailClient (tạo Gmail draft)
+│   │   │   └── nest_email_client.py    # GrpcClient (tạo Gmail draft)
 │   │   ├── messaging/
 │   │   │   ├── rabbitmq_service.py     # RabbitMQ connection
 │   │   │   └── email_ingest_consumer.py # Consumer thread
@@ -261,8 +261,8 @@ EmailWorkflowOrchestrator.process_request()
      │                              ├── draft_inquiry_email_reply() (RAG)
      │                              │       └── GeminiService.draft_email_reply()
      │                              │                └── Gemini File Search store
-     │                              └── GrpcNestEmailClient.create_draft()
-     │                                      └── nest-api EmailService.CreateDraft (gRPC)
+     │                              └── GrpcClient.create_draft()
+     │                                      └── nest-api InquiryService.Create (gRPC)
      │
      ├─[task]──────────────▶ TaskService (log)
      │
@@ -330,7 +330,7 @@ RABBITMQ_PASSWORD=guest
 RABBITMQ_INGEST_QUEUE=email.ingest
 
 # === gRPC (nest-api) ===
-GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + EmailService.CreateDraft
+GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + InquiryService.Create
                                 # nest-api cần chạy với START_GRPC=true
 
 # === Upload ===
@@ -361,18 +361,14 @@ nest-api gửi email đến python-rag qua RabbitMQ queue `email.ingest`:
 
 ### Chiều gửi (gRPC) — python-rag → nest-api
 
-python-rag gọi nest-api qua gRPC theo hai luồng (cùng dùng `GRPC_URL`, port 5000):
+python-rag gọi nest-api qua gRPC dùng pool connection duy nhất với `grpc.aio`.
+Các endpoints hỗ trợ:
+- InquiryService.Create(messageId, answer, question, types, sources)
+- AuthService.VerifyToken()
+- MessageService.UpdateLabels()
+- Tasks/ClassReg
 
-| Service | Method | Khi nào |
-|---|---|---|
-| `AuthService` | `VerifyToken(token)` | Mọi request cần auth (require_auth/require_admin) |
-| `EmailService` | `CreateDraft(messageId, draftSubject, draftBody)` | Sau khi Gemini soạn xong draft cho email inquiry |
-
-> **Auth gRPC**: Pre-compiled stubs từ `app/proto/auth.proto`. Client: `app/services/auth/grpc_nest_auth.py`.
-> 
-> **Email gRPC**: Pre-compiled stubs từ `app/proto/email.proto`. Client: `app/services/grpc/nest_email_client.py`. Graceful nếu nest-api chưa implement (`UNIMPLEMENTED` → log warning, không crash).
->
-> **nest-api cần**: `START_GRPC=true` trong `.env` để bật gRPC server.
+Client hợp nhất: `app/services/integrations/grpc_client.py`.
 
 ---
 
@@ -543,8 +539,9 @@ DELETE /api/metadata/{id}               # Delete metadata type
 {
   "internal": {"mail_id": "12345", "id_record": "12345"},
   "label": "inquiry",
-  "draft_subject": "Re: Hỏi về lịch thi",
-  "draft_body": "Kính gửi bạn Nguyen Van A,\n\n...",
+  "question": "Lịch thi tổ chức khi nào?",
+      "types": ["procedure"],
+  "answer": "Kính gửi bạn Nguyen Van A,\n\n...",
   "tone": "formal-friendly",
   "sources": [...]
 }

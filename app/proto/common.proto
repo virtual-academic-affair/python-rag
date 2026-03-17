@@ -1,9 +1,7 @@
 syntax = "proto3";
-
 package app_server;
 
 message SuccessResponse {
   bool success = 1;
   string message = 2;
 }
-
