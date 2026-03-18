@@ -51,7 +51,10 @@ async def lifespan(_: FastAPI):
     print(f"🤖 Gemini Model: {settings.GEMINI_MODEL}")
     print(f"💾 Database: {settings.MONGODB_DB_NAME}")
     print(f"📦 Storage: MinIO ({settings.MINIO_ENDPOINT})")
-    print(f"🐰 Messaging: RabbitMQ ({settings.RABBITMQ_HOST})")
+    print(
+        "🐰 Messaging: RabbitMQ (%s)"
+        % (settings.RABBITMQ_HOST if settings.RABBITMQ_ENABLED else "disabled")
+    )
     print(f"🐛 Debug Mode: {settings.DEBUG}")
     print("=" * 80)
     
@@ -80,12 +83,16 @@ async def lifespan(_: FastAPI):
         logger.warning(f"⚠️  MinIO initialization warning: {e}")
 
     # 3. Initialize RabbitMQ service
-    try:
-        from app.services.messaging.rabbitmq_service import get_rabbitmq_service
-        rabbitmq_service = get_rabbitmq_service()
-        logger.info("✅ RabbitMQ service initialized")
-    except Exception as e:
-        logger.warning(f"⚠️  RabbitMQ not available: {e}")
+    if settings.RABBITMQ_ENABLED:
+        try:
+            from app.services.messaging.rabbitmq_service import get_rabbitmq_service
+            rabbitmq_service = get_rabbitmq_service()
+            logger.info("✅ RabbitMQ service initialized")
+        except Exception as e:
+            logger.warning(f"⚠️  RabbitMQ not available: {e}")
+            rabbitmq_service = None
+    else:
+        logger.info("🐰 RabbitMQ disabled via config")
         rabbitmq_service = None
 
     host, port = settings.GRPC_URL.split(":", 1)

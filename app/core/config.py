@@ -82,13 +82,14 @@ class Settings(BaseSettings):
     # ====================================
     # RabbitMQ Configuration
     # ====================================
+    RABBITMQ_ENABLED: bool = True
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_PORT: int = 5672
     RABBITMQ_USER: str = "guest"
     RABBITMQ_PASSWORD: str = "guest"
     RABBITMQ_VHOST: str = "/"
     RABBITMQ_INGEST_QUEUE: str = "email_ingest_queue"
-    
+
     # ====================================
     # File Upload Configuration
     # ====================================
