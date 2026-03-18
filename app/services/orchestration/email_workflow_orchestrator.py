@@ -12,7 +12,7 @@ from app.models.schemas import (
     SystemLabel,
     TaskExtractResponse,
 )
-from app.services.integrations.grpc_client import GrpcLabelClient
+from app.services.integrations.grpc_client import GrpcClient
 from app.services.orchestration.classification.label_classifier_service import (
     LabelClassifierService,
 )
@@ -34,14 +34,14 @@ class EmailWorkflowOrchestrator:
         api_key: str,
         model: str,
         temperature: float = 0.1,
-        grpc_label_client: GrpcLabelClient | None = None,
+        grpc_client: GrpcClient | None = None,
     ):
-        self.grpc_label_client = grpc_label_client
+        self.grpc_client = grpc_client
         self.label_classifier = LabelClassifierService(
             api_key=api_key,
             model=model,
             temperature=temperature,
-            grpc_label_client=grpc_label_client,
+            grpc_client=grpc_client,
         )
         self.class_registration_service = ClassRegistrationService(
             api_key=api_key,
@@ -83,8 +83,8 @@ class EmailWorkflowOrchestrator:
                 "classRegistration extracted payload: %s",
                 extracted.model_dump_json(by_alias=True, exclude_none=False),
             )
-            if self.grpc_label_client is not None:
-                grpc_ok = await self.grpc_label_client.create_class_registration(
+            if self.grpc_client is not None:
+                grpc_ok = await self.grpc_client.create_class_registration(
                     payload=extracted,
                 )
                 if not grpc_ok:
@@ -108,13 +108,13 @@ class EmailWorkflowOrchestrator:
                 "task extracted payload: %s",
                 extracted.model_dump_json(by_alias=True, exclude_none=False),
             )
-            if self.grpc_label_client is not None:
+            if self.grpc_client is not None:
                 resolved_assignee_ids: list[int] = []
                 seen_ids: set[int] = set()
                 keywords = [item.strip() for item in (extracted.assignee_ids or []) if item.strip()]
 
                 tasks = [
-                    self.grpc_label_client.find_auth_user_by_keyword(keyword)
+                    self.grpc_client.find_auth_user_by_keyword(keyword)
                     for keyword in keywords
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -128,7 +128,7 @@ class EmailWorkflowOrchestrator:
                         resolved_assignee_ids.append(user_id)
 
                 extracted.assignee_ids = resolved_assignee_ids
-                grpc_ok = await self.grpc_label_client.create_task(payload=extracted)
+                grpc_ok = await self.grpc_client.create_task(payload=extracted)
                 if not grpc_ok:
                     logger.warning(
                         "gRPC task create failed/rejected for message_id=%s",
@@ -140,9 +140,26 @@ class EmailWorkflowOrchestrator:
                 label=SystemLabel.Task,
                 extracted=extracted,
             )
+
         if label == SystemLabel.Inquiry:
-            await self.inquiry_service.process(title=title, content=content, message_id=message_id)
-        else:
+            draft_result = await self.inquiry_service.process(
+                title=title,
+                content=content,
+                message_id=message_id,
+            )
+            return InquiryResponse(
+                internal=internal_data,
+                label=SystemLabel.Inquiry,
+                inquiry=InquiryPayload(
+                    answer=draft_result["answer"],
+                    question=draft_result.get("question"),
+                    types=draft_result.get("types", []),
+                    sources=draft_result["sources"],
+                    message_id=message_id,
+                ),
+            )
+        
+        if label == SystemLabel.Other:
             await self.other_service.process(title=title, content=content, message_id=message_id)
 
         return LabelClassificationResponse(internal=internal_data, label=label)

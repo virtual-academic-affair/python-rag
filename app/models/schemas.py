@@ -1,6 +1,6 @@
 """Pydantic models for request and response schemas."""
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -134,11 +134,7 @@ class TaskExtractResponse(BaseModel):
     extracted: TaskPayload
 
 
-ResponseModel = (
-    LabelClassificationResponse
-    | ClassRegistrationExtractResponse
-    | TaskExtractResponse
-)
+
 
 
 class ProcessResponse(BaseModel):
@@ -192,6 +188,7 @@ class ChatHistoryItem(BaseModel):
 
 class SourceCitation(BaseModel):
     """Citation information from File Search grounding metadata."""
+    citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
     title: Optional[str] = Field(None, description="Document title/name")
     text: Optional[str] = Field(None, description="Relevant text excerpt from document")
     url: Optional[str] = Field(None, description="MinIO URL to view the document")
@@ -202,11 +199,22 @@ class SourceCitation(BaseModel):
 # INQUIRY WORKFLOW SCHEMAS
 # ====================================
 
+class InquiryIntent(BaseModel):
+    """Extracted intent from an inquiry email."""
+    question: str = Field(description="The main question or intent extracted from the email.")
+
+
+class InquiryTypesResult(BaseModel):
+    """Extracted array of inquiry types/categories."""
+    inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.", alias="inquiryTypes")
+
+
 class InquiryPayload(BaseModel):
     """Structured payload for inquiry emails (email draft response)."""
     
-    draft_subject: str = Field(..., alias="draftSubject", description="Suggested reply subject")
-    draft_body: str = Field(..., alias="draftBody", description="Generated reply email body")
+    answer: str = Field(..., description="Generated reply email body")
+    question: Optional[str] = Field(default=None, description="Extracted question/intent from the sender")
+    types: List[str] = Field(default_factory=list, description="Categorized inquiry types")
     sources: List[SourceCitation] = Field(default_factory=list, description="RAG source citations")
     message_id: Optional[int] = Field(default=None, alias="messageId", description="Original email message ID")
 
@@ -218,14 +226,17 @@ class InquiryResponse(BaseLabelResponse):
     """Classification + email draft payload for inquiry."""
 
     label: SystemLabel = Field(default=SystemLabel.Inquiry)
-    answer: InquiryPayload
+    inquiry: InquiryPayload
 
 
 # ====================================
 # UNION RESPONSE MODEL
 # ====================================
 
-ResponseModel = LabelClassificationResponse | ClassRegistrationExtractResponse | InquiryResponse
+from typing import Union
+from typing_extensions import TypeAlias
+
+ResponseModel: TypeAlias = Union[LabelClassificationResponse, ClassRegistrationExtractResponse, InquiryResponse, TaskExtractResponse]
 
 
 # ====================================

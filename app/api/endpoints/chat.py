@@ -13,9 +13,9 @@ from app.models.schemas import (
     ChatQueryResponse,
     ChatStreamRequest,
 )
-from app.services.rag.gemini_service import gemini_service
-from app.utils.store_utils import resolve_store
-from app.utils.filter_builder import convert_metadata_filter_to_gemini_format
+from app.services.rag.chat_service import chat_service
+from app.services.rag.utils.store_utils import resolve_store
+from app.services.rag.utils.filter_builder import convert_metadata_filter_to_gemini_format
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -50,7 +50,7 @@ async def chat_query(request: ChatQueryRequest):
         metadata_filter = convert_metadata_filter_to_gemini_format(request.metadata_filter)
         
         # Generate response using Gemini service
-        result = await gemini_service.generate_chat_response(
+        result = await chat_service.generate_chat_response(
             question=request.question,
             user_context=request.user_context,
             chat_history=request.chat_history,
@@ -102,7 +102,7 @@ async def chat_stream(request: ChatStreamRequest):
         async def event_generator():
             """Generator for SSE events."""
             try:
-                async for chunk_json in gemini_service.stream_chat_response(
+                async for chunk_json in chat_service.stream_chat_response(
                     question=request.question,
                     user_context=request.user_context,
                     chat_history=request.chat_history,

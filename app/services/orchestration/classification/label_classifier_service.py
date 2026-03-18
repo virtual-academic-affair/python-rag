@@ -5,7 +5,7 @@ import re
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.models.schemas import InternalData, SystemLabel
-from app.services.integrations.grpc_client import GrpcLabelClient
+from app.services.integrations.grpc_client import GrpcClient
 from app.services.orchestration.llm_factory import (
     build_classification_llm,
     chain_prompt,
@@ -56,9 +56,9 @@ class LabelClassifierService:
         api_key: str,
         model: str,
         temperature: float = 0.1,
-        grpc_label_client: GrpcLabelClient | None = None,
+        grpc_client: GrpcClient | None = None,
     ):
-        self.grpc_label_client = grpc_label_client
+        self.grpc_client = grpc_client
         self.llm = build_classification_llm(
             api_key=api_key,
             model=model,
@@ -178,8 +178,8 @@ Output constraints:
 
             logger.info("[CLASSIFY RESULT] normalized_label=%s", label)
 
-            if self.grpc_label_client is not None and internal_data is not None:
-                grpc_ok = await self.grpc_label_client.update_label(
+            if self.grpc_client is not None and internal_data is not None:
+                grpc_ok = await self.grpc_client.update_label(
                     internal_data=internal_data,
                     label=SystemLabel(label),
                     title=title,

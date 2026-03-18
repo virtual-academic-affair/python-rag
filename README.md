@@ -55,7 +55,7 @@ email_langchain/
 │   ├── proto/
 │   │   ├── auth/                       # Compiled protobuf auth
 │   │   ├── class_registration/         # Compiled protobuf class registration
-│   │   ├── email/                      # Compiled protobuf email draft
+│   │   ├── inquiry/                    # Compiled protobuf inquiry draft
 │   │   ├── label/                      # Compiled protobuf label update
 │   │   ├── task/                       # Compiled protobuf task
 │   │   ├── *.proto                     # Source proto files
@@ -67,7 +67,7 @@ email_langchain/
 │   │   └── metadata_repository.py
 │   ├── services/
 │   │   ├── integrations/
-│   │   │   └── grpc_client.py           # Shared gRPC client (label/task/class_reg)
+│   │   │   └── grpc_client.py           # Shared gRPC client
 │   │   ├── messaging/
 │   │   │   ├── rabbitmq_service.py      # RabbitMQ connection
 │   │   │   └── email_ingest_consumer.py # Consumer thread
@@ -249,7 +249,7 @@ EmailWorkflowOrchestrator.process_request()
      │
      ├─[inquiry]───────────▶ InquiryService.process()
      │                              ├── draft_inquiry_email_reply() (RAG)
-     │                              └── GrpcNestEmailClient.create_draft()
+     │                              └── GrpcClient.create_inquiry()
      │
      ├─[task]──────────────▶ TaskService → extract payload + GrpcClient.create_task()
      │
@@ -326,7 +326,7 @@ RABBITMQ_PASSWORD=guest
 RABBITMQ_INGEST_QUEUE=email.ingest
 
 # === gRPC (nest-api) ===
-GRPC_URL=localhost:5000
+GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + InquiryService.Create
 GRPC_ENABLED=true
 GRPC_TIMEOUT_SECONDS=15
 
@@ -336,6 +336,7 @@ ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html
 ```
 
 ---
+
 
 ## Scripts
 

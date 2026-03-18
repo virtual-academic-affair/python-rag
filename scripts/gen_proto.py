@@ -43,6 +43,7 @@ def main() -> int:
         "class_registration": "class_registration.proto",
         "auth": "auth.proto",
         "task": "task.proto",
+        "inquiry": "inquiry.proto",
     }
 
     for target_dir, proto_name in proto_targets.items():

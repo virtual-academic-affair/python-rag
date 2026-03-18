@@ -24,7 +24,7 @@ from app.models.enums import FileStatus
 from app.repositories.file_repository import FileRepository
 from app.repositories.store_repository import StoreRepository
 from app.storage.minio_client import minio_storage
-from app.utils.file_utils import (
+from app.services.rag.utils.file_utils import (
     validate_file_size,
     validate_file_extension,
     detect_mime_type,
@@ -105,10 +105,10 @@ class FileService:
 
     @property
     def gemini_client(self):
-        """Share Gemini client from GeminiService singleton."""
+        """Share Gemini client from GeminiClient singleton."""
         if self._gemini_client is None:
-            from app.services.rag.gemini_service import gemini_service
-            self._gemini_client = gemini_service.client
+            from app.services.rag.gemini_client import gemini_client
+            self._gemini_client = gemini_client.client
         return self._gemini_client
     
     async def _validate_metadata(self, custom_metadata: dict) -> None:
