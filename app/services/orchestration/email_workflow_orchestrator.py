@@ -4,7 +4,6 @@ import logging
 
 from app.models.schemas import (
     ClassRegistrationExtractResponse,
-    InternalData,
     InquiryResponse,
     InquiryPayload,
     LabelClassificationResponse,
@@ -58,7 +57,7 @@ class EmailWorkflowOrchestrator:
 
     async def process_request(
         self,
-        internal_data: InternalData,
+        message_id: int | None,
         title: str,
         content: str,
         sender_email: str = "",
@@ -67,11 +66,9 @@ class EmailWorkflowOrchestrator:
         label = await self.label_classifier.classify(
             title=title,
             content=content,
-            internal_data=internal_data,
+            message_id=message_id,
         )
         logger.info("Classification result: %s", label.value)
-
-        message_id = int(internal_data.mail_id) if str(internal_data.mail_id).isdigit() else None
 
         if label == SystemLabel.ClassRegistration:
             extracted = await self.class_registration_service.process(
@@ -93,7 +90,7 @@ class EmailWorkflowOrchestrator:
                         extracted.message_id,
                     )
             return ClassRegistrationExtractResponse(
-                internal=internal_data,
+                message_id=message_id,
                 label=SystemLabel.ClassRegistration,
                 extracted=extracted,
             )
@@ -136,7 +133,7 @@ class EmailWorkflowOrchestrator:
                     )
 
             return TaskExtractResponse(
-                internal=internal_data,
+                message_id=message_id,
                 label=SystemLabel.Task,
                 extracted=extracted,
             )
@@ -148,7 +145,7 @@ class EmailWorkflowOrchestrator:
                 message_id=message_id,
             )
             return InquiryResponse(
-                internal=internal_data,
+                message_id=message_id,
                 label=SystemLabel.Inquiry,
                 inquiry=InquiryPayload(
                     answer=draft_result["answer"],
@@ -158,9 +155,9 @@ class EmailWorkflowOrchestrator:
                     message_id=message_id,
                 ),
             )
-        
+
         if label == SystemLabel.Other:
             await self.other_service.process(title=title, content=content, message_id=message_id)
 
-        return LabelClassificationResponse(internal=internal_data, label=label)
+        return LabelClassificationResponse(label=label, message_id=message_id)
 

@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Depends
 
 from app.models.schemas import (
     IngestMessage,
-    InternalData,
     ProcessResponse,
     RequestData,
 )
@@ -33,11 +32,11 @@ async def process_request(
 ):
     """Process email title/content and return one of 4 supported labels."""
     try:
-        logger.info(f"Processing request for mail_id: {request.internal.mail_id}")
+        logger.info("Processing manual request")
         logger.debug(f"Title: {request.title[:100]}...")
 
         result = await classifier_service.process_request(
-            internal_data=request.internal,
+            message_id=None,
             title=request.title,
             content=request.content,
             sender_email="",  # Manual endpoint - no sender info
@@ -62,19 +61,14 @@ async def test_classification_from_ingested_payload(
 ):
     """Test endpoint: process one RabbitMQ 'ingested' payload directly."""
     try:
-        email_id = payload.data.id
+        message_id = payload.data.message_id
         logger.info(
-            "Test classification from ingested payload, id=%s",
-            email_id,
-        )
-
-        internal = InternalData(
-            mail_id=str(email_id),
-            id_record=str(email_id),
+            "Test classification from ingested payload, messageId=%s",
+            message_id,
         )
 
         result = await classifier_service.process_request(
-            internal_data=internal,
+            message_id=message_id,
             title=payload.data.subject,
             content=payload.data.content,
             sender_email=payload.data.sender_email,

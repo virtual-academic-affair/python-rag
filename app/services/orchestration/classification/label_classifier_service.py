@@ -4,7 +4,7 @@ import re
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.models.schemas import InternalData, SystemLabel
+from app.models.schemas import SystemLabel
 from app.services.integrations.grpc_client import GrpcClient
 from app.services.orchestration.llm_factory import (
     build_classification_llm,
@@ -144,7 +144,7 @@ Output constraints:
         self,
         title: str,
         content: str,
-        internal_data: InternalData | None = None,
+        message_id: int | None = None,
     ) -> SystemLabel:
         try:
             rendered_messages = self.classification_prompt.format_messages(
@@ -178,16 +178,16 @@ Output constraints:
 
             logger.info("[CLASSIFY RESULT] normalized_label=%s", label)
 
-            if self.grpc_client is not None and internal_data is not None:
+            if self.grpc_client is not None and message_id is not None:
                 grpc_ok = await self.grpc_client.update_label(
-                    internal_data=internal_data,
+                    message_id=message_id,
                     label=SystemLabel(label),
                     title=title,
                 )
                 if not grpc_ok:
                     logger.warning(
-                        "gRPC label update failed/rejected in classifier for mail_id=%s",
-                        internal_data.mail_id,
+                        "gRPC label update failed/rejected in classifier for message_id=%s",
+                        message_id,
                     )
 
             if label == SystemLabel.Other.value and raw_label:

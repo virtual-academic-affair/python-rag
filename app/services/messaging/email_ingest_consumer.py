@@ -4,7 +4,7 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from app.models.schemas import InternalData, IngestMessage
+from app.models.schemas import IngestMessage
 from app.services.messaging.rabbitmq_service import get_rabbitmq_service
 
 logger = logging.getLogger(__name__)
@@ -17,13 +17,10 @@ def _safe_json_loads(body: bytes) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _build_internal_data(payload: Dict[str, Any]) -> InternalData:
+def _get_message_id(payload: Dict[str, Any]) -> Optional[int]:
     data = payload.get("data") or {}
     message_id = data.get("messageId")
-    return InternalData(
-        mail_id=str(message_id) if message_id is not None else "",
-        id_record=str(message_id) if message_id is not None else "",
-    )
+    return message_id if isinstance(message_id, int) else None
 
 
 def start_email_ingest_consumer(
@@ -64,8 +61,6 @@ def start_email_ingest_consumer(
         title = msg.data.subject
         content = msg.data.content
 
-        internal = InternalData(mail_id=str(message_id), id_record=str(message_id))
-
         logger.info(
             "Parsed ingest message: messageId=%s senderEmail=%s senderName=%s subject=%r content_len=%s",
             message_id,
@@ -75,15 +70,15 @@ def start_email_ingest_consumer(
             len(content),
         )
         logger.info(
-            "LLM input -> internal=%s title=%r content_preview=%r",
-            internal.model_dump(),
+            "LLM input -> messageId=%s title=%r content_preview=%r",
+            message_id,
             title,
             content[:500],
         )
 
         async def _handle():
             return await classifier.process_request(
-                internal_data=internal,
+                message_id=message_id,
                 title=title,
                 content=content,
                 sender_email=msg.data.sender_email,

@@ -14,17 +14,9 @@ class SystemLabel(str, Enum):
     Other = "other"
 
 
-class InternalData(BaseModel):
-    """Internal data that should be returned exactly as received."""
-
-    mail_id: str = Field(..., description="Mail identifier")
-    id_record: str = Field(..., description="Record identifier")
-
-
 class RequestData(BaseModel):
     """Manual request payload for HTTP endpoint."""
 
-    internal: InternalData
     title: str = Field(..., description="Email title/subject")
     content: str = Field(..., description="Email content/body")
 
@@ -32,8 +24,11 @@ class RequestData(BaseModel):
 class LabelClassificationResponse(BaseModel):
     """Classification result for one email."""
 
-    internal: InternalData
+    message_id: Optional[int] = Field(default=None, alias="messageId")
     label: SystemLabel
+
+    class Config:
+        populate_by_name = True
 
 
 class IngestEmailData(BaseModel):
@@ -100,8 +95,11 @@ class ClassRegistrationPayload(BaseModel):
 class BaseLabelResponse(BaseModel):
     """Base response for classification endpoints."""
 
-    internal: InternalData
+    message_id: Optional[int] = Field(default=None, alias="messageId")
     label: SystemLabel
+
+    class Config:
+        populate_by_name = True
 
 
 class ClassRegistrationExtractResponse(BaseLabelResponse):
@@ -129,7 +127,6 @@ class TaskPayload(BaseModel):
 class TaskExtractResponse(BaseModel):
     """Classification + extracted payload for task emails."""
 
-    internal: InternalData
     label: SystemLabel = Field(default=SystemLabel.Task)
     extracted: TaskPayload
 

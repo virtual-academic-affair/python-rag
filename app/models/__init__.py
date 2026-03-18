@@ -5,7 +5,6 @@ from .schemas import (
     ClassRegistrationPayload,
     IngestEmailData,
     IngestMessage,
-    InternalData,
     LabelClassificationResponse,
     ProcessResponse,
     RegistrationAction,
@@ -15,7 +14,6 @@ from .schemas import (
 )
 
 __all__ = [
-    "InternalData",
     "SystemLabel",
     "RegistrationAction",
     "RequestData",

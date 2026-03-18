@@ -13,7 +13,7 @@ from importlib import import_module
 import grpc
 from google.protobuf.json_format import MessageToDict
 
-from app.models.schemas import InternalData, SystemLabel
+from app.models.schemas import SystemLabel
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ class GrpcClient:
     async def update_label(
         self,
         *,
-        internal_data: InternalData,
+        message_id: int,
         label: SystemLabel,
         title: str | None = None,
     ) -> bool:
@@ -168,12 +168,8 @@ class GrpcClient:
             logger.warning("Skip gRPC label update because request class is not ready")
             return False
 
-        message_id = int(internal_data.mail_id) if str(internal_data.mail_id).isdigit() else None
         if message_id is None:
-            logger.warning(
-                "Skip gRPC label update because mail_id is not numeric: %s",
-                internal_data.mail_id,
-            )
+            logger.warning("Skip gRPC label update because message_id is missing")
             return False
 
         request = request_cls(
