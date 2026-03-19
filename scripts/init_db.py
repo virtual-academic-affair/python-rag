@@ -98,40 +98,22 @@ async def clear_r2_bucket():
     """Delete all files from R2 bucket."""
     logger.info("Clearing R2 bucket...")
 
-    from r2 import R2
-    from r2.error import S3Error
-
-    r2_endpoint = os.getenv("R2_ENDPOINT", "localhost:9000")
-    r2_access_key = os.getenv("R2_ACCESS_KEY", "r2admin")
-    r2_secret_key = os.getenv("R2_SECRET_KEY", "r2admin")
-    r2_bucket = os.getenv("R2_BUCKET_NAME", "rag-files")
-    r2_secure = os.getenv("R2_USE_SSL", "false").lower() == "true"
-
-    client = R2(
-        r2_endpoint,
-        access_key=r2_access_key,
-        secret_key=r2_secret_key,
-        secure=r2_secure
-    )
-
+    from app.storage.r2_client import R2Storage
+    
     try:
-        if not client.bucket_exists(r2_bucket):
-            logger.info(f"  Bucket '{r2_bucket}' does not exist. Creating...")
-            client.make_bucket(r2_bucket)
-            logger.info(f"  ✓ Created bucket: {r2_bucket}")
+        storage = R2Storage()
+        files = await storage.list_files()
+        if not files:
+            logger.info("  Bucket is already empty")
         else:
-            objects = client.list_objects(r2_bucket, recursive=True)
             delete_count = 0
-            for obj in objects:
-                client.remove_object(r2_bucket, obj.object_name)
+            for f in files:
+                await storage.delete_file(f["name"])
                 delete_count += 1
+            
+            logger.info(f"  ✓ Deleted {delete_count} files from bucket")
 
-            if delete_count > 0:
-                logger.info(f"  ✓ Deleted {delete_count} files from bucket")
-            else:
-                logger.info("  Bucket is already empty")
-
-    except S3Error as e:
+    except Exception as e:
         logger.warning(f"  R2 error (continuing): {e}")
 
     logger.info("✅ R2 bucket cleared")
@@ -199,75 +181,9 @@ async def create_database_indexes():
 
 
 async def seed_system_metadata_types():
-    """Seed system metadata types (academic_year, cohort, access_scope) directly via service."""
-    logger.info("Seeding system metadata types...")
-
-    # Import here so the DB connection from create_database_indexes is not reused
-    from app.core.database import Database
-    from app.services.rag.metadata_service import MetadataService
-    from app.models.database import AllowedValue
-    from app.core.exceptions import ConflictException
-
-    await Database.connect()
-    metadata_service = MetadataService()
-
-    system_types = [
-        {
-            "key": "academic_year",
-            "display_name": "Năm học",
-            "description": "Năm học áp dụng (VD: 2023-2024, 2024-2025). Dùng 'all' cho tất cả năm học.",
-            "allowed_values": [
-                AllowedValue(value="2022-2023", display_name="2022-2023", is_active=False),
-                AllowedValue(value="2023-2024", display_name="2023-2024", is_active=True),
-                AllowedValue(value="2024-2025", display_name="2024-2025", is_active=True),
-                AllowedValue(value="2025-2026", display_name="2025-2026", is_active=True),
-                AllowedValue(value="all", display_name="Tất cả năm học", is_active=True, color="#3498DB"),
-            ],
-            "is_system": True,
-        },
-        {
-            "key": "cohort",
-            "display_name": "Khóa",
-            "description": "Khóa sinh viên (VD: K18, K19, K20). Dùng 'all' cho tất cả khóa.",
-            "allowed_values": [
-                AllowedValue(value="K18", display_name="Khóa 18", is_active=False),
-                AllowedValue(value="K19", display_name="Khóa 19", is_active=True),
-                AllowedValue(value="K20", display_name="Khóa 20", is_active=True),
-                AllowedValue(value="K21", display_name="Khóa 21", is_active=True),
-                AllowedValue(value="K22", display_name="Khóa 22", is_active=True),
-                AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB"),
-            ],
-            "is_system": True,
-        },
-        {
-            "key": "access_scope",
-            "display_name": "Phạm vi truy cập",
-            "description": "Quyền truy cập tài liệu (công khai cho tất cả, hoặc nội bộ cho staff/admin).",
-            "allowed_values": [
-                AllowedValue(value="cong_khai", display_name="Công khai", is_active=True, color="#27AE60"),
-                AllowedValue(value="noi_bo", display_name="Nội bộ (Staff/Admin)", is_active=True, color="#E74C3C"),
-            ],
-            "is_system": True,
-        },
-    ]
-
-    created = 0
-    skipped = 0
-    for meta_def in system_types:
-        key = meta_def["key"]
-        try:
-            await metadata_service.create_metadata_type(**meta_def)
-            logger.info(f"  ✓ Created system metadata: {key}")
-            created += 1
-        except ConflictException:
-            logger.info(f"  ⚠ Already exists (skipped): {key}")
-            skipped += 1
-        except Exception as e:
-            logger.warning(f"  ⚠ Error creating {key}: {e}")
-
-    await Database.disconnect()
-    logger.info(f"✅ System metadata seeded: {created} created, {skipped} skipped")
-
+    """Seed system metadata types by calling the central seed script."""
+    from scripts.seed_metadata import seed_system_metadata
+    await seed_system_metadata()
 
 async def create_metadata_types(metadata_types: list):
     """Create non-system metadata types via API (requires admin auth)."""

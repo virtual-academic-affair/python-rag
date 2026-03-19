@@ -246,9 +246,13 @@ class AllowedValueSchema(BaseModel):
     display_name: str = Field(..., alias="displayName", description="Display name for UI")
     is_active: bool = Field(True, alias="isActive", description="Active status (hidden if False)")
     color: Optional[str] = Field(None, description="Hex color code (e.g., #E74C3C)")
+    total_files: int = Field(default=0, alias="totalFiles", description="Count of files using this value")
     
     class Config:
         populate_by_name = True
+
+class AllowedValueResponse(AllowedValueSchema):
+    pass
 
 
 class CreateMetadataTypeRequest(BaseModel):
@@ -284,6 +288,7 @@ class MetadataTypeResponse(BaseModel):
     display_name: str = Field(..., alias="displayName")
     description: str
     allowed_values: Optional[List[AllowedValueSchema]] = Field(None, alias="allowedValues")
+    total_files: int = Field(default=0, alias="totalFiles", description="Count of files using this metadata type")
     is_active: bool = Field(..., alias="isActive")
     is_system: bool = Field(..., alias="isSystem")
     created_at: str = Field(..., alias="createdAt")

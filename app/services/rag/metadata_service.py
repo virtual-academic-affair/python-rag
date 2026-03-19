@@ -127,6 +127,7 @@ class MetadataService:
                         "display_name": new_av.display_name,
                         "is_active": new_av.is_active,
                         "color": new_av.color,
+                        "total_files": existing_values_map[vk].get("total_files", 0)
                     }
                 else:
                     existing_values_map[vk] = new_av.to_dict()
@@ -143,13 +144,14 @@ class MetadataService:
         logger.info(f"Updated metadata type: {key}")
         return _to_metadata_model(updated)
 
-    async def delete_metadata_type(self, key: str) -> MetadataTypeDocument:
+    async def delete_metadata_type(self, key: str) -> None:
         """
-        Soft-delete a metadata type by setting is_active=False.
+        Hard-delete a metadata type. Can only delete if total_files == 0.
 
         Raises:
             NotFoundException: If metadata type not found
             ForbiddenException: If is_system=True
+            ConflictException: If total_files > 0
         """
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
@@ -157,13 +159,47 @@ class MetadataService:
 
         if existing.get("is_system", False):
             raise ForbiddenException(
-                f"Cannot deactivate system metadata type: '{key}'. "
+                f"Cannot delete system metadata type: '{key}'. "
                 "System metadata types are protected."
             )
+            
+        if existing.get("total_files", 0) > 0:
+            raise ConflictException(
+                f"Cannot delete metadata type '{key}' because it is in use by {existing.get('total_files')} files."
+            )
 
-        await self.metadata_repo.update_by_key(key, {"is_active": False})
+        await self.metadata_repo.delete_by_key(key)
+        logger.info(f"Hard-deleted metadata type: {key}")
+
+    async def delete_metadata_value(self, key: str, value: str) -> MetadataTypeDocument:
+        """
+        Hard-delete a metadata value from allowed_values. Can only delete if total_files == 0 for this value.
+        
+        Raises:
+            NotFoundException: If metadata type not found
+            ConflictException: If value total_files > 0 or value not found
+        """
+        existing = await self.metadata_repo.find_by_key(key)
+        if not existing:
+            raise NotFoundException("MetadataType", key)
+            
+        allowed_values = existing.get("allowed_values") or []
+        target_value = next((v for v in allowed_values if v["value"] == value), None)
+        
+        if not target_value:
+            raise NotFoundException(f"Metadata value '{value}' in type '{key}'", value)
+            
+        if target_value.get("total_files", 0) > 0:
+            raise ConflictException(
+                f"Cannot delete metadata value '{value}' because it is in use by {target_value.get('total_files')} files."
+            )
+            
+        # Remove target value
+        allowed_values = [v for v in allowed_values if v["value"] != value]
+        
+        await self.metadata_repo.update_by_key(key, {"allowed_values": allowed_values})
         updated = await self.metadata_repo.find_by_key(key)
-        logger.info(f"Deactivated metadata type: {key}")
+        logger.info(f"Hard-deleted metadata value: {value} from type {key}")
         return _to_metadata_model(updated)
     
     async def get_metadata_type(self, key: str) -> Optional[MetadataTypeDocument]:

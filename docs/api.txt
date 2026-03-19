@@ -390,8 +390,8 @@ RESPONSE 404 Not Found:
 ════════════════════════════════════════════════════════════════════════════════
 
 🔒 XÁC THỰC:
-   - GET /api/metadata          → Public (không cần auth)
-   - GET /api/metadata/{key}    → Public (không cần auth)
+   - GET /api/metadata                        → Authentication: Required (any valid user)
+   - GET /api/metadata/{key}                  → Authentication: Required (any valid user)
    - POST /api/metadata         → Yêu cầu role admin
    - PATCH /api/metadata/{key}  → Yêu cầu role admin
    - DELETE /api/metadata/{key} → Yêu cầu role admin
@@ -471,6 +471,7 @@ RESPONSE 409 Conflict:
 
 MÔ TẢ:
   Liệt kê tất cả metadata type definitions.
+  Authentication: Required (any valid user)
 
 QUERY PARAMETERS:
   - is_active: bool (optional) - Lọc theo trạng thái active
@@ -491,6 +492,9 @@ RESPONSE 200 OK:
 ────────────────────────────────────────────────────────────────────────────────
 4.3. GET /api/metadata/{key} - Lấy Metadata Type theo key
 ────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Authentication: Required (any valid user)
 
 RESPONSE 200 OK: (MetadataTypeResponse)
 
@@ -1037,8 +1041,8 @@ GHI CHÚ gRPC CreateDraft:
   - Gọi gRPC tới nest-api (GRPC_URL, port 5000) để tạo Gmail draft
   - Nếu nest-api trả UNIMPLEMENTED → bỏ qua (log warning), không crash
   - messageId = null (khi gọi từ /process HTTP) → không gọi gRPC, chỉ trả draft text
-  - Proto: app/proto/email.proto, package app_server, EmailService.CreateDraft
-  - Client: app/services/grpc/nest_email_client.py (GrpcNestEmailClient)
+  - Proto: app/proto/inquiry.proto, package app_server, InquiryService.Create
+  - Client: app/services/integrations/grpc_client.py (GrpcClient)
 
 Để test email draft: Dùng POST /api/test/classification/ingested
 với subject + content là nội dung inquiry.
@@ -1053,7 +1057,7 @@ python-rag gọi nest-api qua gRPC theo hai luồng:
 1. XÁC THỰC JWT (AuthService.VerifyToken)
    Proto:   app/proto/auth.proto    (package app_server)
    Stub:    app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
-   Client:  app/services/auth/grpc_nest_auth.py (GrpcNestAuthClient)
+   Client:  app/services/integrations/grpc_client.py (GrpcClient)
    Dùng khi: Mọi request tới endpoint cần auth (require_auth / require_admin)
    Env:     GRPC_URL (default: localhost:5000)
 
@@ -1066,10 +1070,10 @@ python-rag gọi nest-api qua gRPC theo hai luồng:
        → {sub, email, role, ...}
      require_admin: kiểm thêm role == "admin" → 403 nếu không phải
 
-2. TẠO GMAIL DRAFT (EmailService.CreateDraft)
-   Proto:   app/proto/email.proto   (package app_server)
-   Stub:    app/proto/email_pb2_grpc.py (EmailServiceStub — client only)
-   Client:  app/services/grpc/nest_email_client.py (GrpcNestEmailClient)
+2. TẠO GMAIL DRAFT (InquiryService.Create)
+   Proto:   app/proto/inquiry.proto   (package app_server)
+   Stub:    app/proto/inquiry_pb2_grpc.py (InquiryServiceStub — client only)
+   Client:  app/services/integrations/grpc_client.py (GrpcClient)
    Dùng khi: Sau khi Gemini soạn xong draft cho email inquiry
    Env:     GRPC_URL (dùng chung với auth)
 

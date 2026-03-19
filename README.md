@@ -34,13 +34,17 @@ Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiế
 ## Cấu trúc thư mục
 
 ```
-email_langchain/
+python-rag/
 ├── app/
 │   ├── main.py                         # FastAPI app + lifespan
 │   ├── api/
 │   │   ├── router.py                   # Tổng hợp tất cả router
 │   │   └── endpoints/
-│   │       └── classification.py       # POST /process, /api/test/classification/ingested
+│   │       ├── classification.py       # POST /process, /api/test/classification/ingested
+│   │       ├── stores.py               # CRUD store + Gemini sync
+│   │       ├── files.py                # Upload, download, retry, batch, delete
+│   │       ├── metadata.py             # CRUD metadata types
+│   │       └── chat.py                 # POST /api/chat/query, /api/chat/stream
 │   ├── core/
 │   │   ├── config.py                   # Settings từ .env (pydantic-settings)
 │   │   ├── database.py                 # MongoDB connection (Motor)
@@ -82,17 +86,20 @@ email_langchain/
 │   │   │       ├── task_service.py
 │   │   │       └── other_service.py
 │   │   └── rag/
-│   │       ├── gemini_service.py       # Gemini client (chat + draft)
+│   │       ├── chat_service.py         # POST /api/chat/query, /api/chat/stream
+│   │       ├── email_draft_service.py  # Hàm soạn email trả lời (RAG)
 │   │       ├── file_service.py         # Upload file → R2 + Gemini
-│   │       ├── store_service.py        # Quản lý Gemini File Search store
+│   │       ├── gemini_client.py        # Gemini client singleton
 │   │       ├── metadata_service.py     # CRUD + validate metadata types
-│   │       └── email_draft_service.py  # Hàm soạn email trả lời (RAG)
+│   │       ├── store_service.py        # Quản lý Gemini File Search store
+│   │       └── utils/
+│   │           ├── file_utils.py       # Validate size, extension, MIME
+│   │           ├── filter_builder.py   # Build Gemini filter string
+│   │           ├── gemini_rag_utils.py # Helpers cho Gemini RAG
+│   │           └── store_utils.py      # Resolve store ID, convert filter
 │   ├── storage/
 │   │   └── r2_client.py             # R2 client singleton
 │   └── utils/
-│       ├── filter_builder.py           # Build Gemini filter string
-│       ├── store_utils.py              # Resolve store ID, convert filter
-│       ├── file_utils.py               # Validate size, extension, MIME
 │       ├── db_utils.py                 # MongoDB helper
 │       └── pagination.py               # Paginated response helper
 ├── config/
@@ -203,12 +210,14 @@ POST /api/chat/stream
 
 ### Files
 ```
-POST   /api/files
-POST   /api/files/batch
-GET    /api/files
-GET    /api/files/{id}
-DELETE /api/files/{id}
-DELETE /api/files/bulk
+POST   /api/files                   # Upload file
+POST   /api/files/batch             # Upload nhiều file
+GET    /api/files                   # Lấy danh sách file
+GET    /api/files/check-sync        # Kiểm tra đồng bộ file
+GET    /api/files/{id}              # Thông tin file
+GET    /api/files/{id}/download     # Tải file từ Cloudflare R2
+DELETE /api/files/{id}              # Hard delete (MongoDB + R2 + Gemini)
+DELETE /api/files/all               # Hard delete tất cả file trong store
 ```
 
 ### Stores
@@ -225,8 +234,9 @@ DELETE /api/stores/{id}
 POST   /api/metadata
 GET    /api/metadata
 GET    /api/metadata/{key}
-PATCH  /api/metadata/{key}
-DELETE /api/metadata/{key}
+PATCH  /api/metadata/{key}                  # Soft Delete hỗ trợ qua việc chỉnh sửa `is_active`
+DELETE /api/metadata/{key}                  # Explicit Hard Delete API (Chỉ xóa nếu totalFiles == 0)
+DELETE /api/metadata/{key}/values/{value}   # Tương tự cho Delete AllowedValue
 ```
 
 ---
@@ -284,7 +294,7 @@ Service gọi nest-api qua gRPC:
 | Service | Method | Khi nào |
 |---|---|---|
 | AuthService | VerifyToken(token) | Mọi request cần auth |
-| EmailService | CreateDraft(messageId, draftSubject, draftBody) | Sau khi soạn xong draft inquiry |
+| InquiryService | Create(CreateInquiryRequest) | Sau khi soạn xong draft inquiry |
 | TaskService | Create(CreateTaskRequest) | Khi label = task |
 | ClassRegistrationService | Create(CreateRegistrationRequest) | Khi label = classRegistration |
 

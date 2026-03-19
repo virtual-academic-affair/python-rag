@@ -99,9 +99,20 @@ def extract_sources(response) -> tuple[Optional[list[dict]], dict]:
     if hasattr(candidate, "grounding_metadata") and candidate.grounding_metadata:
         metadata = candidate.grounding_metadata
         
+        # Collect actually used chunk indices from grounding_supports
+        used_indices = set()
+        if hasattr(metadata, "grounding_supports") and metadata.grounding_supports:
+            for support in metadata.grounding_supports:
+                if hasattr(support, "grounding_chunk_indices"):
+                    for idx in support.grounding_chunk_indices:
+                        used_indices.add(idx)
+        
         # Extract from grounding_chunks (File Search results)
         if hasattr(metadata, "grounding_chunks") and metadata.grounding_chunks:
             for idx, chunk in enumerate(metadata.grounding_chunks):
+                if idx not in used_indices:
+                    continue
+                    
                 citation = None
                 # Check for retrieved_context (File Search)
                 if hasattr(chunk, "retrieved_context") and chunk.retrieved_context:

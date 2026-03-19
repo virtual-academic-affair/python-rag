@@ -54,6 +54,7 @@ async def draft_email_reply(
     config = types.GenerateContentConfig(
         temperature=0.7,
         max_output_tokens=1500,
+        response_mime_type="text/plain",
     )
     
     # Add File Search tool

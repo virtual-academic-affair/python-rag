@@ -217,10 +217,6 @@ async def update_store(store_id: str, request: UpdateStoreRequest, _admin: Dict[
             detail=f"Failed to update store: {str(e)}",
         )
 
-
-# NOTE: Static routes (/all, /gemini/all) must come BEFORE dynamic routes (/{store_id})
-# to prevent FastAPI from matching "all" as a store_id parameter.
-
 @router.delete(
     "/all",
     response_model=BulkDeleteResponse,
@@ -310,7 +306,7 @@ async def delete_store(
 
 
 @router.post(
-    "/{store_id}/syncs",
+    "/{store_id}/sync",
     response_model=StoreDetailResponse,
     summary="Sync store stats",
     description="Synchronize store statistics with Gemini API.",

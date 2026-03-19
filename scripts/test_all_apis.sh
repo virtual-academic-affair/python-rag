@@ -12,6 +12,7 @@ API_URL="${BASE_URL}/api"
 # JWT Token (admin role) — thay đổi nếu cần
 TOKEN=""
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+TIMESTAMP=$(date +%s)
 
 # Colors
 RED='\033[0;31m'
@@ -225,10 +226,10 @@ log_info "POST /api/stores — Tao store moi (require_admin)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
-    -d '{
-        "display_name": "Test Store 2026",
-        "set_as_default": true
-    }' 2>/dev/null || echo -e "\n000")
+    -d "{
+        \"display_name\": \"Test Store ${TIMESTAMP}\",
+        \"set_as_default\": true
+    }" 2>/dev/null || echo -e "\n000")
 
 if check_response "$RESPONSE" "201" "Create Store"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -267,19 +268,12 @@ if [ -n "$STORE_ID" ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/stores/${STORE_ID}" \
         -H "Content-Type: application/json" \
         -H "${AUTH_HEADER}" \
-        -d '{"display_name": "Test Store 2026 (Updated)"}' \
+        -d "{\"display_name\": \"Test Store ${TIMESTAMP} (Updated)\"}" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update Store"
 else
     log_skip "Update Store — bo qua (STORE_ID chua duoc set)"
 fi
-
-# 4.6 Discovery tu Gemini
-log_info "GET /api/stores/gemini/list — Discovery tu Gemini API (require_admin)"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/stores/gemini/list" \
-    -H "${AUTH_HEADER}" \
-    2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "List Gemini Stores"
 
 # 4.7 Sync thong ke
 if [ -n "$STORE_ID" ]; then
@@ -309,7 +303,7 @@ log_header "4. METADATA TYPES"
 for KEY in department; do
     HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "${API_URL}/metadata/${KEY}" \
         -H "${AUTH_HEADER}" 2>/dev/null || echo "000")
-    if [ "$HTTP" = "200" ]; then
+    if [ "$HTTP" = "204" ]; then
         log_info "Da xoa metadata type ton tai: $KEY (de tao lai)"
     fi
 done
@@ -328,8 +322,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata" \
             { "value": "khcn",    "displayName": "KHCN",    "isActive": true, "color": "#2ECC71" },
             { "value": "ctsv",    "displayName": "CTSV",    "isActive": true, "color": "#E74C3C" },
             { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6" }
-        ],
-        "supportAllValue": true
+        ]
     }' 2>/dev/null || echo -e "\n000")
 HTTP_CODE_META=$(echo "$RESPONSE" | tail -n1)
 if [ "$HTTP_CODE_META" = "201" ]; then
@@ -355,19 +348,19 @@ fi
 
 # 5.2 Kiem tra system metadata type: access_scope
 log_info "GET /api/metadata/access_scope — Xac nhan system type ton tai"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/metadata/access_scope" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/access_scope" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Get System Metadata Type — access_scope (seeded)"
 
 # 5.3 Liet ke
 log_info "GET /api/metadata — Liet ke tat ca"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/metadata" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Metadata Types"
 
 # 5.4 Chi tiet
 log_info "GET /api/metadata/${METADATA_KEY} — Chi tiet"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/metadata/${METADATA_KEY}" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/${METADATA_KEY}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Get Metadata Type — department"
 
@@ -387,17 +380,17 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/metadata/${METADATA_
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Update Metadata Type — them htqt"
 
-# 5.6 Thu xoa system type (expect 400/403)
-log_info "DELETE /api/metadata/access_scope — Xoa system type (expect 400/403)"
+# 5.6 Thu xoa system type (expect 409)
+log_info "DELETE /api/metadata/access_scope — Xoa system type (expect 409)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/access_scope" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-if [ "$HTTP_CODE" = "400" ] || [ "$HTTP_CODE" = "403" ]; then
+if [ "$HTTP_CODE" = "403" ]; then
     log_success "Cannot delete system metadata — Bi tu choi dung (HTTP $HTTP_CODE)"
     echo "$RESPONSE" | sed '$d'
 else
-    log_error "Cannot delete system metadata — Expected 400/403, got $HTTP_CODE"
+    log_error "Cannot delete system metadata — Expected 403, got $HTTP_CODE"
     echo "$RESPONSE" | sed '$d'
 fi
 
@@ -424,7 +417,7 @@ if [ -n "$STORE_ID" ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
         -F "file=@${TEST_FILE}" \
-        -F "display_name=Quy che dao tao 2026" \
+        -F "display_name=Quy che dao tao ${TIMESTAMP}" \
         -F "store_id=${STORE_ID}" \
         -F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}' \
         2>/dev/null || echo -e "\n000")
@@ -438,7 +431,7 @@ else
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
         -F "file=@${TEST_FILE}" \
-        -F "display_name=Quy che dao tao 2026" \
+        -F "display_name=Quy che dao tao ${TIMESTAMP}" \
         -F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}' \
         2>/dev/null || echo -e "\n000")
     if check_response "$RESPONSE" "201" "Upload File (default store)"; then
@@ -450,7 +443,7 @@ fi
 
 # 6.2 Upload file thu hai
 log_info "POST /api/files — Upload file thu hai (require_admin)"
-UPLOAD_ARGS=(-F "file=@${TEST_FILE_2}" -F "display_name=Quy dinh hoc bong 2026")
+UPLOAD_ARGS=(-F "file=@${TEST_FILE_2}" -F "display_name=Quy dinh hoc bong ${TIMESTAMP}")
 [ -n "$STORE_ID" ] && UPLOAD_ARGS+=(-F "store_id=${STORE_ID}")
 UPLOAD_ARGS+=(-F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
@@ -486,11 +479,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?status=active" \
 check_response "$RESPONSE" "200" "List Files by status=active"
 
 # 6.6 Discovery tu Gemini
-log_info "GET /api/files/gemini/list — Discovery tu Gemini API (require_admin)"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/gemini/list" \
+log_info "GET /api/files/check-sync — Comparison across DB, R2, Gemini (require_admin)"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/check-sync" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "List Gemini Files"
+check_response "$RESPONSE" "200" "Check Sync Status"
 
 # 6.7 Chi tiet file
 if [ -n "$FILE_ID" ]; then
@@ -524,18 +517,18 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     -H "${AUTH_HEADER}" \
     -F "files=@${TEST_FILE}" \
     -F "files=@${TEST_FILE_2}" \
-    -F 'display_names=["Quy che batch 1", "Quy che batch 2"]' \
+    -F "display_names=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
     -F 'metadata_list=[{"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"},{"department":"khcn","access_scope":"cong_khai","academic_year":"2025-2026"}]' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 
 # 6.10 Sync check trang thai file
 if [ -n "$FILE_ID" ]; then
-    log_info "GET /api/files/${FILE_ID}/sync-check — Kiem tra trang thai Gemini (require_auth)"
-    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}/sync-check" \
+    log_info "GET /api/files/${FILE_ID} — Detail check (require_auth)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
-    check_response "$RESPONSE" "200" "Sync Check File Status"
+    check_response "$RESPONSE" "200" "Get File Detail"
 else
     log_skip "Sync Check File — bo qua (FILE_ID chua duoc set)"
 fi

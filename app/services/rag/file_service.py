@@ -5,10 +5,12 @@ Handles file uploads, downloads, deletions, and integrations with Cloudflare R2 
 
 import asyncio
 import logging
+import os
+import tempfile
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Optional, BinaryIO
+from typing import Optional, BinaryIO, List, Tuple
 from dataclasses import dataclass, field
 
 from app.core.config import settings
@@ -42,6 +44,7 @@ class UploadStep(Enum):
     DB_CREATED = "db_created"
     R2_UPLOADED = "r2_uploaded"
     GEMINI_UPLOADED = "gemini_uploaded"
+    METADATA_SYNCED = "metadata_synced"
     COMPLETED = "completed"
 
 
@@ -54,6 +57,7 @@ class UploadState:
     file_id: Optional[str] = None
     storage_path: Optional[str] = None
     gemini_document_name: Optional[str] = None
+    custom_metadata: Optional[dict] = None
     completed_steps: list = field(default_factory=list)
     
     def mark_step(self, step: UploadStep):
@@ -152,6 +156,7 @@ class FileService:
         display_name: Optional[str] = None,
         custom_metadata: Optional[dict] = None,
         enable_chunking: Optional[bool] = None,
+        max_retries: int = 3,
     ) -> FileDocument:
         """
         Upload a file to Cloudflare R2 and Gemini File Search (always synchronous).
@@ -165,17 +170,18 @@ class FileService:
             store_id: Target store ID (MongoDB ObjectId)
             store_name: Target Gemini store name (fileSearchStores/xxx)
             display_name: Optional display name for the file
-            custom_metadata: Optional metadata dict (must include access_scope
-                             and at least one of academic_year/cohort)
+            custom_metadata: Optional metadata dict
             enable_chunking: Enable custom chunking config
+            max_retries: Number of retry attempts for transient failures
 
         Returns:
             FileDocument: Created file document with status='active'
         """
         state = UploadState()
+        state.custom_metadata = custom_metadata
         
+        # === STEP 1: Validation (fast, fail-fast, only once) ===
         try:
-            # === STEP 1: Validation (fast, fail-fast) ===
             file_size = Path(file_path).stat().st_size
             validate_file_size(file_size)
             validate_file_extension(original_filename)
@@ -192,51 +198,72 @@ class FileService:
             mime_type = detect_mime_type(file_path)
             state.storage_path = storage_path
             state.mark_step(UploadStep.VALIDATED)
-            
-            # === STEP 2: Create DB record ===
-            file_doc_data = {
-                "store_id": store_id,
-                "display_name": display_name or original_filename,
-                "original_filename": original_filename,
-                "storage_path": storage_path,
-                "storage_bucket": settings.R2_BUCKET_NAME,
-                "file_size": file_size,
-                "mime_type": mime_type,
-                "gemini_document_name": None,
-                "custom_metadata": custom_metadata or {},
-                "status": FileStatus.UPLOADING.value,
-            }
-            
-            created_file = await self.file_repo.create(file_doc_data)
-            file_id = str(created_file["_id"])
-            state.file_id = file_id
-            state.mark_step(UploadStep.DB_CREATED)
-            
-            # === STEP 3: Upload to Cloudflare R2 (synchronous, fast) ===
-            logger.info(f"[{file_id}] Uploading to Cloudflare R2: {storage_path}")
-            with open(file_path, "rb") as f:
-                await r2_storage.upload_file(
-                    file=f,
-                    object_name=storage_path,
-                    content_type=mime_type,
-                    metadata={"file_id": file_id, "store_id": store_id},
-                )
-            state.mark_step(UploadStep.R2_UPLOADED)
-            
-            # === STEP 4: Gemini upload (always synchronous) ===
-            await self.file_repo.update_by_id(file_id, {"status": FileStatus.PROCESSING.value})
-            await self._process_gemini_upload(
-                file_id, file_path, display_name or original_filename,
-                store_id, store_name, custom_metadata, enable_chunking, state
-            )
-            
-            file_dict = await self.file_repo.find_by_id(file_id)
-            return _to_file_model(file_dict)
-            
         except Exception as e:
-            await self._rollback_upload(state, str(e))
+            # Validation errors shouldn't be retried
+            logger.warning(f"Validation failed for {original_filename}: {e}")
             raise
-    
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                # === STEP 2: Create DB record ===
+                if not state.has_step(UploadStep.DB_CREATED):
+                    file_doc_data = {
+                        "store_id": store_id,
+                        "display_name": display_name or original_filename,
+                        "original_filename": original_filename,
+                        "storage_path": storage_path,
+                        "storage_bucket": settings.R2_BUCKET_NAME,
+                        "file_size": file_size,
+                        "mime_type": mime_type,
+                        "gemini_document_name": None,
+                        "custom_metadata": custom_metadata or {},
+                        "status": FileStatus.UPLOADING.value,
+                    }
+                    
+                    created_file = await self.file_repo.create(file_doc_data)
+                    state.file_id = str(created_file["_id"])
+                    state.mark_step(UploadStep.DB_CREATED)
+                
+                file_id = state.file_id
+                
+                # === STEP 3: Upload to Cloudflare R2 ===
+                if not state.has_step(UploadStep.R2_UPLOADED):
+                    logger.info(f"[{file_id}] Uploading to Cloudflare R2 (Attempt {attempt})")
+                    with open(file_path, "rb") as f:
+                        await r2_storage.upload_file(
+                            file=f,
+                            object_name=storage_path,
+                            content_type=mime_type,
+                            metadata={"file_id": file_id, "store_id": store_id},
+                        )
+                    state.mark_step(UploadStep.R2_UPLOADED)
+                
+                # === STEP 4: Gemini upload & Metadata sync ===
+                if not state.has_step(UploadStep.COMPLETED):
+                    await self.file_repo.update_by_id(file_id, {"status": FileStatus.PROCESSING.value})
+                    await self._process_gemini_upload(
+                        file_id, file_path, display_name or original_filename,
+                        store_id, store_name, custom_metadata, enable_chunking, state
+                    )
+                
+                file_dict = await self.file_repo.find_by_id(file_id)
+                return _to_file_model(file_dict)
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"[{state.file_id or 'NEW'}] Upload attempt {attempt} failed: {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"[{state.file_id or 'NEW'}] All {max_retries} upload attempts failed.")
+                    break
+        
+        # All retries failed, perform rollback
+        await self._rollback_upload(state, str(last_error))
+        raise last_error
+
     async def _process_gemini_upload(
         self,
         file_id: str,
@@ -251,65 +278,52 @@ class FileService:
         """Process Gemini upload (used by both sync and async modes)."""
         logger.info(f"[{file_id}] Processing Gemini upload")
         
-        gemini_file = await self._upload_to_gemini(
-            file_path, display_name, store_name, custom_metadata, enable_chunking
-        )
-        state.gemini_document_name = gemini_file.name
-        state.mark_step(UploadStep.GEMINI_UPLOADED)
-        
-        await self.file_repo.update_by_id(
-            file_id,
-            {
-                "gemini_document_name": gemini_file.name,
-                "status": FileStatus.ACTIVE.value,
-            }
-        )
+        # Skip Gemini upload if already done (in a previous retry attempt)
+        if not state.has_step(UploadStep.GEMINI_UPLOADED):
+            gemini_file = await self._upload_to_gemini(
+                file_path, display_name, store_name, custom_metadata, enable_chunking
+            )
+            state.gemini_document_name = gemini_file.name
+            state.mark_step(UploadStep.GEMINI_UPLOADED)
+            
+            # Update DB with Gemini document name
+            await self.file_repo.update_by_id(
+                file_id,
+                {
+                    "gemini_document_name": gemini_file.name,
+                    "status": FileStatus.ACTIVE.value,
+                }
+            )
+        else:
+            logger.info(f"[{file_id}] Gemini upload already completed, skipping")
         
         await self._sync_store_stats(store_name, store_id)
+        
+        # Skip metadata sync if already done
+        if custom_metadata and not state.has_step(UploadStep.METADATA_SYNCED):
+            from app.repositories.metadata_repository import MetadataRepository
+            await MetadataRepository().sync_metadata_counters(custom_metadata, delta=1)
+            state.mark_step(UploadStep.METADATA_SYNCED)
+            
         state.mark_step(UploadStep.COMPLETED)
         logger.info(f"[{file_id}] Upload completed successfully")
     
-    async def _process_gemini_upload_safe(
-        self,
-        file_id: str,
-        file_path: str,
-        display_name: str,
-        store_id: str,
-        store_name: str,
-        custom_metadata: Optional[dict],
-        enable_chunking: Optional[bool],
-        state: UploadState,
-    ) -> None:
-        """
-        Safe wrapper for background Gemini upload.
-        Handles errors gracefully without crashing the main process.
-        Cleans up temp file after completion.
-        """
-        try:
-            await self._process_gemini_upload(
-                file_id, file_path, display_name, store_id, store_name,
-                custom_metadata, enable_chunking, state
-            )
-        except Exception as e:
-            logger.error(f"[{file_id}] Background Gemini upload failed: {e}", exc_info=True)
-            # Mark as failed but keep Cloudflare R2 file (can retry later)
-            try:
-                await self.file_repo.update_by_id(
-                    file_id,
-                    {"status": FileStatus.FAILED.value}
-                )
-            except Exception as db_err:
-                logger.error(f"[{file_id}] Failed to update status: {db_err}")
-        finally:
-            # Cleanup temp file after background task completes
-            cleanup_temp_file(file_path)
-    
+
     async def _rollback_upload(self, state: UploadState, error_msg: str) -> None:
         """
         Intelligent rollback based on completed steps.
         Cleans up resources in reverse order of creation.
         """
         logger.warning(f"Rolling back upload (file_id={state.file_id}): {error_msg}")
+        
+        # Rollback Metadata (if synced)
+        if state.has_step(UploadStep.METADATA_SYNCED) and state.custom_metadata:
+            try:
+                from app.repositories.metadata_repository import MetadataRepository
+                await MetadataRepository().sync_metadata_counters(state.custom_metadata, delta=-1)
+                logger.info(f"Rollback: Decremented metadata counters for {list(state.custom_metadata.keys())}")
+            except Exception as e:
+                logger.warning(f"Rollback: Failed to decrement metadata counters: {e}")
         
         # Rollback Gemini (if uploaded)
         if state.has_step(UploadStep.GEMINI_UPLOADED) and state.gemini_document_name:
@@ -443,77 +457,6 @@ class FileService:
             logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
             raise StorageException(f"File download failed: {str(e)}")
     
-    async def retry_failed_upload(self, file_id: str) -> FileDocument:
-        """
-        Retry uploading a failed file to Gemini (always synchronous).
-
-        The file must already be in Cloudflare R2 (status=FAILED).
-
-        Args:
-            file_id: ID of the failed file
-
-        Returns:
-            FileDocument: Updated file document with status='active'
-        """
-        file_dict = await self.file_repo.find_by_id(file_id)
-        if not file_dict:
-            raise NotFoundException("File", file_id)
-        
-        status = file_dict.get("status")
-        if status not in [FileStatus.FAILED.value, "failed"]:
-            raise ValidationException(f"Can only retry failed files. Current status: {status}")
-        
-        # Get store info
-        store_id = file_dict["store_id"]
-        store_dict = await self.store_repo.find_by_id(store_id)
-        if not store_dict:
-            raise NotFoundException("Store", store_id)
-        
-        store_name = store_dict["store_name"]
-        storage_path = file_dict["storage_path"]
-        display_name = file_dict["display_name"]
-        custom_metadata = file_dict.get("custom_metadata", {})
-        
-        state = UploadState(file_id=file_id, storage_path=storage_path)
-        state.mark_step(UploadStep.DB_CREATED)
-        state.mark_step(UploadStep.R2_UPLOADED)
-        
-        # Download from Cloudflare R2 to temp file
-        import tempfile
-        import os
-        
-        temp_file_path = None
-        try:
-            file_obj = await r2_storage.download_file(storage_path)
-            
-            # Write to temp file
-            suffix = os.path.splitext(file_dict["original_filename"])[1]
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-                temp_file.write(file_obj.read())
-                temp_file_path = temp_file.name
-            
-            # Update status to processing
-            await self.file_repo.update_by_id(file_id, {
-                "status": FileStatus.PROCESSING.value,
-            })
-            
-            await self._process_gemini_upload(
-                file_id, temp_file_path, display_name,
-                store_id, store_name, custom_metadata, None, state
-            )
-            cleanup_temp_file(temp_file_path)
-            
-            file_dict = await self.file_repo.find_by_id(file_id)
-            return _to_file_model(file_dict)
-            
-        except Exception as e:
-            logger.error(f"Retry failed for {file_id}: {e}", exc_info=True)
-            await self.file_repo.update_by_id(file_id, {
-                "status": FileStatus.FAILED.value,
-            })
-            if temp_file_path:
-                cleanup_temp_file(temp_file_path)
-            raise StorageException(f"Retry failed: {str(e)}")
 
     async def delete_file(self, file_id: str) -> bool:
         """Delete a file (hard delete)."""
@@ -544,6 +487,11 @@ class FileService:
         
         # Hard delete from MongoDB
         await self.file_repo.delete_by_id(file_id)
+        
+        # Decrement metadata counters if the file was active and has custom_metadata
+        if file_doc.get("status") == FileStatus.ACTIVE.value and file_doc.get("custom_metadata"):
+            from app.repositories.metadata_repository import MetadataRepository
+            await MetadataRepository().sync_metadata_counters(file_doc["custom_metadata"], delta=-1)
         
         # Sync store stats
         if store_id:
@@ -577,35 +525,6 @@ class FileService:
         file_dict = await self.file_repo.find_by_id(file_id)
         return _to_file_model(file_dict)
     
-    async def list_gemini_documents(self, store_name: str) -> list[dict]:
-        """
-        List documents directly from Gemini File Search API.
-        
-        Args:
-            store_name: Gemini store name (fileSearchStores/xxx)
-        
-        Returns:
-            list of document info from Gemini
-        """
-        try:
-            docs = list(await asyncio.to_thread(
-                self.gemini_client.file_search_stores.documents.list,
-                parent=store_name
-            ))
-            
-            return [
-                {
-                    "name": getattr(doc, "name", None),
-                    "display_name": getattr(doc, "display_name", None),
-                    "state": str(getattr(doc, "state", None)),
-                    "size_bytes": int(getattr(doc, "size_bytes", 0) or 0),
-                    "create_time": str(getattr(doc, "create_time", None)),
-                }
-                for doc in docs
-            ]
-        except Exception as e:
-            logger.error(f"Failed to list Gemini documents: {e}", exc_info=True)
-            raise GeminiException(f"Failed to list Gemini documents: {str(e)}")
     
     async def _sync_store_stats_by_id(self, store_id: str):
         """Sync store statistics from Gemini by store_id."""
@@ -700,18 +619,6 @@ class FileService:
         logger.info(f"Deleted {deleted_count} files from store {store_id} (gemini_only={gemini_only})")
         return deleted_count
     
-    async def delete_all_files_in_store_gemini(self, store_id: str) -> int:
-        """
-        Delete all documents from Gemini File Search store only.
-        Does NOT delete from Cloudflare R2 or MongoDB.
-
-        Args:
-            store_id: Store ID (MongoDB ObjectId)
-
-        Returns:
-            Number of documents deleted from Gemini
-        """
-        return await self.delete_all_files_in_store(store_id, gemini_only=True)
 
     # ====================================
     # SYNC HELPERS
@@ -874,9 +781,8 @@ class FileService:
                     store_name = store_dict["store_name"]
 
                     # Download from Cloudflare R2 to temp file
-                    import tempfile, os as _os
                     file_obj = await r2_storage.download_file(sp)
-                    suffix = _os.path.splitext(doc.get("original_filename", ""))[1]
+                    suffix = os.path.splitext(doc.get("original_filename", ""))[1]
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                         tmp.write(file_obj.read())
                         tmp_path = tmp.name

@@ -201,22 +201,6 @@
           "response": []
         },
         {
-          "name": "Discover stores from Gemini",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/gemini/list",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "gemini", "list"]
-            },
-            "description": "List stores directly from Gemini API (not from MongoDB). Use for discovery or debugging."
-          },
-          "response": []
-        },
-        {
           "name": "Get store details",
           "request": {
             "method": "GET",
@@ -262,9 +246,9 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{base_url}}/api/stores/{{store_id}}/syncs",
+              "raw": "{{base_url}}/api/stores/{{store_id}}/sync",
               "host": ["{{base_url}}"],
-              "path": ["api", "stores", "{{store_id}}", "syncs"]
+              "path": ["api", "stores", "{{store_id}}", "sync"]
             },
             "description": "Sync store file_count and total_size from Gemini API to MongoDB."
           },
@@ -302,22 +286,6 @@
               "path": ["api", "stores", "all"]
             },
             "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + R2 + MongoDB). Cannot be undone!"
-          },
-          "response": []
-        },
-        {
-          "name": "Delete all stores from Gemini",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/gemini/all",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "gemini", "all"]
-            },
-            "description": "Delete all stores from Gemini API only. Keeps MongoDB and R2 records."
           },
           "response": []
         }
@@ -374,7 +342,9 @@
           "name": "List metadata types",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
             "url": {
               "raw": "{{base_url}}/api/metadata",
               "host": ["{{base_url}}"],
@@ -391,7 +361,9 @@
           "name": "Get metadata type details",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
             "url": {
               "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
               "host": ["{{base_url}}"],
@@ -510,25 +482,6 @@
           "response": []
         },
         {
-          "name": "Discover files from Gemini",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/gemini/list",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "gemini", "list"],
-              "query": [
-                { "key": "store_name", "value": "fileSearchStores/xxx", "disabled": true }
-              ]
-            },
-            "description": "List documents directly from Gemini File Search API. Uses default store if store_name not provided."
-          },
-          "response": []
-        },
-        {
           "name": "Get file details",
           "request": {
             "method": "GET",
@@ -630,22 +583,6 @@
               "path": ["api", "files", "store", "{{store_id}}", "all"]
             },
             "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB)."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete store files from Gemini",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/store/{{store_id}}/gemini",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "store", "{{store_id}}", "gemini"]
-            },
-            "description": "Delete files from Gemini only. Keeps R2 and MongoDB records. Use to re-index."
           },
           "response": []
         },
