@@ -237,13 +237,6 @@ async def list_files(
 async def check_sync(_admin: Dict[str, Any] = Depends(require_admin)):
     """
     Check synchronization status of files across all 3 storage systems.
-
-    **Issue types reported:**
-    - `missing_in_gemini`: File exists in DB + R2 but not in Gemini
-    - `missing_in_r2`: File exists in DB (with Gemini doc) but not in R2
-    - `in_db_only`: File exists in DB only (no R2 path, no Gemini doc)
-    - `in_r2_only`: Object in R2 has no matching DB record
-    - `in_gemini_only`: Gemini document has no matching DB record
     """
     try:
         file_svc = get_file_service()
@@ -254,128 +247,6 @@ async def check_sync(_admin: Dict[str, Any] = Depends(require_admin)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Check sync failed: {str(e)}",
-        )
-
-
-@router.get(
-    "/{file_id}",
-    response_model=FileDetailResponse,
-    summary="Get file details",
-    description="Get detailed information about a specific file.",
-)
-async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
-    """
-    Get file details by ID.
-    """
-    try:
-        file_svc = get_file_service()
-        file_doc = await file_svc.get_file_by_id(file_id)
-        if not file_doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File {file_id} not found",
-            )
-
-        return FileDetailResponse(
-            file_id=str(file_doc.id),
-            store_id=file_doc.store_id,
-            original_filename=file_doc.original_filename,
-            display_name=file_doc.display_name,
-            gemini_document_name=file_doc.gemini_document_name,
-            file_size=file_doc.file_size,
-            mime_type=file_doc.mime_type,
-            storage_path=file_doc.storage_path,
-            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=file_doc.custom_metadata or {},
-            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
-            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting file {file_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get file: {str(e)}",
-        )
-
-
-@router.get(
-    "/{file_id}/download",
-    summary="Download file",
-    description="Download a file from storage.",
-)
-async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
-    """
-    Download a file from R2 storage.
-    Returns the file as a streaming response.
-    """
-    try:
-        file_svc = get_file_service()
-        file_obj, filename, mime_type = await file_svc.download_file(file_id)
-        
-        # Convert to BytesIO for streaming
-        file_data = file_obj.read()
-        file_stream = BytesIO(file_data)
-        
-        return StreamingResponse(
-            file_stream,
-            media_type=mime_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
-            },
-        )
-        
-    except NotFoundException as e:
-        logger.warning(f"File not found: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    
-    except StorageException as e:
-        logger.error(f"Download failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Download failed: {str(e)}",
-        )
-    
-    except Exception as e:
-        logger.error(f"Unexpected error during download: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
-        )
-
-
-@router.delete(
-    "/{file_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete file",
-    description="Delete a file (hard delete).",
-)
-async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
-    """
-    Delete a file (hard delete from R2, Gemini, and MongoDB).
-    """
-    try:
-        file_svc = get_file_service()
-        await file_svc.delete_file(file_id)
-        return None
-        
-    except NotFoundException as e:
-        logger.warning(f"File not found: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Error deleting file {file_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete file: {str(e)}",
         )
 
 
@@ -396,28 +267,11 @@ async def batch_upload_files(
 ):
     """
     Batch upload multiple files to R2 storage and Gemini File Search.
-    
-    **Request Format:**
-    - files: Multiple files to upload
-    - display_names: JSON array like '["Name 1", null, "Name 3"]' (use null for auto-generated name)
-    - metadata_list: JSON array like '[{"key": "value"}, {}, {"other": "meta"}]' (use {} for no metadata)
-    
-    **Example:**
-    ```
-    display_names: '["Report Q1", null, "Policy Doc"]'
-    metadata_list: '[{"department": "Finance"}, {}, {"category": "policy"}]'
-    ```
-    
-    **Returns:**
-    - Summary of successful and failed uploads
-    - Individual results for each file
     """
     file_svc = get_file_service()
     
     try:
         from app.services.rag.utils.store_utils import resolve_store
-        
-        # Get store (from param or default store)
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
         
@@ -427,15 +281,9 @@ async def batch_upload_files(
             try:
                 names_list = json.loads(display_names)
                 if not isinstance(names_list, list):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="display_names must be a JSON array",
-                    )
+                    raise HTTPException(status_code=400, detail="display_names must be a list")
             except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid display_names JSON format",
-                )
+                raise HTTPException(status_code=400, detail="Invalid display_names JSON")
         
         # Parse metadata_list
         meta_list = []
@@ -443,17 +291,10 @@ async def batch_upload_files(
             try:
                 meta_list = json.loads(metadata_list)
                 if not isinstance(meta_list, list):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="metadata_list must be a JSON array",
-                    )
+                    raise HTTPException(status_code=400, detail="metadata_list must be a list")
             except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid metadata_list JSON format",
-                )
+                raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
         
-        # Process each file
         results = []
         successful = 0
         failed = 0
@@ -461,23 +302,14 @@ async def batch_upload_files(
         for idx, file in enumerate(files):
             temp_file_path = None
             try:
-                # Get display name for this file
-                display_name = None
-                if idx < len(names_list) and names_list[idx] is not None:
-                    display_name = names_list[idx]
+                display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
+                metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
                 
-                # Get metadata for this file
-                metadata_dict = {}
-                if idx < len(meta_list) and meta_list[idx] is not None:
-                    metadata_dict = meta_list[idx] if isinstance(meta_list[idx], dict) else {}
-                
-                # Save uploaded file to temp location
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
                     contents = await file.read()
                     temp_file.write(contents)
                     temp_file_path = temp_file.name
                 
-                # Upload file
                 file_doc = await file_svc.upload_file(
                     file_path=temp_file_path,
                     original_filename=file.filename,
@@ -500,47 +332,47 @@ async def batch_upload_files(
                 
             except Exception as e:
                 logger.error(f"Failed to upload file {file.filename}: {e}")
-                results.append(BatchFileUploadResult(
-                    original_filename=file.filename,
-                    success=False,
-                    error=str(e),
-                ))
+                results.append(BatchFileUploadResult(original_filename=file.filename, success=False, error=str(e)))
                 failed += 1
-            
             finally:
-                # Cleanup temp file
                 if temp_file_path and os.path.exists(temp_file_path):
-                    try:
-                        os.unlink(temp_file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+                    os.unlink(temp_file_path)
         
-        return BatchFileUploadResponse(
-            total=len(files),
-            successful=successful,
-            failed=failed,
-            results=results,
-        )
+        return BatchFileUploadResponse(total=len(files), successful=successful, failed=failed, results=results)
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Batch upload error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Batch upload failed: {str(e)}",
-        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/sync",
+    response_model=SyncResponse,
+    summary="Sync files across storage systems",
+)
+async def sync_files(_admin: Dict[str, Any] = Depends(require_admin)):
+    """
+    Synchronize files across MongoDB, R2, and Gemini.
+    """
+    try:
+        file_svc = get_file_service()
+        result = await file_svc.sync_files()
+        return SyncResponse(**result)
+    except Exception as e:
+        logger.error(f"Error during sync: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete(
     "/all",
     response_model=BulkDeleteResponse,
     summary="Delete all files in store",
-    description="Delete all files in a store (from R2, Gemini, and MongoDB).",
 )
-async def delete_all_files_in_store(store_id: Optional[str] = Query(None, description="Target store ID (uses default if not provided)")):
+async def delete_all_files_in_store(store_id: Optional[str] = Query(None)):
     """
-    Delete all files in a store (full delete from R2, Gemini, and MongoDB).
+    Delete all files in a store.
     """
     try:
         from app.services.rag.utils.store_utils import resolve_store
@@ -553,47 +385,72 @@ async def delete_all_files_in_store(store_id: Optional[str] = Query(None, descri
             deleted_count=deleted_count,
             message=f"Deleted {deleted_count} files from store {resolved_store_id}",
         )
-        
-    except NotFoundException as e:
-        logger.warning(f"Store not found: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    
     except Exception as e:
-        logger.error(f"Error deleting all files in store {store_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete files: {str(e)}",
-        )
+        logger.error(f"Error deleting files: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post(
-    "/sync",
-    response_model=SyncResponse,
-    summary="Sync files across storage systems",
-    description="Sync files between MongoDB, R2, and Gemini by resolving all detected issues.",
+@router.get(
+    "/{file_id}",
+    response_model=FileDetailResponse,
+    summary="Get file details",
 )
-async def sync_files():
-    """
-    Synchronize files across MongoDB, R2, and Gemini.
-
-    **Sync rules:**
-    - `missing_in_gemini` (DB + R2 present): re-upload file from R2 to Gemini
-    - All other issues (`in_db_only`, `missing_in_r2`, `in_r2_only`, `in_gemini_only`): delete the orphan
-
-    **Returns:**
-    - Count of uploads, deletions, and failures
-    - Per-file action results
-    """
+async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
     try:
         file_svc = get_file_service()
-        result = await file_svc.sync_files()
-        return SyncResponse(**result)
-    except Exception as e:
-        logger.error(f"Error during sync: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {str(e)}",
+        file_doc = await file_svc.get_file_by_id(file_id)
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        return FileDetailResponse(
+            file_id=str(file_doc.id),
+            store_id=file_doc.store_id,
+            original_filename=file_doc.original_filename,
+            display_name=file_doc.display_name,
+            gemini_document_name=file_doc.gemini_document_name,
+            file_size=file_doc.file_size,
+            mime_type=file_doc.mime_type,
+            storage_path=file_doc.storage_path,
+            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+            custom_metadata=file_doc.custom_metadata or {},
+            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
+            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/{file_id}/download",
+    summary="Download file",
+)
+async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
+    try:
+        file_svc = get_file_service()
+        file_obj, filename, mime_type = await file_svc.download_file(file_id)
+        file_data = file_obj.read()
+        return StreamingResponse(
+            BytesIO(file_data),
+            media_type=mime_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete(
+    "/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete file",
+)
+async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
+    try:
+        file_svc = get_file_service()
+        await file_svc.delete_file(file_id)
+        return None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+

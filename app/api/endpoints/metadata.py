@@ -289,6 +289,69 @@ async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _ad
 
 
 @router.delete(
+    "/{key}/values/{value}",
+    response_model=MetadataTypeResponse,
+    summary="Delete a specific value from metadata type",
+    description="Hard deletes a value from allowed_values if its total_files is 0. If it has active files, returns 409 Conflict.",
+)
+async def delete_metadata_value(
+    key: str = Path(..., description="The unique key of the metadata type"),
+    value: str = Path(..., description="The value to delete from allowed_values"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Hard-delete a metadata value.
+    Can only be deleted if total_files for this value is 0.
+    """
+    metadata_svc = get_metadata_service()
+    try:
+        updated_metadata = await metadata_svc.delete_metadata_value(key, value)
+        
+        # Convert to response
+        allowed_values = None
+        if updated_metadata.allowed_values:
+            allowed_values = [
+                AllowedValueResponse(
+                    value=av["value"],
+                    display_name=av.get("display_name", av["value"]),
+                    is_active=av.get("is_active", True),
+                    color=av.get("color"),
+                    total_files=av.get("total_files", 0)
+                ) for av in updated_metadata.allowed_values
+            ]
+            
+        return MetadataTypeResponse(
+            metadata_id=str(updated_metadata.id),
+            key=updated_metadata.key,
+            display_name=updated_metadata.display_name,
+            description=updated_metadata.description,
+            allowed_values=allowed_values,
+            is_active=updated_metadata.is_active,
+            is_system=updated_metadata.is_system,
+            total_files=updated_metadata.total_files,
+            created_at=updated_metadata.created_at.isoformat() if updated_metadata.created_at else "",
+            updated_at=updated_metadata.updated_at.isoformat() if updated_metadata.updated_at else ""
+        )
+
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except ConflictException as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error deleting metadata value {value} from {key}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete metadata value: {str(e)}",
+        )
+
+
+@router.delete(
     "/{key}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete metadata type",
@@ -327,67 +390,4 @@ async def delete_metadata_type(key: str, _admin: Dict[str, Any] = Depends(requir
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete metadata type: {str(e)}",
-        )
-
-@router.delete(
-    "/{key}/values/{value}",
-    response_model=MetadataTypeResponse,
-    summary="Delete a specific value from metadata type",
-    description="Hard deletes a value from allowed_values if its total_files is 0. If it has active files, returns 409 Conflict.",
-)
-async def delete_metadata_value(
-    key: str = Path(..., description="The unique key of the metadata type"),
-    value: str = Path(..., description="The value to delete from allowed_values"),
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    """
-    Hard-delete a metadata value.
-    Can only be deleted if total_files for this value is 0.
-    """
-    metadata_svc = get_metadata_service()
-    try:
-        updated_metadata = await metadata_svc.delete_metadata_value(key, value)
-        
-        # Convert to response
-        allowed_values = None
-        if updated_metadata.allowed_values:
-            allowed_values = [
-                AllowedValueResponse(
-                    value=av["value"],
-                    display_name=av.get("display_name", av["value"]),
-                    is_active=av.get("is_active", True),
-                    color=av.get("color"),
-                    total_files=av.get("total_files", 0)
-                ) for av in updated_metadata.allowed_values
-            ]
-            
-        return MetadataTypeResponse(
-            id=updated_metadata.id,
-            key=updated_metadata.key,
-            display_name=updated_metadata.display_name,
-            description=updated_metadata.description,
-            allowed_values=allowed_values,
-            has_all_value=updated_metadata.has_all_value,
-            is_active=updated_metadata.is_active,
-            is_system=updated_metadata.is_system,
-            total_files=updated_metadata.total_files,
-            created_at=updated_metadata.created_at,
-            updated_at=updated_metadata.updated_at
-        )
-
-    except NotFoundException as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except ConflictException as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
-    except Exception as e:
-        logger.error(f"Error deleting metadata value {value} from {key}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete metadata value: {str(e)}",
         )

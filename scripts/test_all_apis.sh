@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# AI Service API Test Script v2.0
+# AI Service API Test Script v3.0.0
 # Test tất cả APIs: Health, Classification, Auth, Stores, Metadata, Files, Chat
 # ==============================================================================
 
@@ -10,7 +10,7 @@ BASE_URL="${AI_SERVICE_URL:-http://localhost:8000}"
 API_URL="${BASE_URL}/api"
 
 # JWT Token (admin role) — thay đổi nếu cần
-TOKEN=""
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYmx1ZWxvb3AudXNAZ21haWwuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzcxOTEzOTgzLCJleHAiOjM3NzcxOTEzOTgzLCJhdWQiOiJ2YWEtYXVkIiwiaXNzIjoidmFhLWlzcyJ9.RtRCZsru6KuCkHUt06cr0v31z9SG0lWWdOORTo47-j4"
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 TIMESTAMP=$(date +%s)
 
@@ -153,10 +153,6 @@ log_info "POST /process — label: classRegistration"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     -H "Content-Type: application/json" \
     -d '{
-        "internal": {
-            "mail_id": "100",
-            "id_record": "100"
-        },
         "title": "Xin dang ky mon hoc",
         "content": "Em muon dang ky mon Toan cao cap, ma mon MATH101, lop L01. Em la sinh vien nam 2, ma SV001, ten Nguyen Van A."
     }' 2>/dev/null || echo -e "\n000")
@@ -166,10 +162,6 @@ log_info "POST /process — label: inquiry (AI draft reply)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     -H "Content-Type: application/json" \
     -d '{
-        "internal": {
-            "mail_id": "101",
-            "id_record": "101"
-        },
         "title": "Hoi ve dieu kien tot nghiep",
         "content": "Em muon hoi dieu kien de tot nghiep cua truong gom nhung gi? Em can bao nhieu tin chi va GPA toi thieu la bao nhieu?"
     }' 2>/dev/null || echo -e "\n000")
@@ -179,10 +171,6 @@ log_info "POST /process — label: task"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     -H "Content-Type: application/json" \
     -d '{
-        "internal": {
-            "mail_id": "103",
-            "id_record": "103"
-        },
         "title": "Yeu cau cap nhat diem hoc phan",
         "content": "Kinh gui phong dao tao, toi can phong cap nhat diem hoc phan Vat ly dai cuong cho sinh vien SV002 vi co sai sot trong he thong."
     }' 2>/dev/null || echo -e "\n000")
@@ -192,10 +180,6 @@ log_info "POST /process — label: other"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     -H "Content-Type: application/json" \
     -d '{
-        "internal": {
-            "mail_id": "102",
-            "id_record": "102"
-        },
         "title": "Thong bao lich thi",
         "content": "Thong bao lich thi hoc ky II nam 2025-2026. Thi bat dau tu ngay 15/3/2026."
     }' 2>/dev/null || echo -e "\n000")
@@ -294,6 +278,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "401" "Create Store — no token -> 401"
 
+# 4.9 Delete all stores (Dangerous - skip by default)
+log_info "DELETE /api/stores/all — Delete all stores (require_admin) — SKIPPED by default"
+# RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/stores/all" -H "${AUTH_HEADER}" 2>/dev/null)
+# check_response "$RESPONSE" "200" "Delete All Stores"
+
 # ==============================================================================
 # 4. METADATA TYPES
 # ==============================================================================
@@ -380,19 +369,32 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/metadata/${METADATA_
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Update Metadata Type — them htqt"
 
-# 5.6 Thu xoa system type (expect 409)
-log_info "DELETE /api/metadata/access_scope — Xoa system type (expect 409)"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/access_scope" \
-    -H "${AUTH_HEADER}" \
-    2>/dev/null || echo -e "\n000")
-HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-if [ "$HTTP_CODE" = "403" ]; then
-    log_success "Cannot delete system metadata — Bi tu choi dung (HTTP $HTTP_CODE)"
-    echo "$RESPONSE" | sed '$d'
+# 5.6 Xoa mot gia tri (hard delete value)
+log_info "DELETE /api/metadata/${METADATA_KEY}/values/htqt — Xoa gia tri htqt"
+# Bo qua loi neu dang dung, se test delete 1 gia tri moi tao
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/${METADATA_KEY}/values/htqt" \
+    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+HTTP_VAL=$(echo "$RESPONSE" | tail -n1)
+if [ "$HTTP_VAL" = "200" ] || [ "$HTTP_VAL" = "409" ]; then
+    log_success "Delete Metadata Value test (HTTP $HTTP_VAL - handled)"
 else
-    log_error "Cannot delete system metadata — Expected 403, got $HTTP_CODE"
-    echo "$RESPONSE" | sed '$d'
+    log_error "Delete Metadata Value test failed (HTTP $HTTP_VAL)"
 fi
+
+# 5.7 Thu xoa system type (expect 403)
+log_info "DELETE /api/metadata/access_scope — Xoa system type (expect 403)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/access_scope" \
+    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "403" "Cannot delete system metadata"
+
+# 5.8 Xoa metadata type (Hard Delete)
+log_info "DELETE /api/metadata/test_to_delete — Test Hard Delete metadata type"
+# Tao tam mot type de xoa
+curl -s -X POST "${API_URL}/metadata" -H "Content-Type: application/json" -H "${AUTH_HEADER}" \
+    -d '{"key": "test_to_delete", "displayName": "Delete Me", "description": "test"}' > /dev/null
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/test_to_delete" \
+    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "204" "Hard Delete Metadata Type"
 
 # 5.7 Thu tao metadata khong co token (expect 401)
 log_info "POST /api/metadata — khong co token (expect 401)"
@@ -522,15 +524,30 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 
-# 6.10 Sync check trang thai file
+# 6.10 Sync files (thuc hien sync thuc te)
+log_info "POST /api/files/sync — Trigger file sync across R2/Gemini"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/sync" \
+    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Sync Files"
+
+# 6.11 Detail check
 if [ -n "$FILE_ID" ]; then
     log_info "GET /api/files/${FILE_ID} — Detail check (require_auth)"
     RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Get File Detail"
+
 else
-    log_skip "Sync Check File — bo qua (FILE_ID chua duoc set)"
+    log_skip "File detail — bo qua (FILE_ID chua duoc set)"
+fi
+
+# 6.13 Xoa tat ca files trong store
+if [ -n "$STORE_ID" ]; then
+    log_info "DELETE /api/files/all?store_id=${STORE_ID} — Xoa tat ca file trong store"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/all?store_id=${STORE_ID}" \
+        -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Delete All Files in Store"
 fi
 
 # 6.11 Error case: File khong ton tai
@@ -672,13 +689,13 @@ else
     fi
 fi
 
-# 7.6 Chat query khong co token — endpoint nay public (khong yeu cau auth)
-log_info "POST /api/chat/query — khong co token (public endpoint, expect 200)"
+# 7.6 Chat query khong co token - endpoint nay public
+log_info "POST /api/chat/query - no token, public endpoint"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -d '{"question":"test","user_context":{"user_id":"x","name":"x","cohort":"K20","role":"student"},"chat_history":[]}' \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Chat Query — no token -> 200 (public)"
+check_response "$RESPONSE" "200" "Chat Query - no token"
 
 # ==============================================================================
 # 8. CLEANUP (tuy chon)

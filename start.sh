@@ -1,7 +1,5 @@
 #!/bin/bash
-# Usage:
-#   ./start.sh          Start only (dùng khi RabbitMQ đã chạy từ nest-api)
-#   ./start.sh --all    Start + RabbitMQ
+# Usage: ./start.sh
 
 set -e
 
@@ -14,41 +12,25 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODE="default"
-if [[ "$1" == "--all" ]]; then
-  MODE="all"
-fi
-
 echo ""
 echo -e "${CYAN}=================================================="
 echo "   AI Service — Startup"
-if [[ "$MODE" == "all" ]]; then
-  echo "   Mode: tất cả (RabbitMQ)"
-else
-  echo "   Mode: mặc định (RabbitMQ từ nest-api)"
-fi
+echo "   RabbitMQ: Cloud Hosted"
 echo -e "==================================================${NC}"
-
-# ── Docker services ─────────────────────────────────────────────
-echo ""
-echo -e "${YELLOW}🐳 Khởi động Docker services...${NC}"
-
-if [[ "$MODE" == "all" ]]; then
-  docker-compose up -d rabbitmq
-fi
-
-echo ""
-echo -e "${GREEN}✅ Trạng thái Docker services:${NC}"
-docker-compose ps
 
 # ── Python virtual environment ───────────────────────────────────
 echo ""
 if [[ ! -d ".venv" ]]; then
-  echo -e "${YELLOW}📦 Tạo môi trường ảo .venv...${NC}"
+  echo -e "${YELLOW}Box Tạo môi trường ảo .venv...${NC}"
+  # Check if python3 is available
+  if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}❌ python3 không được cài đặt. Vui lòng cài đặt Python 3.${NC}"
+    exit 1
+  fi
   python3 -m venv .venv
 fi
 
-echo -e "${YELLOW}📦 Kích hoạt môi trường ảo và cài dependencies...${NC}"
+echo -e "${YELLOW}Box Kích hoạt môi trường ảo và cài dependencies...${NC}"
 source .venv/bin/activate
 pip install -r requirements.txt --quiet
 
@@ -65,10 +47,6 @@ echo ""
 echo -e "${GREEN}🚀 Khởi động FastAPI...${NC}"
 echo -e "   API:              ${CYAN}http://localhost:8000${NC}"
 echo -e "   Docs:             ${CYAN}http://localhost:8000/docs${NC}"
-
-if [[ "$MODE" == "all" ]]; then
-  echo -e "   RabbitMQ UI:      ${CYAN}http://localhost:15672${NC}  (guest/guest)"
-fi
 echo ""
 
 mkdir -p logs

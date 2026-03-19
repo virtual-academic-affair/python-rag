@@ -102,8 +102,6 @@ python-rag/
 │   └── utils/
 │       ├── db_utils.py                 # MongoDB helper
 │       └── pagination.py               # Paginated response helper
-├── config/
-│   └── settings.py                     # Base config
 ├── scripts/
 │   ├── gen_proto.py                    # Generate protobuf stubs
 │   ├── init_db.py                      # Khởi tạo index MongoDB
@@ -154,10 +152,10 @@ Tạo file `.env` (xem phần Environment Variables bên dưới).
 `docker-compose.yml` chứa các services: **R2** và **RabbitMQ**.
 
 ```bash
-# Chỉ khởi động R2 (nếu RabbitMQ đã chạy riêng)
+# Chỉ chạy APP (dùng nếu RabbitMQ đã chạy từ nest-api)
 ./start.sh
 
-# Khởi động tất cả – R2 + RabbitMQ
+# Chạy APP + RabbitMQ
 ./start.sh --all
 ```
 
@@ -227,6 +225,7 @@ GET    /api/stores
 GET    /api/stores/{id}
 PATCH  /api/stores/{id}
 DELETE /api/stores/{id}
+POST   /api/stores/{id}/sync        # Đồng bộ thống kê file từ Gemini
 ```
 
 ### Metadata
@@ -318,13 +317,13 @@ RELOAD=true
 
 # === MongoDB ===
 MONGODB_URL=mongodb+srv://...
-MONGODB_DB_NAME=email_ai_service
+MONGODB_DB_NAME=ai_service
 
 # === R2 ===
 R2_ENDPOINT=localhost:9000
 R2_ACCESS_KEY=r2admin
 R2_SECRET_KEY=r2admin
-R2_BUCKET_NAME=documents
+R2_BUCKET_NAME=rag-files
 R2_SECURE=false
 
 # === RabbitMQ ===
@@ -333,15 +332,15 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
-RABBITMQ_INGEST_QUEUE=email.ingest
+RABBITMQ_INGEST_QUEUE=email_ingest_queue
 
 # === gRPC (nest-api) ===
 GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + InquiryService.Create
 GRPC_ENABLED=true
-GRPC_TIMEOUT_SECONDS=15
+GRPC_TIMEOUT_SECONDS=3.0
 
 # === Upload ===
-MAX_FILE_SIZE_MB=50
+MAX_FILE_SIZE_MB=20
 ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html
 ```
 

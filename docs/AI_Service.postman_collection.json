@@ -81,7 +81,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"internal\": {\n    \"mail_id\": \"123\",\n    \"id_record\": \"123\"\n  },\n  \"title\": \"Xin đăng ký môn học\",\n  \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01. Em là sinh viên năm 2, mã sinh viên SV001, tên Nguyễn Văn A.\"\n}",
+              "raw": "{\n  \"title\": \"Xin đăng ký môn học\",\n  \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01. Em là sinh viên năm 2, mã sinh viên SV001, tên Nguyễn Văn A.\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -102,7 +102,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"internal\": {\n    \"mail_id\": \"456\",\n    \"id_record\": \"456\"\n  },\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
+              "raw": "{\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -396,7 +396,7 @@
           "response": []
         },
         {
-          "name": "Deactivate metadata type (soft delete)",
+          "name": "Delete metadata type (hard delete)",
           "request": {
             "method": "DELETE",
             "header": [
@@ -407,7 +407,23 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}"]
             },
-            "description": "Soft delete: sets isActive=false instead of hard deleting.\nReturns 200 OK with updated MetadataTypeResponse (isActive: false).\nCannot deactivate is_system=true types (returns 403)."
+            "description": "Hard delete: xoá hoàn toàn metadata type khỏi hệ thống.\n- CHỈ cho phép xóa khi totalFiles bằng 0.\n- Trả về 409 Conflict nếu totalFiles > 0.\n- Không thể xóa is_system=true types (returns 403).\n- Trả về 204 No Content thành công."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete metadata value (hard delete)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/unused_value",
+              "host": ["{{base_url}}"],
+              "path": ["api", "metadata", "{{metadata_key}}", "values", "unused_value"]
+            },
+            "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
           },
           "response": []
         }
@@ -514,22 +530,6 @@
           "response": []
         },
         {
-          "name": "Retry failed upload",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/{{file_id}}/retry",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "{{file_id}}", "retry"]
-            },
-            "description": "Retry uploading a FAILED file to Gemini. File must exist in R2 with status=FAILED."
-          },
-          "response": []
-        },
-        {
           "name": "Batch upload",
           "request": {
             "method": "POST",
@@ -578,11 +578,14 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{base_url}}/api/files/store/{{store_id}}/all",
+              "raw": "{{base_url}}/api/files/all?store_id={{store_id}}",
               "host": ["{{base_url}}"],
-              "path": ["api", "files", "store", "{{store_id}}", "all"]
+              "path": ["api", "files", "all"],
+              "query": [
+                { "key": "store_id", "value": "{{store_id}}" }
+              ]
             },
-            "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB)."
+            "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB). store_id parameter is optional (uses default if empty)."
           },
           "response": []
         },

@@ -121,26 +121,40 @@ class FileService:
         """
         Validate custom metadata against registered metadata types.
         Rules:
-        - access_scope is required.
-        - At least one of academic_year or cohort is required.
+        - All system metadata fields are required.
+        - Exception: At least one of academic_year or cohort is required.
         """
         if not custom_metadata:
-            raise ValidationException(
-                "Metadata is required. Must include 'access_scope' and at least one of 'academic_year' or 'cohort'."
-            )
+            custom_metadata = {}
 
-        # Required field check
-        if "access_scope" not in custom_metadata:
-            raise ValidationException("Metadata 'access_scope' is required.")
-
-        if "academic_year" not in custom_metadata and "cohort" not in custom_metadata:
+        from app.services.rag.metadata_service import get_metadata_service
+        metadata_service = get_metadata_service()
+        
+        # 1. Get all system metadata types
+        all_types = await metadata_service.list_all_metadata_types(active_only=True)
+        system_types = [mt for mt in all_types if mt.is_system]
+        
+        # 2. Separate standard system keys from the academic/cohort pair
+        standard_system_keys = [
+            mt.key for mt in system_types 
+            if mt.key not in ["academic_year", "cohort"]
+        ]
+        
+        # 3. Check standard system keys are present
+        for key in standard_system_keys:
+            if key not in custom_metadata:
+                raise ValidationException(f"Metadata '{key}' is required (system metadata).")
+        
+        # 4. Check academic_year or cohort (at least one required if they are system types)
+        is_academic_system = any(mt.key == "academic_year" for mt in system_types)
+        is_cohort_system = any(mt.key == "cohort" for mt in system_types)
+        
+        if (is_academic_system or is_cohort_system) and ("academic_year" not in custom_metadata and "cohort" not in custom_metadata):
             raise ValidationException(
                 "Metadata must include at least one of 'academic_year' or 'cohort'."
             )
 
-        # Value validation against registered metadata types
-        from app.services.rag.metadata_service import get_metadata_service
-        metadata_service = get_metadata_service()
+        # 5. Value validation against registered metadata types
         is_valid, errors = await metadata_service.validate_metadata(custom_metadata)
 
         if not is_valid:
@@ -524,7 +538,6 @@ class FileService:
         """Get a single file by ID."""
         file_dict = await self.file_repo.find_by_id(file_id)
         return _to_file_model(file_dict)
-    
     
     async def _sync_store_stats_by_id(self, store_id: str):
         """Sync store statistics from Gemini by store_id."""

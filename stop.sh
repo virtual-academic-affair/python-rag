@@ -38,11 +38,6 @@ else
   fi
 fi
 
-# 2. Stop Docker services
-echo ""
-echo -e "${YELLOW}🐳 Dừng Docker services (RabbitMQ)...${NC}"
-docker-compose down
-
 echo ""
 echo -e "${GREEN}✅ Hệ thống đã được shutdown hoàn toàn.${NC}"
 echo ""

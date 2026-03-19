@@ -484,7 +484,6 @@ CẤU TRUC MetadataTypeDocument:
   display_name      : Tên hiển thị trên UI (vd: "Năm học")
   description       : Mô tả ngắn
   allowed_values    : List[AllowedValue] hoặc null (null = free text)
-  support_all_value : bool — nếu true, filter tự thêm OR key="all"
   is_active         : bool — false = ẩn, không validate (Soft Delete)
   is_system         : bool — true = không cho phép xóa qua API
   total_files       : int — Biến auto-increment/statistics: Số lượng file hiện đang sử dụng tag này
@@ -508,11 +507,11 @@ CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
 3 SYSTEM METADATA (seed bởi scripts/seed_metadata.py, is_system=True):
 
   academic_year (Năm học):
-    has_all_value = True (allowedValues chứa value="all")
+    Chứa entry value="all" trong allowed_values.
     Giá trị: 2020-2021, 2021-2022, 2022-2023, 2023-2024, 2024-2025, 2025-2026, all
 
   cohort (Khóa sinh viên):
-    has_all_value = True (allowedValues chứa value="all")
+    Chứa entry value="all" trong allowed_values.
     Giá trị: K62, K63, K64, K65, K66, K67, K68, all
 
   access_scope (Phạm vi truy cập):
@@ -715,7 +714,7 @@ PHÂN QUYỀN CÁC ENDPOINT:
 17. CAU TRUC MONGODB (3 COLLECTIONS)
 ================================================================================
 
-Database name: cấu hình qua MONGODB_DB_NAME (default: "email_ai_service")
+Database name: cấu hình qua MONGODB_DB_NAME (default: "ai_service")
 
 Collection: file_search_stores
   _id           ObjectId  → store_id trong API
@@ -910,13 +909,11 @@ DEBUG=true → response kèm thêm stack trace và request path
   STORE MANAGEMENT (9 endpoints)
     POST   /api/stores                     Tạo store mới
     GET    /api/stores                     Liệt kê (? is_default, page, limit)
-    GET    /api/stores/gemini/list         Discovery từ Gemini API
     GET    /api/stores/{store_id}          Chi tiết store
     PATCH  /api/stores/{store_id}          Cập nhật display_name hoặc is_default
     DELETE /api/stores/{store_id}          Xóa store (? force=false/true)
     DELETE /api/stores/all                 Xóa TAT CA stores
-    DELETE /api/stores/gemini/all          Xóa tất cả stores trên Gemini (giữ MongoDB)
-    POST   /api/stores/{store_id}/syncs    Sync file_count + total_size từ Gemini
+    POST   /api/stores/{store_id}/sync     Sync file_count + total_size từ Gemini
 
   METADATA TYPES (6 endpoints)
     POST   /api/metadata                        Tạo metadata type mới
@@ -966,7 +963,7 @@ QUAN TRONG (có default):
   LLM_TEMPERATURE      Temperature classify     default: 0.1
   GEMINI_TEMPERATURE   Temperature RAG          default: 0.7
   GEMINI_MAX_OUTPUT_TOKENS                      default: 2048
-  MONGODB_DB_NAME      Tên database             default: email_ai_service
+  MONGODB_DB_NAME      Tên database             default: ai_service
   R2_ENDPOINT       R2 server             default: localhost:9000
   R2_BUCKET_NAME    R2 bucket             default: rag-files
   RABBITMQ_HOST        RabbitMQ host            default: localhost

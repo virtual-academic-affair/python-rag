@@ -1,6 +1,6 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         AI SERVICE API DOCUMENTATION                         ║
-║                                  VERSION 2.0                                 ║
+║                                  VERSION 3.0.0                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 BASE URL: http://localhost:8000
@@ -32,14 +32,14 @@ MỤC LỤC
  2. Email Classification     (2 endpoints)
  3. Store Management APIs    (9 endpoints)   [🔒 Yêu cầu role admin]
  4. Metadata Type APIs       (5 endpoints)   [🔒 Write yêu cầu admin | GET public]
- 5. File Management APIs     (12 endpoints)  [🔒 Yêu cầu role admin]
+ 5. File Management APIs     (11 endpoints) [🔒 Yêu cầu role admin]
  6. Chat APIs                (2 endpoints)   [Public]
  7. Common Error Responses
  8. Auto Store Resolution
  9. Email Draft Flow (Internal)
 10. RabbitMQ Message Format
 
-TỔNG: 31 ENDPOINTS
+TỔNG: 30 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                            1. HEALTH CHECK
@@ -55,10 +55,12 @@ TỔNG: 31 ENDPOINTS
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "1.0.0",                                                      │
+│     "version": "3.0.0",                                                      │
 │     "gemini_api_connected": true,                                            │
 │     "mongodb_connected": true                                                │
 │   }                                                                          │
+│                                                                              │
+│ GHI CHÚ: status có thể là "degraded" nếu một trong các kết nối bị lỗi.       │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -89,17 +91,13 @@ MÔ TẢ:
 
 REQUEST EXAMPLE:
   {
-    "internal": {
-      "mail_id": "123",
-      "id_record": "123"
-    },
     "title": "Xin đăng ký môn học",
     "content": "Em muốn đăng ký môn Toán cao cấp, mã môn MATH101..."
   }
 
 RESPONSE 200 OK (label = classRegistration):
   {
-    "internal": { "mail_id": "123", "id_record": "123" },
+    "messageId": 123,
     "label": "classRegistration",
     "extracted": {
       "studentCode": "SV001",
@@ -122,13 +120,15 @@ RESPONSE 200 OK (label = classRegistration):
 
 RESPONSE 200 OK (label = inquiry):
   {
-    "internal": { "mail_id": "123", "id_record": "123" },
+    "messageId": 123,
     "label": "inquiry",
-    "answer": {
-      "draftSubject": "Re: Câu hỏi của bạn",
-      "draftBody": "Kính gửi...",
+    "inquiry": {
+      "answer": "Kính gửi...",
+      "question": "Câu hỏi của bạn",
+      "types": ["graduation"],
       "sources": [
         {
+          "citation_id": 1,
           "title": "Quy chế đào tạo 2026",
           "text": "Đoạn văn liên quan...",
           "url": "http://r2.../presigned-url",
@@ -141,7 +141,7 @@ RESPONSE 200 OK (label = inquiry):
 
 RESPONSE 200 OK (label = task | other):
   {
-    "internal": { "mail_id": "123", "id_record": "123" },
+    "messageId": 123,
     "label": "task"
   }
 
@@ -270,29 +270,6 @@ RESPONSE 200 OK:
     "limit": 50
   }
 
-────────────────────────────────────────────────────────────────────────────────
-3.3. GET /api/stores/gemini/list - Discovery Stores từ Gemini
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Liệt kê stores trực tiếp từ Gemini API (không qua MongoDB).
-
-SỬ DỤNG:
-  - Debug: Tìm stores trên Gemini chưa được track trong MongoDB
-  - Verify Gemini API connectivity
-
-RESPONSE 200 OK:
-  {
-    "stores": [
-      {
-        "store_name": "fileSearchStores/van-ban-dao-tao-2026-abc123",
-        "display_name": "Văn bản Đào tạo 2026",
-        "activeDocumentsCount": 42,
-        "sizeBytes": 52428800
-      }
-    ],
-    "count": 1
-  }
 
 ────────────────────────────────────────────────────────────────────────────────
 3.4. GET /api/stores/{store_id} - Lấy chi tiết Store
@@ -358,22 +335,9 @@ RESPONSE 200 OK:
     "message": "Deleted 3 stores (full delete)"
   }
 
-────────────────────────────────────────────────────────────────────────────────
-3.8. DELETE /api/stores/gemini/all - Xóa tất cả Store trên Gemini
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa tất cả stores trên Gemini API (giữ nguyên MongoDB và R2).
-  Dùng để sync hoặc reset Gemini.
-
-RESPONSE 200 OK:
-  {
-    "deleted_count": 3,
-    "message": "Deleted 3 Gemini stores"
-  }
 
 ────────────────────────────────────────────────────────────────────────────────
-3.9. POST /api/stores/{store_id}/syncs - Đồng bộ thống kê Store
+3.9. POST /api/stores/{store_id}/sync - Đồng bộ thống kê Store
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -453,9 +417,11 @@ RESPONSE 201 Created:
         "value": "dao_tao",
         "displayName": "Đào tạo",
         "isActive": true,
-        "color": "#3498DB"
+        "color": "#3498DB",
+        "totalFiles": 10
       }
     ],
+    "totalFiles": 25,
     "isActive": true,
     "isSystem": false,
     "createdAt": "2026-03-11T10:30:00.000000",
@@ -524,32 +490,41 @@ GHI CHÚ allowedValues khi update:
 RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
 
 ────────────────────────────────────────────────────────────────────────────────
-4.5. DELETE /api/metadata/{key} - Vô hiệu hóa Metadata Type (Soft Delete)
+4.5. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Soft delete: đặt isActive=false thay vì xóa cứng.
-  Metadata type vẫn tồn tại trong DB, chỉ bị ẩn khi dùng active_only filter.
-  Không thể vô hiệu hóa nếu is_system=true.
+  Hard delete: xóa hoàn toàn metadata type khỏi hệ thống.
+  CHỈ cho phép xóa nếu số lượng file đang dùng tag này (totalFiles) bằng 0.
+  Không thể xóa nếu is_system=true.
 
-RESPONSE 200 OK: (MetadataTypeResponse với isActive: false)
-  {
-    "metadataId": "67a5f2c8abc123def456790",
-    "key": "department",
-    "displayName": "Phòng ban",
-    "description": "...",
-    "allowedValues": [...],
-    "isActive": false,
-    "isSystem": false,
-    "createdAt": "2026-03-11T10:30:00.000000",
-    "updatedAt": "2026-03-11T10:30:00.000000"
-  }
+RESPONSE 204 No Content:
+  (Thành công, không có body)
+RESPONSE 409 Conflict:
+  { "detail": "Cannot delete metadata type 'department' because it is in use by 5 files." }
 
 RESPONSE 403 Forbidden:
-  { "detail": "Cannot deactivate system metadata type: 'access_scope'. System metadata types are protected." }
+  { "detail": "Cannot delete system metadata type: 'access_scope'. System metadata types are protected." }
 
 RESPONSE 404 Not Found:
   { "detail": "Metadata type 'department' not found" }
+
+────────────────────────────────────────────────────────────────────────────────
+4.6. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Xóa cứng một giá trị khỏi danh sách allowed_values.
+  Chỉ có thể xóa nếu totalFiles của giá trị này bằng 0.
+  Nếu giá trị đang được sử dụng bởi file nào đó, trả về 409 Conflict.
+
+RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
+
+RESPONSE 409 Conflict:
+  { "detail": "Cannot delete value 'xxx' because it is still used by N files." }
+
+RESPONSE 404 Not Found:
+  { "detail": "Value 'xxx' not found in metadata type 'yyy'" }
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -650,23 +625,6 @@ RESPONSE 200 OK:
     "limit": 50
   }
 
-────────────────────────────────────────────────────────────────────────────────
-5.3. GET /api/files/gemini/list - Discovery Files từ Gemini
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Liệt kê documents trực tiếp từ Gemini File Search API.
-
-QUERY PARAMETERS:
-  - store_name: string (optional) - Gemini store name. Dùng default nếu bỏ qua.
-    Ví dụ: fileSearchStores/van-ban-dao-tao-2026-abc123
-
-RESPONSE 200 OK:
-  {
-    "documents": [...],
-    "count": 42,
-    "store_name": "fileSearchStores/xxx"
-  }
 
 ────────────────────────────────────────────────────────────────────────────────
 5.4. GET /api/files/{file_id} - Lấy chi tiết File
@@ -700,22 +658,6 @@ MÔ TẢ:
   Xóa file (hard delete: R2 + Gemini + MongoDB).
 
 RESPONSE 204 No Content
-
-RESPONSE 404 Not Found:
-  { "detail": "File not found" }
-
-────────────────────────────────────────────────────────────────────────────────
-5.7. POST /api/files/{file_id}/retry - Retry upload thất bại
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Retry upload file đã FAILED lên Gemini File Search.
-  File phải ở trạng thái FAILED và vẫn còn trong R2.
-
-RESPONSE 200 OK: (FileUploadResponse với message "Retry completed successfully")
-
-RESPONSE 400 Bad Request:
-  { "detail": "File is not in FAILED status" }
 
 RESPONSE 404 Not Found:
   { "detail": "File not found" }
@@ -758,12 +700,15 @@ RESPONSE 201 Created:
   }
 
 ────────────────────────────────────────────────────────────────────────────────
-5.9. DELETE /api/files/store/{store_id}/all - Xóa tất cả files trong Store
+5.9. DELETE /api/files/all - Xóa toàn bộ files
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
   Xóa toàn bộ files trong store (R2 + Gemini + MongoDB).
   ⚠️ NGUY HIỂM: Không thể hoàn tác!
+
+QUERY PARAMETERS:
+  - store_id: string (optional) - ID của store cần xóa file (dùng default nếu bỏ qua)
 
 RESPONSE 200 OK:
   {
@@ -771,19 +716,6 @@ RESPONSE 200 OK:
     "message": "Deleted 42 files from store 67a5..."
   }
 
-────────────────────────────────────────────────────────────────────────────────
-5.10. DELETE /api/files/store/{store_id}/gemini - Xóa files trên Gemini
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa tất cả files của store trên Gemini API (giữ nguyên R2 và MongoDB).
-  Dùng để re-index hoặc reset Gemini store.
-
-RESPONSE 200 OK:
-  {
-    "deleted_count": 42,
-    "message": "Deleted 42 files from Gemini for store 67a5..."
-  }
 
 ────────────────────────────────────────────────────────────────────────────────
 5.11. GET /api/files/check-sync - Kiểm tra đồng bộ
@@ -1092,8 +1024,8 @@ nest-api yêu cầu:
 
 NestJS (nest-api) publish message lên queue với pattern "ingested":
 
-QUEUE NAME: Cấu hình qua RABBITMQ_INGEST_QUEUE (mặc định: "queue")
-            nest-api dùng env RABBITMQ_QUEUE (mặc định: "queue")
+QUEUE NAME: Cấu hình qua RABBITMQ_INGEST_QUEUE (mặc định: "email_ingest_queue")
+            nest-api dùng env RABBITMQ_QUEUE (mặc định: "email_ingest_queue")
 
 MESSAGE FORMAT (NestJS RMQ transport):
   {
