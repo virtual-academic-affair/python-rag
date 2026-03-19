@@ -62,15 +62,16 @@ class Settings(BaseSettings):
     MONGODB_DISABLED: bool = False
 
     # ====================================
-    # MinIO/S3 Configuration
+    # r2/S3 Configuration
     # ====================================
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str
-    MINIO_SECRET_KEY: str
-    MINIO_BUCKET_NAME: str = "rag-files"
-    MINIO_USE_SSL: bool = False
-    MINIO_REGION: str = "us-east-1"
-    MINIO_DISABLED: bool = False
+    R2_ENDPOINT: str = "localhost:9000"
+    R2_ACCESS_KEY: str
+    R2_SECRET_KEY: str
+    R2_BUCKET_NAME: str = "rag-files"
+    R2_USE_SSL: bool = False
+    R2_REGION: str = "us-east-1"
+    R2_DISABLED: bool = False
+    R2_PUBLIC_DOMAIN: Optional[str] = None
 
     # ====================================
     # gRPC (shared workflows)

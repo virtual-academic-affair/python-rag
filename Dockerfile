@@ -17,9 +17,13 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY . .
+COPY app ./app
+COPY scripts/gen_proto.py ./scripts/gen_proto.py
+COPY run.py ./run.py
+
+RUN python scripts/gen_proto.py
 
 EXPOSE 8000
 
-CMD ["python", "run.py"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:8000", "app.main:app"]
 

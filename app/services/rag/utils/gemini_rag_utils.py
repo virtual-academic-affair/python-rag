@@ -181,7 +181,7 @@ async def enrich_sources_with_urls(sources: Optional[list[dict]], file_repo: Fil
             }
     
     # Enrich sources with presigned URLs
-    from app.storage.minio_client import minio_storage
+    from app.storage.r2_client import r2_storage
     
     for source in sources:
         title = source.get("title")
@@ -190,7 +190,7 @@ async def enrich_sources_with_urls(sources: Optional[list[dict]], file_repo: Fil
             path = file_info["storage_path"]
             if path:
                 try:
-                    source["url"] = await minio_storage.get_file_url(path)
+                    source["url"] = await r2_storage.get_file_url(path)
                 except Exception:
                     pass
             source["file_id"] = file_info["file_id"]

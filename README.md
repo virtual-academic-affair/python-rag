@@ -24,7 +24,7 @@ Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiế
 | Web framework | FastAPI | 0.125.0 |
 | AI / LLM | Google Gemini (google-genai) | 1.56.0 |
 | Database | MongoDB (Motor async) | 3.3.2 |
-| Object storage | MinIO (S3-compatible) | 7.2.3 |
+| Object storage | R2 (S3-compatible) | 7.2.3 |
 | Message broker | RabbitMQ (pika) | 1.3.2 |
 | gRPC client | grpcio + grpcio-tools | 1.71.0 |
 | Config | pydantic-settings | 2.x |
@@ -83,12 +83,12 @@ email_langchain/
 │   │   │       └── other_service.py
 │   │   └── rag/
 │   │       ├── gemini_service.py       # Gemini client (chat + draft)
-│   │       ├── file_service.py         # Upload file → MinIO + Gemini
+│   │       ├── file_service.py         # Upload file → R2 + Gemini
 │   │       ├── store_service.py        # Quản lý Gemini File Search store
 │   │       ├── metadata_service.py     # CRUD + validate metadata types
 │   │       └── email_draft_service.py  # Hàm soạn email trả lời (RAG)
 │   ├── storage/
-│   │   └── minio_client.py             # MinIO client singleton
+│   │   └── r2_client.py             # R2 client singleton
 │   └── utils/
 │       ├── filter_builder.py           # Build Gemini filter string
 │       ├── store_utils.py              # Resolve store ID, convert filter
@@ -144,13 +144,13 @@ Tạo file `.env` (xem phần Environment Variables bên dưới).
 
 ### 3. Khởi động Docker services
 
-`docker-compose.yml` chứa các services: **MinIO** và **RabbitMQ**.
+`docker-compose.yml` chứa các services: **R2** và **RabbitMQ**.
 
 ```bash
-# Chỉ khởi động MinIO (nếu RabbitMQ đã chạy riêng)
+# Chỉ khởi động R2 (nếu RabbitMQ đã chạy riêng)
 ./start.sh
 
-# Khởi động tất cả – MinIO + RabbitMQ
+# Khởi động tất cả – R2 + RabbitMQ
 ./start.sh --all
 ```
 
@@ -182,7 +182,7 @@ python run.py
 |---|---|
 | API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
-| MinIO Console | http://localhost:9001 |
+| R2 Console | http://localhost:9001 |
 | RabbitMQ Management | http://localhost:15672 |
 
 ---
@@ -310,12 +310,12 @@ RELOAD=true
 MONGODB_URL=mongodb+srv://...
 MONGODB_DB_NAME=email_ai_service
 
-# === MinIO ===
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET_NAME=documents
-MINIO_SECURE=false
+# === R2 ===
+R2_ENDPOINT=localhost:9000
+R2_ACCESS_KEY=r2admin
+R2_SECRET_KEY=r2admin
+R2_BUCKET_NAME=documents
+R2_SECURE=false
 
 # === RabbitMQ ===
 RABBITMQ_ENABLED=true

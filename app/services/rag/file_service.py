@@ -1,6 +1,6 @@
 """
 File Service - Business logic for file management operations.
-Handles file uploads, downloads, deletions, and integrations with MinIO and Gemini.
+Handles file uploads, downloads, deletions, and integrations with Cloudflare R2 and Gemini.
 """
 
 import asyncio
@@ -23,12 +23,14 @@ from app.models.database import FileDocument
 from app.models.enums import FileStatus
 from app.repositories.file_repository import FileRepository
 from app.repositories.store_repository import StoreRepository
-from app.storage.minio_client import minio_storage
+from app.storage.r2_client import r2_storage
 from app.services.rag.utils.file_utils import (
     validate_file_size,
     validate_file_extension,
     detect_mime_type,
     generate_storage_path,
+    cleanup_temp_file,
+    convert_metadata_for_gemini,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,7 @@ class UploadStep(Enum):
     """Steps in the upload process for tracking rollback."""
     VALIDATED = "validated"
     DB_CREATED = "db_created"
-    MINIO_UPLOADED = "minio_uploaded"
+    R2_UPLOADED = "r2_uploaded"
     GEMINI_UPLOADED = "gemini_uploaded"
     COMPLETED = "completed"
 
@@ -80,7 +82,7 @@ def _to_file_model(doc: dict) -> Optional[FileDocument]:
 class FileService:
     """
     Service for file management operations.
-    Coordinates between MinIO storage, MongoDB, and Gemini File Search.
+    Coordinates between Cloudflare R2 storage, MongoDB, and Gemini File Search.
     """
     
     def __init__(self):
@@ -141,21 +143,6 @@ class FileService:
             error_msg = "; ".join(errors)
             raise ValidationException(f"Metadata validation failed: {error_msg}")
     
-    def _convert_metadata_for_gemini(self, custom_metadata: dict) -> list[dict]:
-        """Convert custom_metadata dict to Gemini CustomMetadata format."""
-        if not custom_metadata:
-            return []
-        
-        result = []
-        for key, value in custom_metadata.items():
-            if isinstance(value, str):
-                result.append({"key": key, "stringValue": value})
-            elif isinstance(value, (int, float)):
-                result.append({"key": key, "numericValue": value})
-            elif isinstance(value, list):
-                result.append({"key": key, "stringListValue": {"values": value}})
-        return result
-    
     async def upload_file(
         self,
         file_path: str,
@@ -167,9 +154,9 @@ class FileService:
         enable_chunking: Optional[bool] = None,
     ) -> FileDocument:
         """
-        Upload a file to MinIO and Gemini File Search (always synchronous).
+        Upload a file to Cloudflare R2 and Gemini File Search (always synchronous).
 
-        Waits for both MinIO and Gemini to complete before returning.
+        Waits for both Cloudflare R2 and Gemini to complete before returning.
         Returns FileDocument with status='active' on success.
 
         Args:
@@ -212,7 +199,7 @@ class FileService:
                 "display_name": display_name or original_filename,
                 "original_filename": original_filename,
                 "storage_path": storage_path,
-                "storage_bucket": settings.MINIO_BUCKET_NAME,
+                "storage_bucket": settings.R2_BUCKET_NAME,
                 "file_size": file_size,
                 "mime_type": mime_type,
                 "gemini_document_name": None,
@@ -225,16 +212,16 @@ class FileService:
             state.file_id = file_id
             state.mark_step(UploadStep.DB_CREATED)
             
-            # === STEP 3: Upload to MinIO (synchronous, fast) ===
-            logger.info(f"[{file_id}] Uploading to MinIO: {storage_path}")
+            # === STEP 3: Upload to Cloudflare R2 (synchronous, fast) ===
+            logger.info(f"[{file_id}] Uploading to Cloudflare R2: {storage_path}")
             with open(file_path, "rb") as f:
-                await minio_storage.upload_file(
+                await r2_storage.upload_file(
                     file=f,
                     object_name=storage_path,
                     content_type=mime_type,
                     metadata={"file_id": file_id, "store_id": store_id},
                 )
-            state.mark_step(UploadStep.MINIO_UPLOADED)
+            state.mark_step(UploadStep.R2_UPLOADED)
             
             # === STEP 4: Gemini upload (always synchronous) ===
             await self.file_repo.update_by_id(file_id, {"status": FileStatus.PROCESSING.value})
@@ -305,7 +292,7 @@ class FileService:
             )
         except Exception as e:
             logger.error(f"[{file_id}] Background Gemini upload failed: {e}", exc_info=True)
-            # Mark as failed but keep MinIO file (can retry later)
+            # Mark as failed but keep Cloudflare R2 file (can retry later)
             try:
                 await self.file_repo.update_by_id(
                     file_id,
@@ -315,17 +302,7 @@ class FileService:
                 logger.error(f"[{file_id}] Failed to update status: {db_err}")
         finally:
             # Cleanup temp file after background task completes
-            self._cleanup_temp_file(file_path)
-    
-    def _cleanup_temp_file(self, file_path: str) -> None:
-        """Safely cleanup temporary file."""
-        try:
-            import os
-            if file_path and os.path.exists(file_path):
-                os.unlink(file_path)
-                logger.debug(f"Cleaned up temp file: {file_path}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temp file {file_path}: {e}")
+            cleanup_temp_file(file_path)
     
     async def _rollback_upload(self, state: UploadState, error_msg: str) -> None:
         """
@@ -346,13 +323,13 @@ class FileService:
             except Exception as e:
                 logger.warning(f"Rollback: Failed to delete Gemini document: {e}")
         
-        # Rollback MinIO (if uploaded)
-        if state.has_step(UploadStep.MINIO_UPLOADED) and state.storage_path:
+        # Rollback Cloudflare R2 (if uploaded)
+        if state.has_step(UploadStep.R2_UPLOADED) and state.storage_path:
             try:
-                await minio_storage.delete_file(state.storage_path)
-                logger.info(f"Rollback: Deleted MinIO file {state.storage_path}")
+                await r2_storage.delete_file(state.storage_path)
+                logger.info(f"Rollback: Deleted Cloudflare R2 file {state.storage_path}")
             except Exception as e:
-                logger.warning(f"Rollback: Failed to delete MinIO file: {e}")
+                logger.warning(f"Rollback: Failed to delete Cloudflare R2 file: {e}")
         
         # Rollback DB record (if created)
         if state.has_step(UploadStep.DB_CREATED) and state.file_id:
@@ -377,7 +354,7 @@ class FileService:
             
             # Add custom metadata
             if custom_metadata:
-                config["custom_metadata"] = self._convert_metadata_for_gemini(custom_metadata)
+                config["custom_metadata"] = convert_metadata_for_gemini(custom_metadata)
             
             # Add chunking config if enabled
             if enable_chunking or (enable_chunking is None and settings.CHUNKING_ENABLED):
@@ -450,7 +427,7 @@ class FileService:
     
     async def download_file(self, file_id: str) -> tuple[BinaryIO, str, str]:
         """
-        Download a file from MinIO.
+        Download a file from Cloudflare R2.
         
         Returns:
             tuple: (file_object, filename, mime_type)
@@ -460,7 +437,7 @@ class FileService:
             raise NotFoundException("File", file_id)
         
         try:
-            file_obj = await minio_storage.download_file(file_dict["storage_path"])
+            file_obj = await r2_storage.download_file(file_dict["storage_path"])
             return file_obj, file_dict["original_filename"], file_dict["mime_type"]
         except Exception as e:
             logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
@@ -470,7 +447,7 @@ class FileService:
         """
         Retry uploading a failed file to Gemini (always synchronous).
 
-        The file must already be in MinIO (status=FAILED).
+        The file must already be in Cloudflare R2 (status=FAILED).
 
         Args:
             file_id: ID of the failed file
@@ -499,15 +476,15 @@ class FileService:
         
         state = UploadState(file_id=file_id, storage_path=storage_path)
         state.mark_step(UploadStep.DB_CREATED)
-        state.mark_step(UploadStep.MINIO_UPLOADED)
+        state.mark_step(UploadStep.R2_UPLOADED)
         
-        # Download from MinIO to temp file
+        # Download from Cloudflare R2 to temp file
         import tempfile
         import os
         
         temp_file_path = None
         try:
-            file_obj = await minio_storage.download_file(storage_path)
+            file_obj = await r2_storage.download_file(storage_path)
             
             # Write to temp file
             suffix = os.path.splitext(file_dict["original_filename"])[1]
@@ -524,7 +501,7 @@ class FileService:
                 file_id, temp_file_path, display_name,
                 store_id, store_name, custom_metadata, None, state
             )
-            self._cleanup_temp_file(temp_file_path)
+            cleanup_temp_file(temp_file_path)
             
             file_dict = await self.file_repo.find_by_id(file_id)
             return _to_file_model(file_dict)
@@ -535,7 +512,7 @@ class FileService:
                 "status": FileStatus.FAILED.value,
             })
             if temp_file_path:
-                self._cleanup_temp_file(temp_file_path)
+                cleanup_temp_file(temp_file_path)
             raise StorageException(f"Retry failed: {str(e)}")
 
     async def delete_file(self, file_id: str) -> bool:
@@ -547,12 +524,12 @@ class FileService:
         gemini_document_name = file_doc.get("gemini_document_name")
         store_id = file_doc.get("store_id")
         
-        # Delete from MinIO
+        # Delete from Cloudflare R2
         if storage_path := file_doc.get("storage_path"):
             try:
-                await minio_storage.delete_file(storage_path)
+                await r2_storage.delete_file(storage_path)
             except Exception as e:
-                logger.warning(f"Failed to delete from MinIO: {e}")
+                logger.warning(f"Failed to delete from Cloudflare R2: {e}")
         
         # Delete from Gemini
         if gemini_document_name:
@@ -670,7 +647,7 @@ class FileService:
         
         Args:
             store_id: Store ID (MongoDB ObjectId)
-            gemini_only: If True, only delete from Gemini API (not MinIO/MongoDB)
+            gemini_only: If True, only delete from Gemini API (not Cloudflare R2/MongoDB)
             
         Returns:
             Number of files deleted
@@ -702,12 +679,12 @@ class FileService:
                         logger.warning(f"Failed to delete {gemini_document_name} from Gemini: {e}")
                 
                 if not gemini_only:
-                    # Delete from MinIO
+                    # Delete from Cloudflare R2
                     if storage_path := file_doc.get("storage_path"):
                         try:
-                            await minio_storage.delete_file(storage_path)
+                            await r2_storage.delete_file(storage_path)
                         except Exception as e:
-                            logger.warning(f"Failed to delete from MinIO: {e}")
+                            logger.warning(f"Failed to delete from Cloudflare R2: {e}")
                     
                     # Delete from MongoDB
                     await self.file_repo.delete_by_id(str(file_doc["_id"]))
@@ -726,7 +703,7 @@ class FileService:
     async def delete_all_files_in_store_gemini(self, store_id: str) -> int:
         """
         Delete all documents from Gemini File Search store only.
-        Does NOT delete from MinIO or MongoDB.
+        Does NOT delete from Cloudflare R2 or MongoDB.
 
         Args:
             store_id: Store ID (MongoDB ObjectId)
@@ -740,9 +717,9 @@ class FileService:
     # SYNC HELPERS
     # ====================================
 
-    async def _list_all_minio_paths(self) -> set[str]:
-        """Return set of all object_name paths currently in MinIO bucket."""
-        files = await minio_storage.list_files(prefix="")
+    async def _list_all_r2_paths(self) -> set[str]:
+        """Return set of all object_name paths currently in Cloudflare R2 bucket."""
+        files = await r2_storage.list_files(prefix="")
         return {f["object_name"] for f in files}
 
     async def _list_all_gemini_doc_names(self) -> set[str]:
@@ -766,18 +743,18 @@ class FileService:
 
     async def check_sync(self) -> dict:
         """
-        Compare files across MongoDB, MinIO and Gemini.
+        Compare files across MongoDB, Cloudflare R2 and Gemini.
 
         Returns dict with:
         - is_synced: bool
-        - total_db / total_minio / total_gemini: int
+        - total_db / total_r2 / total_gemini: int
         - synced_count: int  (files present in all 3)
         - issues: list of dicts describing each discrepancy
         """
         # Fetch from all 3 sources in parallel
-        db_docs, minio_paths, gemini_names = await asyncio.gather(
+        db_docs, r2_paths, gemini_names = await asyncio.gather(
             self.file_repo.find_many({}, skip=0, limit=100000),
-            self._list_all_minio_paths(),
+            self._list_all_r2_paths(),
             self._list_all_gemini_doc_names(),
         )
 
@@ -793,7 +770,7 @@ class FileService:
             file_id = str(doc.get("_id", ""))
             fname = doc.get("original_filename", "")
 
-            in_minio = sp in minio_paths if sp else False
+            in_r2 = sp in r2_paths if sp else False
             in_gemini = gn in gemini_names if gn else False
 
             if sp:
@@ -801,19 +778,19 @@ class FileService:
             if gn:
                 db_gemini_names.add(gn)
 
-            if in_minio and in_gemini:
+            if in_r2 and in_gemini:
                 synced_count += 1
-            elif not in_minio and not in_gemini:
+            elif not in_r2 and not in_gemini:
                 issues.append({
                     "file_id": file_id, "original_filename": fname,
                     "storage_path": sp, "gemini_document_name": gn,
                     "issue": "in_db_only",
                 })
-            elif not in_minio:
+            elif not in_r2:
                 issues.append({
                     "file_id": file_id, "original_filename": fname,
                     "storage_path": sp, "gemini_document_name": gn,
-                    "issue": "missing_in_minio",
+                    "issue": "missing_in_r2",
                 })
             else:  # not in_gemini
                 issues.append({
@@ -822,12 +799,12 @@ class FileService:
                     "issue": "missing_in_gemini",
                 })
 
-        # MinIO objects with no DB record
-        for sp in minio_paths - db_storage_paths:
+        # Cloudflare R2 objects with no DB record
+        for sp in r2_paths - db_storage_paths:
             issues.append({
                 "file_id": None, "original_filename": None,
                 "storage_path": sp, "gemini_document_name": None,
-                "issue": "in_minio_only",
+                "issue": "in_r2_only",
             })
 
         # Gemini docs with no DB record
@@ -841,7 +818,7 @@ class FileService:
         return {
             "is_synced": len(issues) == 0,
             "total_db": len(db_docs),
-            "total_minio": len(minio_paths),
+            "total_r2": len(r2_paths),
             "total_gemini": len(gemini_names),
             "synced_count": synced_count,
             "issues": issues,
@@ -849,11 +826,11 @@ class FileService:
 
     async def sync_files(self) -> dict:
         """
-        Synchronise files across MongoDB, MinIO and Gemini.
+        Synchronise files across MongoDB, Cloudflare R2 and Gemini.
 
         Strategy:
-        - DB record exists + MinIO exists + Gemini missing
-            → upload file from MinIO to Gemini
+        - DB record exists + Cloudflare R2 exists + Gemini missing
+            → upload file from Cloudflare R2 to Gemini
         - All other inconsistencies (orphan in any one/two sources)
             → delete from whichever sources have the file
         """
@@ -884,7 +861,7 @@ class FileService:
             }
 
             try:
-                # ── Case 1: DB + MinIO, missing Gemini ─────────────────
+                # ── Case 1: DB + Cloudflare R2, missing Gemini ─────────────────
                 if issue_type == "missing_in_gemini" and file_id and sp:
                     doc = await self.file_repo.find_by_id(file_id)
                     if not doc:
@@ -896,9 +873,9 @@ class FileService:
                         raise ValueError(f"Store {store_id} not found")
                     store_name = store_dict["store_name"]
 
-                    # Download from MinIO to temp file
+                    # Download from Cloudflare R2 to temp file
                     import tempfile, os as _os
-                    file_obj = await minio_storage.download_file(sp)
+                    file_obj = await r2_storage.download_file(sp)
                     suffix = _os.path.splitext(doc.get("original_filename", ""))[1]
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                         tmp.write(file_obj.read())
@@ -907,7 +884,7 @@ class FileService:
                     try:
                         state = UploadState(
                             file_id=file_id, storage_path=sp,
-                            completed_steps=[UploadStep.DB_CREATED, UploadStep.MINIO_UPLOADED],
+                            completed_steps=[UploadStep.DB_CREATED, UploadStep.R2_UPLOADED],
                         )
                         await self.file_repo.update_by_id(file_id, {"status": FileStatus.PROCESSING.value})
                         await self._process_gemini_upload(
@@ -917,19 +894,19 @@ class FileService:
                             doc.get("custom_metadata"), None, state,
                         )
                     finally:
-                        self._cleanup_temp_file(tmp_path)
+                        cleanup_temp_file(tmp_path)
 
                     results.append({**result_base, "action": "upload_to_gemini", "success": True, "error": None})
                     uploaded += 1
 
-                # ── Case 2: DB only (no MinIO, no Gemini) ──────────────
+                # ── Case 2: DB only (no Cloudflare R2, no Gemini) ──────────────
                 elif issue_type == "in_db_only" and file_id:
                     await self.file_repo.delete_by_id(file_id)
                     results.append({**result_base, "action": "delete_db", "success": True, "error": None})
                     deleted += 1
 
-                # ── Case 3: DB + Gemini, missing MinIO ─────────────────
-                elif issue_type == "missing_in_minio" and file_id:
+                # ── Case 3: DB + Gemini, missing Cloudflare R2 ─────────────────
+                elif issue_type == "missing_in_r2" and file_id:
                     if gn:
                         try:
                             await asyncio.to_thread(
@@ -942,10 +919,10 @@ class FileService:
                     results.append({**result_base, "action": "delete_db_and_gemini", "success": True, "error": None})
                     deleted += 1
 
-                # ── Case 4: MinIO only ──────────────────────────────────
-                elif issue_type == "in_minio_only" and sp:
-                    await minio_storage.delete_file(sp)
-                    results.append({**result_base, "action": "delete_minio", "success": True, "error": None})
+                # ── Case 4: Cloudflare R2 only ──────────────────────────────────
+                elif issue_type == "in_r2_only" and sp:
+                    await r2_storage.delete_file(sp)
+                    results.append({**result_base, "action": "delete_r2", "success": True, "error": None})
                     deleted += 1
 
                 # ── Case 5: Gemini only ─────────────────────────────────

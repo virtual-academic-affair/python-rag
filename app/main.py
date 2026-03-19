@@ -51,7 +51,7 @@ async def lifespan(_: FastAPI):
     print(f"🤖 LLM Model: {settings.LLM_MODEL}")
     print(f"🤖 Gemini Model: {settings.GEMINI_MODEL}")
     print(f"💾 Database: {settings.MONGODB_DB_NAME}")
-    print(f"📦 Storage: MinIO ({settings.MINIO_ENDPOINT})")
+    print(f"📦 Storage: R2 ({settings.R2_ENDPOINT})")
     print(
         "🐰 Messaging: RabbitMQ (%s)"
         % (settings.RABBITMQ_HOST if settings.RABBITMQ_ENABLED else "disabled")
@@ -71,17 +71,18 @@ async def lifespan(_: FastAPI):
         logger.error(f"❌ Failed to connect to MongoDB: {e}")
         raise
 
-    # 2. Initialize MinIO storage
+    # 2. Initialize R2 storage
     try:
-        from app.storage.minio_client import minio_storage
-        # MinIO client initializes on import, test connection
-        if settings.MINIO_DISABLED:
-            logger.warning("⚠️  MinIO disabled. Continuing without storage.")
+        from app.storage.r2_client import r2_storage
+        # R2 client initializes on import, test connection
+        if settings.R2_DISABLED:
+            logger.warning("⚠️  R2 disabled. Continuing without storage.")
         else:
-            buckets = minio_storage.client.list_buckets()
-            logger.info(f"✅ MinIO storage initialized ({len(buckets)} buckets)")
+            response = r2_storage.get_client().list_buckets()
+            buckets = response.get('Buckets', [])
+            logger.info(f"✅ R2 storage initialized ({len(buckets)} buckets)")
     except Exception as e:
-        logger.warning(f"⚠️  MinIO initialization warning: {e}")
+        logger.warning(f"⚠️  R2 initialization warning: {e}")
 
     # 3. Initialize RabbitMQ service
     if settings.RABBITMQ_ENABLED:

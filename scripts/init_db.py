@@ -4,7 +4,7 @@ Database & Storage Initialization Script for AI Service (python-rag).
 
 This script performs a full reset and initialization:
 1. Drops MongoDB database
-2. Deletes all files from MinIO bucket
+2. Deletes all files from R2 bucket
 3. Deletes all stores from Gemini File Search
 4. Creates database indexes
 5. Seeds system metadata types (academic_year, cohort, access_scope)
@@ -16,7 +16,7 @@ Usage:
 
 Requirements:
     - AI Service must be running on localhost:8000
-    - MinIO must be running
+    - R2 must be running
     - Valid GOOGLE_API_KEY, MONGODB_URL in .env
     - AUTH_TOKEN below must be a valid admin JWT
 """
@@ -94,36 +94,36 @@ async def drop_mongodb_database():
     logger.info("✅ MongoDB database dropped")
 
 
-async def clear_minio_bucket():
-    """Delete all files from MinIO bucket."""
-    logger.info("Clearing MinIO bucket...")
+async def clear_r2_bucket():
+    """Delete all files from R2 bucket."""
+    logger.info("Clearing R2 bucket...")
 
-    from minio import Minio
-    from minio.error import S3Error
+    from r2 import R2
+    from r2.error import S3Error
 
-    minio_endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-    minio_access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    minio_secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    minio_bucket = os.getenv("MINIO_BUCKET_NAME", "rag-files")
-    minio_secure = os.getenv("MINIO_USE_SSL", "false").lower() == "true"
+    r2_endpoint = os.getenv("R2_ENDPOINT", "localhost:9000")
+    r2_access_key = os.getenv("R2_ACCESS_KEY", "r2admin")
+    r2_secret_key = os.getenv("R2_SECRET_KEY", "r2admin")
+    r2_bucket = os.getenv("R2_BUCKET_NAME", "rag-files")
+    r2_secure = os.getenv("R2_USE_SSL", "false").lower() == "true"
 
-    client = Minio(
-        minio_endpoint,
-        access_key=minio_access_key,
-        secret_key=minio_secret_key,
-        secure=minio_secure
+    client = R2(
+        r2_endpoint,
+        access_key=r2_access_key,
+        secret_key=r2_secret_key,
+        secure=r2_secure
     )
 
     try:
-        if not client.bucket_exists(minio_bucket):
-            logger.info(f"  Bucket '{minio_bucket}' does not exist. Creating...")
-            client.make_bucket(minio_bucket)
-            logger.info(f"  ✓ Created bucket: {minio_bucket}")
+        if not client.bucket_exists(r2_bucket):
+            logger.info(f"  Bucket '{r2_bucket}' does not exist. Creating...")
+            client.make_bucket(r2_bucket)
+            logger.info(f"  ✓ Created bucket: {r2_bucket}")
         else:
-            objects = client.list_objects(minio_bucket, recursive=True)
+            objects = client.list_objects(r2_bucket, recursive=True)
             delete_count = 0
             for obj in objects:
-                client.remove_object(minio_bucket, obj.object_name)
+                client.remove_object(r2_bucket, obj.object_name)
                 delete_count += 1
 
             if delete_count > 0:
@@ -132,9 +132,9 @@ async def clear_minio_bucket():
                 logger.info("  Bucket is already empty")
 
     except S3Error as e:
-        logger.warning(f"  MinIO error (continuing): {e}")
+        logger.warning(f"  R2 error (continuing): {e}")
 
-    logger.info("✅ MinIO bucket cleared")
+    logger.info("✅ R2 bucket cleared")
 
 
 async def delete_all_gemini_stores():
@@ -410,7 +410,7 @@ async def main(skip_confirm: bool = False):
     if not skip_confirm:
         print("\n⚠️  WARNING: This will DELETE all existing data!")
         print("   - MongoDB database will be dropped")
-        print("   - MinIO files will be deleted")
+        print("   - R2 files will be deleted")
         print("   - Gemini stores will be deleted")
         print()
         confirm = input("Continue? (yes/no): ").strip().lower()
@@ -435,7 +435,7 @@ async def main(skip_confirm: bool = False):
         print("-" * 50)
 
         await drop_mongodb_database()
-        await clear_minio_bucket()
+        await clear_r2_bucket()
         await delete_all_gemini_stores()
 
         # Phase 2: Initialize

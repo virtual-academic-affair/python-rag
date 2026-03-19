@@ -76,9 +76,9 @@ class FileDocument(BaseModel):
     display_name: str = Field(..., description="Display name for file")
     original_filename: str = Field(..., description="Original filename when uploaded")
     
-    # MinIO storage info
-    storage_path: str = Field(..., description="Path in MinIO bucket")
-    storage_bucket: str = Field(..., description="MinIO bucket name")
+    # R2 storage info
+    storage_path: str = Field(..., description="Path in R2 bucket")
+    storage_bucket: str = Field(..., description="R2 bucket name")
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str = Field(..., description="MIME type")
     

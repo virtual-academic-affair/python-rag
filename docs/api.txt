@@ -131,7 +131,7 @@ RESPONSE 200 OK (label = inquiry):
         {
           "title": "Quy chế đào tạo 2026",
           "text": "Đoạn văn liên quan...",
-          "url": "http://minio.../presigned-url",
+          "url": "http://r2.../presigned-url",
           "file_id": "67a5..."
         }
       ],
@@ -329,7 +329,7 @@ RESPONSE 404 Not Found:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa một store (full delete: Gemini + MinIO + MongoDB).
+  Xóa một store (full delete: Gemini + R2 + MongoDB).
 
 QUERY PARAMETERS:
   - force: bool (optional, default: false)
@@ -349,7 +349,7 @@ RESPONSE 404 Not Found:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa toàn bộ stores (full delete: Gemini + MinIO + MongoDB).
+  Xóa toàn bộ stores (full delete: Gemini + R2 + MongoDB).
   ⚠️ NGUY HIỂM: Không thể hoàn tác!
 
 RESPONSE 200 OK:
@@ -363,7 +363,7 @@ RESPONSE 200 OK:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa tất cả stores trên Gemini API (giữ nguyên MongoDB và MinIO).
+  Xóa tất cả stores trên Gemini API (giữ nguyên MongoDB và R2).
   Dùng để sync hoặc reset Gemini.
 
 RESPONSE 200 OK:
@@ -555,7 +555,7 @@ RESPONSE 404 Not Found:
 🔒 XÁC THỰC BẮT BUỘC: Tất cả endpoint trong section này yêu cầu:
    Header: Authorization: Bearer <jwt_token>  (role phải là "admin")
 
-Files được lưu trong MinIO (binary) và indexed trong Gemini File Search.
+Files được lưu trong R2 (binary) và indexed trong Gemini File Search.
 Hỗ trợ: PDF, DOCX, DOC, TXT, MD, HTML (max 20MB)
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -563,7 +563,7 @@ Hỗ trợ: PDF, DOCX, DOC, TXT, MD, HTML (max 20MB)
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Upload file lên MinIO và Gemini File Search (luôn đồng bộ - chờ Gemini hoàn thành).
+  Upload file lên R2 và Gemini File Search (luôn đồng bộ - chờ Gemini hoàn thành).
 
 YÊU CẦU METADATA (BẮT BUỘC):
   - access_scope: phải có
@@ -607,11 +607,11 @@ WORKFLOW:
   3. Validate metadata: access_scope bắt buộc, phải có academic_year hoặc cohort
   4. Validate từng metadata value với registered metadata types
   5. Lưu temporary file
-  6. Upload lên MinIO
+  6. Upload lên R2
   7. Upload Gemini (đồng bộ), đợi hoàn thành, return với status='active'
 
 ROLLBACK:
-  Nếu lỗi: Gemini → MinIO → MongoDB (theo thứ tự ngược)
+  Nếu lỗi: Gemini → R2 → MongoDB (theo thứ tự ngược)
 
 ────────────────────────────────────────────────────────────────────────────────
 5.2. GET /api/files - Liệt kê Files
@@ -678,7 +678,7 @@ RESPONSE 404 Not Found:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Download file binary từ MinIO storage.
+  Download file binary từ R2 storage.
 
 RESPONSE 200 OK:
   Content-Type: application/pdf (hoặc mime type tương ứng)
@@ -693,7 +693,7 @@ RESPONSE 404 Not Found:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa file (hard delete: MinIO + Gemini + MongoDB).
+  Xóa file (hard delete: R2 + Gemini + MongoDB).
 
 RESPONSE 204 No Content
 
@@ -706,7 +706,7 @@ RESPONSE 404 Not Found:
 
 MÔ TẢ:
   Retry upload file đã FAILED lên Gemini File Search.
-  File phải ở trạng thái FAILED và vẫn còn trong MinIO.
+  File phải ở trạng thái FAILED và vẫn còn trong R2.
 
 RESPONSE 200 OK: (FileUploadResponse với message "Retry completed successfully")
 
@@ -758,7 +758,7 @@ RESPONSE 201 Created:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa toàn bộ files trong store (MinIO + Gemini + MongoDB).
+  Xóa toàn bộ files trong store (R2 + Gemini + MongoDB).
   ⚠️ NGUY HIỂM: Không thể hoàn tác!
 
 RESPONSE 200 OK:
@@ -772,7 +772,7 @@ RESPONSE 200 OK:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Xóa tất cả files của store trên Gemini API (giữ nguyên MinIO và MongoDB).
+  Xóa tất cả files của store trên Gemini API (giữ nguyên R2 và MongoDB).
   Dùng để re-index hoặc reset Gemini store.
 
 RESPONSE 200 OK:
@@ -786,14 +786,14 @@ RESPONSE 200 OK:
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  So sánh trạng thái file giữa MongoDB, MinIO và Gemini.
+  So sánh trạng thái file giữa MongoDB, R2 và Gemini.
   Trả về danh sách các file bị lệch sync cùng loại vấn đề.
 
 RESPONSE 200 OK:
   {
     "is_synced": false,
     "total_db": 42,
-    "total_minio": 41,
+    "total_r2": 41,
     "total_gemini": 40,
     "synced_count": 39,
     "issues": [
@@ -808,10 +808,10 @@ RESPONSE 200 OK:
   }
 
 ISSUE TYPES:
-  missing_in_gemini — File có trong DB + MinIO nhưng không có trong Gemini
-  missing_in_minio  — File có trong DB (có gemini_document_name) nhưng không có trong MinIO
+  missing_in_gemini — File có trong DB + R2 nhưng không có trong Gemini
+  missing_in_r2  — File có trong DB (có gemini_document_name) nhưng không có trong R2
   in_db_only        — File có trong DB nhưng thiếu cả storage_path lẫn gemini_document_name
-  in_minio_only     — Object trong MinIO không có record trong DB
+  in_r2_only     — Object trong R2 không có record trong DB
   in_gemini_only    — Document trong Gemini không có record trong DB
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -822,8 +822,8 @@ MÔ TẢ:
   Tự động giải quyết tất cả vấn đề sync được phát hiện.
 
 SYNC RULES:
-  missing_in_gemini (có DB + MinIO): Re-upload file từ MinIO lên Gemini
-  Các loại khác (in_db_only, missing_in_minio, in_minio_only, in_gemini_only):
+  missing_in_gemini (có DB + R2): Re-upload file từ R2 lên Gemini
+  Các loại khác (in_db_only, missing_in_r2, in_r2_only, in_gemini_only):
     → Xóa record/object bị thừa
 
 RESPONSE 200 OK:
@@ -918,7 +918,7 @@ WORKFLOW:
      - staff/admin: không filter access_scope
   4. Gọi Gemini generate_content với File Search tool
   5. Extract sources từ grounding metadata
-  6. Lấy presigned URLs cho mỗi source từ MinIO
+  6. Lấy presigned URLs cho mỗi source từ R2
   7. Return answer + sources + token_usage
 
 ────────────────────────────────────────────────────────────────────────────────

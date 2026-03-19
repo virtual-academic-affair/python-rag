@@ -16,7 +16,7 @@ from app.core.exceptions import (
 from app.models.database import StoreDocument
 from app.repositories.store_repository import StoreRepository
 from app.repositories.file_repository import FileRepository
-from app.storage.minio_client import minio_storage
+from app.storage.r2_client import r2_storage
 
 logger = logging.getLogger(__name__)
 
@@ -194,20 +194,20 @@ class StoreService:
         except Exception as e:
             logger.warning(f"Gemini store deletion failed: {e}")
         
-        # Delete files from MinIO and MongoDB
+        # Delete files from R2 and MongoDB
         if file_count > 0:
-            # Get all files in store to delete from MinIO
+            # Get all files in store to delete from R2
             files = await self.file_repo.find_by_store(store_id, skip=0, limit=10000)
             
-            # Delete each file from MinIO
+            # Delete each file from R2
             for file_dict in files:
                 storage_path = file_dict.get("storage_path")
                 if storage_path:
                     try:
-                        await minio_storage.delete_file(storage_path)
-                        logger.info(f"Deleted MinIO file: {storage_path}")
+                        await r2_storage.delete_file(storage_path)
+                        logger.info(f"Deleted R2 file: {storage_path}")
                     except Exception as e:
-                        logger.warning(f"Failed to delete MinIO file {storage_path}: {e}")
+                        logger.warning(f"Failed to delete R2 file {storage_path}: {e}")
             
             # Delete files from MongoDB (hard delete)
             deleted_files = await self.file_repo.delete_by_store(store_id)
@@ -255,25 +255,7 @@ class StoreService:
         except Exception as e:
             logger.error(f"Failed to sync store stats: {e}")
             raise GeminiException(f"Failed to sync store stats: {str(e)}")
-    
-    async def list_gemini_stores(self) -> list[dict]:
-        """List all stores directly from Gemini API."""
-        try:
-            stores = await asyncio.to_thread(self.gemini_client.file_search_stores.list)
-            return [
-                {
-                    "store_name": s.name,
-                    "display_name": getattr(s, "display_name", None),
-                    "active_documents_count": getattr(s, "active_documents_count", 0),
-                    "size_bytes": getattr(s, "size_bytes", 0),
-                    "create_time": str(getattr(s, "create_time", "")),
-                    "update_time": str(getattr(s, "update_time", "")),
-                }
-                for s in stores
-            ]
-        except Exception as e:
-            raise GeminiException(f"Failed to list Gemini stores: {str(e)}")
-    
+
     async def delete_all_stores(self) -> int:
         """
         Delete all stores (Gemini + MongoDB + all files).
@@ -293,38 +275,6 @@ class StoreService:
         
         logger.info(f"Deleted {deleted_count} stores (full delete)")
         return deleted_count
-    
-    async def delete_all_gemini_stores(self) -> int:
-        """
-        Delete all stores from Gemini API only.
-        Does NOT delete from MongoDB or MinIO.
-        
-        Returns:
-            Number of Gemini stores deleted
-        """
-        try:
-            gemini_stores = await self.list_gemini_stores()
-            deleted_count = 0
-            
-            for store in gemini_stores:
-                try:
-                    await asyncio.to_thread(
-                        self.gemini_client.file_search_stores.delete,
-                        name=store["store_name"],
-                        config={"force": True}
-                    )
-                    deleted_count += 1
-                    logger.info(f"Deleted Gemini store: {store['store_name']}")
-                except Exception as e:
-                    logger.error(f"Failed to delete Gemini store {store['store_name']}: {e}")
-            
-            logger.info(f"Deleted {deleted_count} Gemini stores")
-            return deleted_count
-            
-        except Exception as e:
-            logger.error(f"Failed to delete all Gemini stores: {e}")
-            raise GeminiException(f"Failed to delete all Gemini stores: {str(e)}")
-
 
 _store_service_instance: Optional["StoreService"] = None
 

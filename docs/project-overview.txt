@@ -23,7 +23,7 @@ MUC LUC
 16.  Auth Service — xác thực JWT
 17.  Cấu trúc MongoDB (3 collections)
 18.  Repository Layer
-19.  Storage Layer — MinIO
+19.  Storage Layer — R2
 20.  RabbitMQ Consumer
 21.  Exception Hierarchy
 22.  REST API Endpoints (ảy đủ)
@@ -46,7 +46,7 @@ AI Service là một FastAPI microservice kết hợp hai chức năng lớn:
        other             — Không xác định / không liên quan
 
   B) RAG DOCUMENT SERVICE
-     Quản lý kho tài liệu (Gemini File Search + MinIO) và cung cấp
+     Quản lý kho tài liệu (Gemini File Search + R2) và cung cấp
      chat hỏi đáp dựa trên nội dung tài liệu thực. Bao gồm:
        - Upload / quản lý file (PDF, DOCX, DOC, TXT, MD, HTML)
        - Quản lý Store (Gemini File Search Store)
@@ -61,7 +61,7 @@ Giao tiếp với:
   - NestJS Backend  → gửi email qua RabbitMQ, nhận kết quả classification
   - Gemini API      → phân loại email + RAG File Search + soạn email
   - MongoDB Atlas   → lưu metadata store / file / metadata_types
-  - MinIO           → lưu file binary (PDF, DOCX...)
+  - R2           → lưu file binary (PDF, DOCX...)
   - RabbitMQ        → nhận email từ queue email_ingest_queue
 
 
@@ -188,7 +188,7 @@ Giao tiếp với:
   |   |   +-- rag/
   |   |       |-- gemini_service.py      Singleton: chat, stream, draft_email_reply
   |   |       |-- store_service.py       CRUD store + Gemini File Search API
-  |   |       |-- file_service.py        Upload/download/delete (MinIO + Gemini)
+  |   |       |-- file_service.py        Upload/download/delete (R2 + Gemini)
   |   |       |-- metadata_service.py    CRUD metadata type definitions
   |   |       +-- email_draft_service.py Pure function: draft email reply qua RAG
   |   |
@@ -200,7 +200,7 @@ Giao tiếp với:
   |   |
   |   |-- storage/
   |   |   |-- base.py             Abstract StorageBase
-  |   |   +-- minio_client.py     MinIO singleton: upload/download/delete/presigned
+  |   |   +-- r2_client.py     R2 singleton: upload/download/delete/presigned
   |   |
   |   +-- utils/
   |       |-- db_utils.py         ObjectId<->str, doc->model helpers
@@ -233,8 +233,8 @@ trong app/main.py thực hiện 5 bước tuần tự:
     Database.connect() → tạo pool kết nối (min=10, max=100)
     Nếu thất bại → raise exception, server không khởi động
 
-  BUOC 2: Khởi tạo MinIO client (singleton)
-    minio_storage → kiểm tra kết nối, list S3 buckets
+  BUOC 2: Khởi tạo R2 client (singleton)
+    r2_storage → kiểm tra kết nối, list S3 buckets
     Nếu thất bại → chỉ warning (không crash), file upload sẽ lỗi sau
 
   BUOC 3: Khởi tạo RabbitMQ service
@@ -455,7 +455,7 @@ File: app/services/rag/file_service.py
   STEP 3: Tạo record MongoDB
     status = UPLOADING
 
-  STEP 4: Upload lên MinIO
+  STEP 4: Upload lên R2
     storage_path = {store_name}/{timestamp}_{filename}
     status → PROCESSING
 
@@ -463,16 +463,16 @@ File: app/services/rag/file_service.py
     Upload binary lên Gemini Files API
     Gắn vào File Search store
     Cập nhật MongoDB: gemini_document_name + status = ACTIVE
-    Nếu lỗi: status = FAILED (file vẫn còn trong MinIO, có thể retry)
+    Nếu lỗi: status = FAILED (file vẫn còn trong R2, có thể retry)
     → Trả về response với status="active"
 
   UploadState — Rollback thông minh:
-    @dataclass theo dõi từng bước: DB_CREATED, MINIO_UPLOADED, GEMINI_UPLOADED
+    @dataclass theo dõi từng bước: DB_CREATED, R2_UPLOADED, GEMINI_UPLOADED
     Khi lỗi: chỉ rollback các bước đã hoàn thành
 
   Retry file failed:
     POST /api/files/{file_id}/retry
-    → File phải ở status FAILED và còn trong MinIO
+    → File phải ở status FAILED và còn trong R2
     → Gọi lại Gemini upload → status → ACTIVE
 
 
@@ -590,8 +590,8 @@ Co che Gemini File Search:
 Extract sources:
   Từ grounding metadata (response.candidates[0].grounding_metadata)
   → lấy retrieved_context → gemini_document_name
-  → tra MinIO presigned URL (1 giờ)
-  → Sources kèm URL download trực tiếp từ MinIO
+  → tra R2 presigned URL (1 giờ)
+  → Sources kèm URL download trực tiếp từ R2
 
 
 ================================================================================
@@ -798,18 +798,18 @@ MetadataRepository: collection "metadata_types"
 
 
 ================================================================================
-19. STORAGE LAYER - MINIO
+19. STORAGE LAYER - R2
 ================================================================================
 
-File: app/storage/minio_client.py
+File: app/storage/r2_client.py
 
-Singleton: minio_storage (khởi tạo 1 lần khi import)
-Client: minio.Minio (sync, dùng asyncio.to_thread trong async context)
+Singleton: r2_storage (khởi tạo 1 lần khi import)
+Client: r2.R2 (sync, dùng asyncio.to_thread trong async context)
 
 Config:
-  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-  MINIO_BUCKET_NAME = "rag-files"
-  MINIO_USE_SSL = False (localhost) | True (production)
+  R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY
+  R2_BUCKET_NAME = "rag-files"
+  R2_USE_SSL = False (localhost) | True (production)
 
 Cac phuong thuc:
   upload_file(bucket, path, data, size, mime_type) → True
@@ -877,7 +877,7 @@ EmailAIException(Exception):           Base class
   ConflictException    (409) — Trùng tên store, trùng tên file, trùng key metadata
   ForbiddenException   (403) — Xóa system metadata, xóa default store...
   ValidationException  (400) — File quá lớn, sai extension, metadata không hợp lệ
-  StorageException     (500) — Lỗi MinIO
+  StorageException     (500) — Lỗi R2
   GeminiException      (502) — Lỗi Gemini API
   RabbitMQException    (500) — Lỗi kết nối RabbitMQ
   DatabaseException    (500) — Lỗi MongoDB
@@ -926,15 +926,15 @@ DEBUG=true → response kèm thêm stack trace và request path
     POST   /api/files                          Upload file (luôn đồng bộ)
     GET    /api/files                          Liệt kê (? store_id, file_status, page, limit)
     GET    /api/files/gemini/list              Discovery từ Gemini (? store_name)
-    GET    /api/files/check-sync               Kiểm tra đồng bộ DB/MinIO/Gemini
+    GET    /api/files/check-sync               Kiểm tra đồng bộ DB/R2/Gemini
     GET    /api/files/{file_id}                Chi tiết file
-    GET    /api/files/{file_id}/download       Download file từ MinIO
-    DELETE /api/files/{file_id}                Xóa file (MinIO + Gemini + MongoDB)
+    GET    /api/files/{file_id}/download       Download file từ R2
+    DELETE /api/files/{file_id}                Xóa file (R2 + Gemini + MongoDB)
     POST   /api/files/{file_id}/retry          Retry upload FAILED file lên Gemini
     POST   /api/files/batch                    Batch upload nhiều file
-    POST   /api/files/sync                     Đồng bộ files giữa DB/MinIO/Gemini
+    POST   /api/files/sync                     Đồng bộ files giữa DB/R2/Gemini
     DELETE /api/files/store/{store_id}/all     Xóa TAT CA files trong store
-    DELETE /api/files/store/{store_id}/gemini  Xóa files trên Gemini (giữ MinIO/MongoDB)
+    DELETE /api/files/store/{store_id}/gemini  Xóa files trên Gemini (giữ R2/MongoDB)
 
   CHAT (2 endpoints)
     POST /api/chat/query                   Chat RAG — response đầy đủ
@@ -951,8 +951,8 @@ Tự động load từ file .env trong thư mục gốc.
 BAT BUOC (server không khởi động nếu thiếu):
   GOOGLE_API_KEY       Gemini API key
   MONGODB_URL          MongoDB connection string
-  MINIO_ACCESS_KEY     MinIO access key
-  MINIO_SECRET_KEY     MinIO secret key
+  R2_ACCESS_KEY     R2 access key
+  R2_SECRET_KEY     R2 secret key
 
 GRPC (kết nối tới nest-api):
   GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
@@ -966,8 +966,8 @@ QUAN TRONG (có default):
   GEMINI_TEMPERATURE   Temperature RAG          default: 0.7
   GEMINI_MAX_OUTPUT_TOKENS                      default: 2048
   MONGODB_DB_NAME      Tên database             default: email_ai_service
-  MINIO_ENDPOINT       MinIO server             default: localhost:9000
-  MINIO_BUCKET_NAME    MinIO bucket             default: rag-files
+  R2_ENDPOINT       R2 server             default: localhost:9000
+  R2_BUCKET_NAME    R2 bucket             default: rag-files
   RABBITMQ_HOST        RabbitMQ host            default: localhost
   RABBITMQ_PORT        RabbitMQ port            default: 5672
   RABBITMQ_USER        RabbitMQ username        default: guest

@@ -1,6 +1,6 @@
 """
 File Management Endpoints - Handle file uploads and downloads.
-Refactored to use FileService and StoreService with MongoDB + MinIO.
+Refactored to use FileService and StoreService with MongoDB + R2.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
@@ -24,7 +24,7 @@ from app.models.schemas import (
     SyncResponse,
 )
 from app.services.rag.file_service import get_file_service
-from app.services.rag.store_service import get_store_service
+
 from app.core.exceptions import (
     NotFoundException,
     StorageException,
@@ -44,7 +44,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     response_model=FileUploadResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload file to store",
-    description="Upload a document file to MinIO and Gemini File Search for RAG.",
+    description="Upload a document file to R2 and Gemini File Search for RAG.",
 )
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
@@ -55,9 +55,9 @@ async def upload_file(
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
-    Upload a file to MinIO storage and Gemini File Search (synchronous).
+    Upload a file to R2 storage and Gemini File Search (synchronous).
 
-    Waits until both MinIO and Gemini processing complete before returning.
+    Waits until both R2 and Gemini processing complete before returning.
 
     **Required metadata:**
     - `access_scope`: bắt buộc (e.g. `"cong_khai"` hoặc `"noi_bo"`)
@@ -68,28 +68,13 @@ async def upload_file(
     """
     temp_file_path = None
     file_svc = get_file_service()
-    store_svc = get_store_service()
     
     try:
+        from app.services.rag.utils.store_utils import resolve_store
+        
         # Get store (from param or default store)
-        if not store_id:
-            default_store = await store_svc.get_default_store()
-            if not default_store:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No default store found. Please create a store first or provide store_id.",
-                )
-            store_id = str(default_store.id)
-            store_name = default_store.store_name
-        else:
-            # Verify store exists
-            store = await store_svc.get_store(store_id)
-            if not store:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Store {store_id} not found",
-                )
-            store_name = store.store_name
+        resolved_store_id, store_name = await resolve_store(store_id)
+        store_id = resolved_store_id
         
         # Parse custom metadata
         metadata_dict = {}
@@ -173,59 +158,6 @@ async def upload_file(
 
 
 @router.get(
-    "/gemini/list",
-    summary="List Gemini File Search documents",
-    description="List all documents directly from Gemini File Search API.",
-)
-async def list_gemini_files(
-    store_name: Optional[str] = Query(None, description="Gemini store name (e.g., fileSearchStores/xxx)"),
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    """
-    List files from Gemini File Search API.
-    
-    **Use Case:**
-    - Discover documents not yet tracked in database
-    - Verify Gemini API connectivity
-    - Debug file upload issues
-    """
-    try:
-        file_svc = get_file_service()
-        store_svc = get_store_service()
-        
-        # Get store_name (from param or default store)
-        if not store_name:
-            default_store = await store_svc.get_default_store()
-            if not default_store:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No default store found. Please provide store_name.",
-                )
-            store_name = default_store.store_name
-        
-        # List documents from Gemini
-        documents = await file_svc.list_gemini_documents(store_name)
-        return {"documents": documents, "count": len(documents), "store_name": store_name}
-        
-    except GeminiException as e:
-        logger.error(f"Failed to list Gemini files: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-    
-    except HTTPException:
-        raise
-    
-    except Exception as e:
-        logger.error(f"Error listing Gemini files: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list Gemini files: {str(e)}",
-        )
-
-
-@router.get(
     "",
     response_model=FileListResponse,
     summary="List files",
@@ -300,17 +232,17 @@ async def list_files(
     "/check-sync",
     response_model=SyncCheckResponse,
     summary="Check file sync status",
-    description="Compare files across MongoDB, MinIO, and Gemini to identify sync issues.",
+    description="Compare files across MongoDB, R2, and Gemini to identify sync issues.",
 )
 async def check_sync(_admin: Dict[str, Any] = Depends(require_admin)):
     """
     Check synchronization status of files across all 3 storage systems.
 
     **Issue types reported:**
-    - `missing_in_gemini`: File exists in DB + MinIO but not in Gemini
-    - `missing_in_minio`: File exists in DB (with Gemini doc) but not in MinIO
-    - `in_db_only`: File exists in DB only (no MinIO path, no Gemini doc)
-    - `in_minio_only`: Object in MinIO has no matching DB record
+    - `missing_in_gemini`: File exists in DB + R2 but not in Gemini
+    - `missing_in_r2`: File exists in DB (with Gemini doc) but not in R2
+    - `in_db_only`: File exists in DB only (no R2 path, no Gemini doc)
+    - `in_r2_only`: Object in R2 has no matching DB record
     - `in_gemini_only`: Gemini document has no matching DB record
     """
     try:
@@ -376,7 +308,7 @@ async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)
 )
 async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     """
-    Download a file from MinIO storage.
+    Download a file from R2 storage.
     Returns the file as a streaming response.
     """
     try:
@@ -425,7 +357,7 @@ async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_au
 )
 async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Delete a file (hard delete from MinIO, Gemini, and MongoDB).
+    Delete a file (hard delete from R2, Gemini, and MongoDB).
     """
     try:
         file_svc = get_file_service()
@@ -448,72 +380,6 @@ async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_adm
 
 
 @router.post(
-    "/{file_id}/retry",
-    response_model=FileUploadResponse,
-    summary="Retry failed upload",
-    description="Retry uploading a failed file to Gemini. The file must be in FAILED status.",
-)
-async def retry_failed_upload(
-    file_id: str,
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    """
-    Retry a failed file upload.
-
-    Useful for files that failed during Gemini processing.
-    The file must already exist in MinIO (status=FAILED) to be retried.
-    Waits until Gemini processing completes before returning.
-    """
-    try:
-        file_svc = get_file_service()
-        file_doc = await file_svc.retry_failed_upload(file_id)
-
-        message = "Retry completed successfully"
-        
-        return FileUploadResponse(
-            file_id=str(file_doc.id),
-            store_id=file_doc.store_id,
-            original_filename=file_doc.original_filename,
-            display_name=file_doc.display_name,
-            gemini_document_name=file_doc.gemini_document_name,
-            file_size=file_doc.file_size,
-            mime_type=file_doc.mime_type,
-            status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
-            custom_metadata=file_doc.custom_metadata,
-            created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
-            message=message,
-        )
-        
-    except NotFoundException as e:
-        logger.warning(f"File not found: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    
-    except ValidationException as e:
-        logger.warning(f"Validation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    
-    except StorageException as e:
-        logger.error(f"Retry failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Unexpected error during retry: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
-        )
-
-
-@router.post(
     "/batch",
     response_model=BatchFileUploadResponse,
     status_code=status.HTTP_201_CREATED,
@@ -529,7 +395,7 @@ async def batch_upload_files(
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
-    Batch upload multiple files to MinIO storage and Gemini File Search.
+    Batch upload multiple files to R2 storage and Gemini File Search.
     
     **Request Format:**
     - files: Multiple files to upload
@@ -547,27 +413,13 @@ async def batch_upload_files(
     - Individual results for each file
     """
     file_svc = get_file_service()
-    store_svc = get_store_service()
     
     try:
+        from app.services.rag.utils.store_utils import resolve_store
+        
         # Get store (from param or default store)
-        if not store_id:
-            default_store = await store_svc.get_default_store()
-            if not default_store:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No default store found. Please create a store first or provide store_id.",
-                )
-            store_id = str(default_store.id)
-            store_name = default_store.store_name
-        else:
-            store = await store_svc.get_store(store_id)
-            if not store:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Store {store_id} not found",
-                )
-            store_name = store.store_name
+        resolved_store_id, store_name = await resolve_store(store_id)
+        store_id = resolved_store_id
         
         # Parse display_names
         names_list = []
@@ -681,22 +533,25 @@ async def batch_upload_files(
 
 
 @router.delete(
-    "/store/{store_id}/all",
+    "/all",
     response_model=BulkDeleteResponse,
     summary="Delete all files in store",
-    description="Delete all files in a store (from MinIO, Gemini, and MongoDB).",
+    description="Delete all files in a store (from R2, Gemini, and MongoDB).",
 )
-async def delete_all_files_in_store(store_id: str):
+async def delete_all_files_in_store(store_id: Optional[str] = Query(None, description="Target store ID (uses default if not provided)")):
     """
-    Delete all files in a store (full delete from MinIO, Gemini, and MongoDB).
+    Delete all files in a store (full delete from R2, Gemini, and MongoDB).
     """
     try:
+        from app.services.rag.utils.store_utils import resolve_store
+        resolved_store_id, _ = await resolve_store(store_id)
+        
         file_svc = get_file_service()
-        deleted_count = await file_svc.delete_all_files_in_store(store_id, gemini_only=False)
+        deleted_count = await file_svc.delete_all_files_in_store(resolved_store_id)
         
         return BulkDeleteResponse(
             deleted_count=deleted_count,
-            message=f"Deleted {deleted_count} files from store {store_id}",
+            message=f"Deleted {deleted_count} files from store {resolved_store_id}",
         )
         
     except NotFoundException as e:
@@ -714,54 +569,19 @@ async def delete_all_files_in_store(store_id: str):
         )
 
 
-@router.delete(
-    "/store/{store_id}/gemini",
-    response_model=BulkDeleteResponse,
-    summary="Delete all files in store (Gemini only)",
-    description="Delete all files from Gemini File Search only (keeps MinIO and MongoDB records).",
-)
-async def delete_all_files_in_store_gemini(store_id: str):
-    """
-    Delete all files from Gemini File Search only.
-    Does NOT delete from MinIO or MongoDB - use this to sync or clear Gemini store.
-    """
-    try:
-        file_svc = get_file_service()
-        deleted_count = await file_svc.delete_all_files_in_store_gemini(store_id)
-        
-        return BulkDeleteResponse(
-            deleted_count=deleted_count,
-            message=f"Deleted {deleted_count} files from Gemini for store {store_id}",
-        )
-        
-    except NotFoundException as e:
-        logger.warning(f"Store not found: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Error deleting Gemini files in store {store_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete Gemini files: {str(e)}",
-        )
-
-
 @router.post(
     "/sync",
     response_model=SyncResponse,
     summary="Sync files across storage systems",
-    description="Sync files between MongoDB, MinIO, and Gemini by resolving all detected issues.",
+    description="Sync files between MongoDB, R2, and Gemini by resolving all detected issues.",
 )
 async def sync_files():
     """
-    Synchronize files across MongoDB, MinIO, and Gemini.
+    Synchronize files across MongoDB, R2, and Gemini.
 
     **Sync rules:**
-    - `missing_in_gemini` (DB + MinIO present): re-upload file from MinIO to Gemini
-    - All other issues (`in_db_only`, `missing_in_minio`, `in_minio_only`, `in_gemini_only`): delete the orphan
+    - `missing_in_gemini` (DB + R2 present): re-upload file from R2 to Gemini
+    - All other issues (`in_db_only`, `missing_in_r2`, `in_r2_only`, `in_gemini_only`): delete the orphan
 
     **Returns:**
     - Count of uploads, deletions, and failures

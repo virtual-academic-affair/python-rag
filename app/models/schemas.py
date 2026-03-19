@@ -188,7 +188,7 @@ class SourceCitation(BaseModel):
     citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
     title: Optional[str] = Field(None, description="Document title/name")
     text: Optional[str] = Field(None, description="Relevant text excerpt from document")
-    url: Optional[str] = Field(None, description="MinIO URL to view the document")
+    url: Optional[str] = Field(None, description="R2 URL to view the document")
     file_id: Optional[str] = Field(None, description="File ID in database")
 
 
@@ -416,7 +416,7 @@ class SyncCheckResponse(BaseModel):
     """Response cho GET /api/files/check-sync."""
     is_synced: bool = Field(..., description="True nếu 3 nơi đồng bộ hoàn toàn")
     total_db: int = Field(..., description="Số file trong MongoDB")
-    total_minio: int = Field(..., description="Số file trong MinIO")
+    total_r2: int = Field(..., description="Số file trong R2")
     total_gemini: int = Field(..., description="Số file trong Gemini")
     synced_count: int = Field(..., description="Số file đồng bộ đầy đủ ở cả 3 nơi")
     issues: List[SyncIssueItem] = Field(default_factory=list, description="Danh sách file bị lệch sync")
@@ -428,7 +428,7 @@ class SyncActionResult(BaseModel):
     original_filename: Optional[str] = None
     storage_path: Optional[str] = None
     gemini_document_name: Optional[str] = None
-    action: str = Field(..., description="upload_to_gemini | delete_db | delete_minio | delete_gemini | delete_all")
+    action: str = Field(..., description="upload_to_gemini | delete_db | delete_r2 | delete_gemini | delete_all")
     success: bool
     error: Optional[str] = None
 

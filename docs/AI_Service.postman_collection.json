@@ -285,7 +285,7 @@
                 { "key": "force", "value": "false", "description": "Set true to delete even if store has files" }
               ]
             },
-            "description": "Hard delete store (Gemini + MinIO + MongoDB).\n\nforce=false: Rejected if store has files.\nforce=true: Delete store and all its files."
+            "description": "Hard delete store (Gemini + R2 + MongoDB).\n\nforce=false: Rejected if store has files.\nforce=true: Delete store and all its files."
           },
           "response": []
         },
@@ -301,7 +301,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "stores", "all"]
             },
-            "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + MinIO + MongoDB). Cannot be undone!"
+            "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + R2 + MongoDB). Cannot be undone!"
           },
           "response": []
         },
@@ -317,7 +317,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "stores", "gemini", "all"]
             },
-            "description": "Delete all stores from Gemini API only. Keeps MongoDB and MinIO records."
+            "description": "Delete all stores from Gemini API only. Keeps MongoDB and R2 records."
           },
           "response": []
         }
@@ -466,7 +466,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files"]
             },
-            "description": "Upload file to MinIO + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- access_scope: mandatory\n- academic_year OR cohort: at least one required\n\nReturns status='active' and gemini_document_name when complete.\n\nAfter upload, {{file_id}} is automatically updated."
+            "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- access_scope: mandatory\n- academic_year OR cohort: at least one required\n\nReturns status='active' and gemini_document_name when complete.\n\nAfter upload, {{file_id}} is automatically updated."
           },
           "event": [
             {
@@ -556,7 +556,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "{{file_id}}", "download"]
             },
-            "description": "Download the file binary from MinIO storage."
+            "description": "Download the file binary from R2 storage."
           },
           "response": []
         },
@@ -572,7 +572,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "{{file_id}}", "retry"]
             },
-            "description": "Retry uploading a FAILED file to Gemini. File must exist in MinIO with status=FAILED."
+            "description": "Retry uploading a FAILED file to Gemini. File must exist in R2 with status=FAILED."
           },
           "response": []
         },
@@ -613,7 +613,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "{{file_id}}"]
             },
-            "description": "Hard delete file (MinIO + Gemini + MongoDB)."
+            "description": "Hard delete file (R2 + Gemini + MongoDB)."
           },
           "response": []
         },
@@ -629,7 +629,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "store", "{{store_id}}", "all"]
             },
-            "description": "⚠️ DANGEROUS: Delete ALL files in a store (MinIO + Gemini + MongoDB)."
+            "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB)."
           },
           "response": []
         },
@@ -645,7 +645,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "store", "{{store_id}}", "gemini"]
             },
-            "description": "Delete files from Gemini only. Keeps MinIO and MongoDB records. Use to re-index."
+            "description": "Delete files from Gemini only. Keeps R2 and MongoDB records. Use to re-index."
           },
           "response": []
         },
@@ -661,7 +661,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "check-sync"]
             },
-            "description": "Compare file state across MongoDB, MinIO, and Gemini.\n\nReturns is_synced flag, counts per system, and list of issues.\n\nIssue types:\n- missing_in_gemini: file in DB+MinIO but not in Gemini\n- missing_in_minio: file in DB with gemini_document_name but not in MinIO\n- in_db_only: file in DB with no storage_path and no gemini_document_name\n- in_minio_only: object in MinIO with no DB record\n- in_gemini_only: Gemini document with no DB record"
+            "description": "Compare file state across MongoDB, R2, and Gemini.\n\nReturns is_synced flag, counts per system, and list of issues.\n\nIssue types:\n- missing_in_gemini: file in DB+R2 but not in Gemini\n- missing_in_r2: file in DB with gemini_document_name but not in R2\n- in_db_only: file in DB with no storage_path and no gemini_document_name\n- in_r2_only: object in R2 with no DB record\n- in_gemini_only: Gemini document with no DB record"
           },
           "response": []
         },
@@ -677,7 +677,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "sync"]
             },
-            "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+MinIO present): re-upload from MinIO to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
+            "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+R2 present): re-upload from R2 to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
           },
           "response": []
         }
