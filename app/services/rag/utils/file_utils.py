@@ -8,15 +8,56 @@ from pathlib import Path
 from typing import Optional
 from slugify import slugify
 from datetime import datetime, timezone
-
+import re
+import uuid
 try:
     import filetype
     HAS_FILETYPE = True
 except ImportError:
     HAS_FILETYPE = False
 
+from enum import Enum
+from dataclasses import dataclass, field
 from app.core.config import settings
 from app.core.exceptions import FileSizeException, FileTypeException
+
+class UploadStep(Enum):
+    """Steps in the upload process for tracking rollback."""
+    VALIDATED = "validated"
+    DB_CREATED = "db_created"
+    R2_UPLOADED = "r2_uploaded"
+    GEMINI_UPLOADED = "gemini_uploaded"
+    METADATA_SYNCED = "metadata_synced"
+    COMPLETED = "completed"
+
+
+@dataclass
+class UploadState:
+    """
+    Track upload progress for intelligent rollback.
+    Each step completed is recorded to enable precise cleanup on failure.
+    """
+    file_id: Optional[str] = None
+    storage_path: Optional[str] = None
+    gemini_document_name: Optional[str] = None
+    custom_metadata: Optional[dict] = None
+    completed_steps: list = field(default_factory=list)
+    
+    def mark_step(self, step: UploadStep):
+        """Record a completed step."""
+        self.completed_steps.append(step)
+    
+    def has_step(self, step: UploadStep) -> bool:
+        """Check if a step was completed."""
+        return step in self.completed_steps
+
+
+@dataclass
+class GeminiFile:
+    """Result from Gemini upload."""
+    name: str
+    uri: Optional[str] = None
+
 
 
 def validate_file_size(file_size_bytes: int) -> None:
@@ -91,7 +132,6 @@ def generate_file_id() -> str:
     Returns:
         UUID string
     """
-    import uuid
     return str(uuid.uuid4())
 
 
@@ -179,7 +219,31 @@ def cleanup_temp_file(file_path: str) -> None:
     except Exception:
         pass
 
+def to_snake(name: str) -> str:
+    """Convert camelCase string to snake_case."""
+    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-0])([A-Z])', r'\1_\2', name).lower()
+
+def convert_custom_metadata_to_snake(custom_metadata: dict) -> dict:
+    """Convert all keys in a dictionary from camelCase to snake_case."""
+    if not custom_metadata:
+        return {}
+    return {to_snake(k): v for k, v in custom_metadata.items()}
+
 def convert_metadata_for_gemini(custom_metadata: dict) -> list[dict]:
     if not custom_metadata:
         return []
     return [{'key': k, 'stringValue': v} if isinstance(v, str) else {'key': k, 'numericValue': v} if isinstance(v, (int, float)) else {'key': k, 'stringListValue': {'values': v}} for k, v in custom_metadata.items()]
+
+def to_camel(name: str) -> str:
+    """Convert snake_case string to camelCase."""
+    components = name.split('_')
+    if not components:
+        return ""
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+def convert_custom_metadata_to_camel(custom_metadata: dict) -> dict:
+    """Convert all keys in a dictionary from snake_case to camelCase."""
+    if not custom_metadata:
+        return {}
+    return {to_camel(k): v for k, v in custom_metadata.items()}

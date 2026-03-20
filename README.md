@@ -9,7 +9,7 @@
 Service nhận email từ RabbitMQ, tự động phân loại và xử lý:
 
 - **classRegistration** → trích xuất thông tin đăng ký học phần
-- **inquiry** → soạn email trả lời tự động bằng RAG (tìm trong tài liệu nội bộ)
+- **inquiry** → soạn email trả lời tự động bằng RAG (truy vấn từ kho tài liệu học thuật/quy chế)
 - **task** → ghi nhận nhiệm vụ hành chính, gọi gRPC TaskService
 - **other** → các email không thuộc danh mục trên
 
@@ -191,55 +191,42 @@ python run.py
 | RabbitMQ Management | http://localhost:15672 |
 
 ---
-
-## API Endpoints
-
-### Email Classification
-```
-POST /process
-POST /api/test/classification/ingested
-```
-
-### Chat (RAG)
-```
-POST /api/chat/query
-POST /api/chat/stream
-```
-
-### Files
-```
-POST   /api/files                   # Upload file
-POST   /api/files/batch             # Upload nhiều file
-GET    /api/files                   # Lấy danh sách file
-GET    /api/files/check-sync        # Kiểm tra đồng bộ file
-GET    /api/files/{id}              # Thông tin file
-GET    /api/files/{id}/download     # Tải file từ Cloudflare R2
-DELETE /api/files/{id}              # Hard delete (MongoDB + R2 + Gemini)
-DELETE /api/files/all               # Hard delete tất cả file trong store
-```
-
-### Stores
-```
-POST   /api/stores
-GET    /api/stores
-GET    /api/stores/{id}
-PATCH  /api/stores/{id}
-DELETE /api/stores/{id}
-POST   /api/stores/{id}/sync        # Đồng bộ thống kê file từ Gemini
-```
-
-### Metadata
-```
-POST   /api/metadata
-GET    /api/metadata
-GET    /api/metadata/{key}
-PATCH  /api/metadata/{key}                  # Soft Delete hỗ trợ qua việc chỉnh sửa `is_active`
-DELETE /api/metadata/{key}                  # Explicit Hard Delete API (Chỉ xóa nếu totalFiles == 0)
-DELETE /api/metadata/{key}/values/{value}   # Tương tự cho Delete AllowedValue
-```
-
+ 
+## Authentication & Permissions
+ 
+Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthService. Có hai mức độ phân quyền chính:
+ 
+- **User (`require_auth`)**: Bất kỳ người dùng nào có token hợp lệ.
+- **Admin (`require_admin`)**: Người dùng có token hợp lệ và có role là "admin".
+ 
+### Summary Table
+ 
+| API Category | Method | Endpoint | Permission | Note |
+|---|---|---|---|---|
+| **Chat (RAG)** | POST | `/api/chat/query` | Public/Implicit | Tùy vào cấu hình auth filter |
+| | POST | `/api/chat/stream` | Public/Implicit | Tùy vào cấu hình auth filter |
+| File Search (GET) | `GET /api/files` | User (Auth) | `student`: student only; `lecture`: lecture+student; `admin`: all. Ngoài ra ẩn các meta fields dựa vào `visibleRoles` (Admin không bypass bộ lọc này) |
+| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `access_scope` (admin, lecture, student), ... |
+| | POST | `/api/files/batch` | **Admin** | Batch upload |
+| | DELETE | `/api/files/{fileId}` | **Admin** | Xóa file |
+| | DELETE | `/api/files/all` | **Admin** | Xóa tất cả file |
+| **Stores** | GET | `/api/stores` | **Admin** | Liệt kê store |
+| | GET | `/api/stores/{storeId}` | **Admin** | Chi tiết store |
+| | POST | `/api/stores` | **Admin** | Tạo store |
+| | PATCH | `/api/stores/{storeId}` | **Admin** | Cập nhật store |
+| | DELETE | `/api/stores/{storeId}` | **Admin** | Xóa store |
+| | POST | `/api/stores/{storeId}/sync` | **Admin** | Đồng bộ store |
+| **Metadata** | GET | `/api/metadata` | **User** | Liệt kê metadata types; ẩn các values không có `visibleRoles` phù hợp với User/Admin |
+| | POST | `/api/metadata` | **Admin** | Tạo metadata field type (ví dụ: Năm học, Khóa); `visibleRoles` là bắt buộc cho từng `allowedValue` |
+| | GET | `/api/metadata/{key}` | **User** | Chi tiết metadata type |
+| | PATCH | `/api/metadata/{key}` | **Admin** | Cập nhật metadata type (không sửa allowed values) |
+| | POST | `/api/metadata/{key}/values` | **Admin** | Thêm allowed value mới vào metadata type |
+| | PATCH | `/api/metadata/{key}/values/{value}` | **Admin** | Cập nhật allowed value cụ thể |
+| | DELETE | `/api/metadata/{key}` | **Admin** | Xóa metadata type (chỉ khi không có file nào dùng) |
+| | DELETE | `/api/metadata/{key}/values/{value}` | **Admin** | Xóa allowed value (chỉ khi không có file nào dùng) |
+ 
 ---
-
+ 
 ## Luồng xử lý Email
 
 ```

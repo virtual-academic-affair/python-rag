@@ -31,7 +31,7 @@ MỤC LỤC
  1. Health Check             (1 endpoint)
  2. Email Classification     (2 endpoints)
  3. Store Management APIs    (9 endpoints)   [🔒 Yêu cầu role admin]
- 4. Metadata Type APIs       (5 endpoints)   [🔒 Write yêu cầu admin | GET public]
+ 4. Metadata Type APIs       (7 endpoints)   [🔒 Write yêu cầu admin | GET public]
  5. File Management APIs     (11 endpoints) [🔒 Yêu cầu role admin]
  6. Chat APIs                (2 endpoints)   [Public]
  7. Common Error Responses
@@ -56,9 +56,14 @@ TỔNG: 30 ENDPOINTS
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
 │     "version": "3.0.0",                                                      │
-│     "gemini_api_connected": true,                                            │
-│     "mongodb_connected": true                                                │
+│     "geminiApiConnected": true,                                              │
+│     "mongodbConnected": true                                                 │
 │   }                                                                          │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Kiểm tra kết nối Gemini API (gemini_client).                            │
+│   2. Kiểm tra kết nối MongoDB (Database pool).                               │
+│   3. Trả về "healthy" nếu cả 2 OK, ngược lại "degraded".                     │
 │                                                                              │
 │ GHI CHÚ: status có thể là "degraded" nếu một trong các kết nối bị lỗi.       │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -71,6 +76,9 @@ TỔNG: 30 ENDPOINTS
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
 │   { "message": "AI Service is running" }                                     │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Trả về thông báo đơn giản xác nhận Web Service đang hoạt động.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -88,6 +96,15 @@ Có 4 label: classRegistration | task | inquiry | other
 MÔ TẢ:
   Phân loại email từ HTTP request (không qua RabbitMQ).
   Được NestJS gọi trực tiếp khi cần phân loại thủ công.
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Nhận title/content từ request body.
+  2. Gọi EmailWorkflowOrchestrator để điều phối:
+     a. LabelClassifierService kiểm tra keyword pre-check (tiết kiệm API).
+     b. Nếu không match, gọi Gemini AI phân loại theo 4 nhãn.
+     c. Dispatch tới service nghiệp vụ (ClassRegistration/Inquiry/Task/Other).
+     d. Nếu là 'inquiry', thực hiện RAG tìm kiếm tài liệu để soạn draft reply.
+  3. Trả về label đã phân loại và dữ liệu trích xuất/soạn thảo.
 
 REQUEST EXAMPLE:
   {
@@ -128,11 +145,11 @@ RESPONSE 200 OK (label = inquiry):
       "types": ["graduation"],
       "sources": [
         {
-          "citation_id": 1,
+          "citationId": 1,
           "title": "Quy chế đào tạo 2026",
           "text": "Đoạn văn liên quan...",
           "url": "http://r2.../presigned-url",
-          "file_id": "67a5..."
+          "fileId": "67a5..."
         }
       ],
       "messageId": 123
@@ -193,7 +210,6 @@ RESPONSE 200 OK (lỗi):
 
 🔒 XÁC THỰC BẮT BUỘC: Tất cả endpoint trong section này yêu cầu:
    Header: Authorization: Bearer <jwt_token>  (role phải là "admin")
-
 Store là File Search store của Gemini API, dùng để lưu trữ documents cho RAG.
 Mỗi store có thể chứa nhiều documents và được sử dụng cho Chat / Email queries.
 
@@ -206,20 +222,20 @@ MÔ TẢ:
 
 REQUEST EXAMPLE:
   {
-    "display_name": "Văn bản Đào tạo 2026",  // required, 1-512 chars
-    "set_as_default": true                    // optional, default: false
+    "displayName": "Văn bản Đào tạo 2026",  // required, 1-512 chars
+    "setAsDefault": true                     // optional, default: false
   }
 
 RESPONSE 201 Created:
   {
-    "store_id": "67a5f2c8abc123def456789",
-    "store_name": "fileSearchStores/van-ban-dao-tao-2026-abc123",
-    "display_name": "Văn bản Đào tạo 2026",
-    "file_count": 0,
-    "total_size": 0,
-    "is_default": true,
-    "created_at": "2026-03-11T10:30:00.000000",
-    "updated_at": "2026-03-11T10:30:00.000000"
+    "storeId": "67a5f2c8abc123def456789",
+    "storeName": "fileSearchStores/van-ban-dao-tao-2026-abc123",
+    "displayName": "Văn bản Đào tạo 2026",
+    "fileCount": 0,
+    "totalSize": 0,
+    "isDefault": true,
+    "createdAt": "2026-03-11T10:30:00.000000",
+    "updatedAt": "2026-03-11T10:30:00.000000"
   }
 
 RESPONSE 409 Conflict:
@@ -230,9 +246,9 @@ WORKFLOW:
   2. Check duplicate trong MongoDB
   3. Generate store_name từ display_name + random suffix
   4. Gọi Gemini API tạo file search store
-  5. Nếu set_as_default=true: unset các store khác, set store này là default
-  6. Insert vào MongoDB
-  7. Return store info
+  5. Nếu set_as_default=true: unset các store khác, set store này là default.
+  6. Lưu thông tin vào MongoDB (collection file_search_stores).
+  7. Trả về thông tin store vừa tạo.
 
 ────────────────────────────────────────────────────────────────────────────────
 3.2. GET /api/stores - Liệt kê Stores
@@ -243,32 +259,38 @@ MÔ TẢ:
   Dùng is_default=true để lấy default store.
 
 QUERY PARAMETERS:
-  - is_default: bool (optional) - Lọc theo default store
+  - isDefault: bool (optional) - Lọc theo default store
   - page: int (optional, default: 1)
   - limit: int (optional, default: 50, max: 100)
 
 REQUEST EXAMPLE:
-  GET /api/stores?is_default=true
+  GET /api/stores?isDefault=true
   GET /api/stores?page=1&limit=10
 
 RESPONSE 200 OK:
   {
     "stores": [
       {
-        "store_id": "67a5f2c8abc123def456789",
-        "store_name": "fileSearchStores/van-ban-dao-tao-2026-abc123",
-        "display_name": "Văn bản Đào tạo 2026",
-        "file_count": 42,
-        "total_size": 52428800,
-        "is_default": true,
-        "created_at": "2026-03-11T10:30:00.000000",
-        "updated_at": "2026-03-11T10:30:00.000000"
+        "storeId": "67a5f2c8abc123def456789",
+        "storeName": "fileSearchStores/van-ban-dao-tao-2026-abc123",
+        "displayName": "Văn bản Đào tạo 2026",
+        "fileCount": 42,
+        "totalSize": 52428800,
+        "isDefault": true,
+        "createdAt": "2026-03-11T10:30:00.000000",
+        "updatedAt": "2026-03-11T10:30:00.000000"
       }
     ],
     "total": 3,
     "page": 1,
     "limit": 50
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Nếu query isDefault=true, tìm store có is_default: true trong MongoDB.
+  3. Ngược lại, thực hiện truy vấn phân trang (skip/limit) trong DB.
+  4. Trả về danh sách kết quả.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -282,6 +304,11 @@ RESPONSE 200 OK: (cùng format StoreDetailResponse)
 
 RESPONSE 404 Not Found:
   { "detail": "Store 67a5... not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Truy vấn MongoDB theo store_id.
+  3. Trả về chi tiết store hoặc lỗi 404.
 
 ────────────────────────────────────────────────────────────────────────────────
 3.5. PATCH /api/stores/{store_id} - Cập nhật Store
@@ -292,14 +319,20 @@ MÔ TẢ:
 
 REQUEST EXAMPLE:
   {
-    "display_name": "Tên mới",   // optional
-    "is_default": true           // optional
+    "displayName": "Tên mới",   // optional
+    "isDefault": true           // optional
   }
 
 RESPONSE 200 OK: (StoreDetailResponse đã cập nhật)
 
 RESPONSE 404 Not Found:
   { "detail": "Store not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Cập nhật displayName/isDefault trong MongoDB.
+  3. Nếu set as default, tự động cập nhật lại các store khác trong DB.
+  4. Trả về dữ liệu sau khi update.
 
 ────────────────────────────────────────────────────────────────────────────────
 3.6. DELETE /api/stores/{store_id} - Xóa Store
@@ -320,6 +353,13 @@ RESPONSE 400 Bad Request:
 
 RESPONSE 404 Not Found:
   { "detail": "Store not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Nếu force=false: Kiểm tra store có chứa file không. Nếu có, báo lỗi 400.
+  3. Nếu force=true: Thực hiện xóa hết file trong store (Gemini + R2 + DB) trước.
+  4. Gọi Gemini API xóa store trên cloud.
+  5. Xóa bản ghi trong MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
 3.7. DELETE /api/stores/all - Xóa tất cả Stores
@@ -331,9 +371,14 @@ MÔ TẢ:
 
 RESPONSE 200 OK:
   {
-    "deleted_count": 3,
+    "deletedCount": 3,
     "message": "Deleted 3 stores (full delete)"
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Duyệt danh sách tất cả store trong MongoDB.
+  2. Thực hiện xóa triệt để từng store (Gemini API + R2 files + DB records).
+  3. Trả về tổng số lượng store đã xóa thành công.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -347,6 +392,11 @@ RESPONSE 200 OK: (StoreDetailResponse với thống kê đã cập nhật)
 
 RESPONSE 404 Not Found:
   { "detail": "Store not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Gọi Gemini API lấy thông số thực tế (active_documents_count, size_bytes).
+  3. Cập nhật file_count và total_size tương ứng vào MongoDB.
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -356,9 +406,12 @@ RESPONSE 404 Not Found:
 🔒 XÁC THỰC:
    - GET /api/metadata                        → Authentication: Required (any valid user)
    - GET /api/metadata/{key}                  → Authentication: Required (any valid user)
-   - POST /api/metadata         → Yêu cầu role admin
-   - PATCH /api/metadata/{key}  → Yêu cầu role admin
-   - DELETE /api/metadata/{key} → Yêu cầu role admin
+   - POST /api/metadata                       → Yêu cầu role admin
+   - PATCH /api/metadata/{key}                → Yêu cầu role admin
+   - POST /api/metadata/{key}/values          → Yêu cầu role admin
+   - PATCH /api/metadata/{key}/values/{value} → Yêu cầu role admin
+   - DELETE /api/metadata/{key}               → Yêu cầu role admin
+   - DELETE /api/metadata/{key}/values/{value}→ Yêu cầu role admin
 
 Metadata Type là định nghĩa các trường metadata có thể gắn vào file khi upload.
 Được dùng để filter documents trong RAG (Gemini File Search filter string).
@@ -380,25 +433,28 @@ REQUEST EXAMPLE:
         "value": "dao_tao",
         "displayName": "Đào tạo",
         "isActive": true,
-        "color": "#3498DB"
+        "color": "#3498DB",
+        "visibleRoles": ["admin", "lecture", "student"]
       },
       {
         "value": "khcn",
         "displayName": "KHCN",
         "isActive": true,
-        "color": "#2ECC71"
+        "color": "#2ECC71",
+        "visibleRoles": ["admin", "lecture", "student"]
       },
       {
         "value": "all",
         "displayName": "Tất cả",
         "isActive": true,
-        "color": "#95A5A6"
+        "color": "#95A5A6",
+        "visibleRoles": ["admin", "lecture", "student"]
       }
     ]
   }
 
 GHI CHÚ:
-  - has_all_value tự động tính từ allowed_values: true nếu allowed_values chứa value="all"
+  - hasAllValue tự động tính từ allowedValues: true nếu allowedValues chứa value="all"
   - Để filter builder tự thêm OR key="all", hãy thêm AllowedValue với value="all" vào danh sách
 
 GHI CHÚ:
@@ -418,6 +474,7 @@ RESPONSE 201 Created:
         "displayName": "Đào tạo",
         "isActive": true,
         "color": "#3498DB",
+        "visibleRoles": ["admin", "lecture", "student"],
         "totalFiles": 10
       }
     ],
@@ -430,6 +487,11 @@ RESPONSE 201 Created:
 
 RESPONSE 409 Conflict:
   { "detail": "Metadata type 'department' already exists" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Kiểm tra trùng lặp key trong MongoDB.
+  3. Lưu định nghĩa metadata mới (kèm allowedValues nếu có) vào DB.
 
 ────────────────────────────────────────────────────────────────────────────────
 4.2. GET /api/metadata - Liệt kê Metadata Types
@@ -440,7 +502,7 @@ MÔ TẢ:
   Authentication: Required (any valid user)
 
 QUERY PARAMETERS:
-  - is_active: bool (optional) - Lọc theo trạng thái active
+  - activeOnly: bool (optional) - Lọc theo trạng thái active
 
 RESPONSE 200 OK:
   {
@@ -454,6 +516,11 @@ RESPONSE 200 OK:
     ],
     "total": 5
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth (bất kỳ user nào đã login).
+  2. Nếu activeOnly=true, lọc các bản ghi có is_active=true.
+  3. Lọc lấy toàn bộ metadata types từ MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
 4.3. GET /api/metadata/{key} - Lấy Metadata Type theo key
@@ -466,31 +533,76 @@ RESPONSE 200 OK: (MetadataTypeResponse)
 
 RESPONSE 404 Not Found:
   { "detail": "Metadata type 'department' not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Tìm metadata type trong MongoDB theo key.
 
 ────────────────────────────────────────────────────────────────────────────────
 4.4. PATCH /api/metadata/{key} - Cập nhật Metadata Type
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Cập nhật metadata type. Không thể thay đổi key hoặc is_system.
+  Cập nhật metadata type. Không thể thay đổi key, is_system, hoặc allowed_values bằng API này (sử dụng APIs riêng cho values).
 
 REQUEST EXAMPLE:
   {
     "displayName": "Tên mới",      // optional
-    "allowedValues": [...],        // optional - merge (xem ghi chú bên dưới)
+    "description": "Mô tả mới",    // optional
     "isActive": true               // optional
   }
 
-GHI CHÚ allowedValues khi update:
-  - value của mỗi entry là BẤT BIẾN — không thể thay đổi
-  - Chỉ có thể cập nhật: displayName, isActive, color của entry đã tồn tại
-  - Entry MỚI (value chưa tồn tại trong DB) sẽ được thêm vào
-  - Entry KHÔNG có trong request sẽ được GIỮ NGUYÊN (không bị xóa)
-
 RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Validate: Không cho phép đổi key hoặc isSystem.
+  3. Cập nhật các trường thông tin chung vào MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.5. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
+4.5. POST /api/metadata/{key}/values - Thêm Metadata Value
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Thêm một allowed_value mới vào metadata type có sẵn.
+
+REQUEST EXAMPLE:
+  {
+    "value": "ctsv",                       // required
+    "displayName": "CTSV",                 // required
+    "isActive": true,                      // required/default true
+    "color": "#E74C3C",                    // optional
+    "visibleRoles": ["admin", "student"]   // required, min_length 1
+  }
+
+RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
+RESPONSE 409 Conflict: Nếu value đã tồn tại.
+
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Check xem key tồn tại không.
+  3. Push giá trị mới vào mảng allowedValues.
+
+────────────────────────────────────────────────────────────────────────────────
+4.6. PATCH /api/metadata/{key}/values/{value} - Cập nhật Metadata Value
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Cập nhật một allowed_value trong metadata type (màu, tên hiển thị, trạng thái, role hiển thị). Value (khóa) không thể đổi.
+
+REQUEST EXAMPLE:
+  {
+    "displayName": "Công tác Sinh viên",   // optional
+    "isActive": false,                     // optional
+    "color": "#000000",                    // optional
+    "visibleRoles": ["admin"]              // optional
+  }
+
+RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
+RESPONSE 404 Not Found: Nếu value không tồn tại.
+
+────────────────────────────────────────────────────────────────────────────────
+4.7. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -504,13 +616,19 @@ RESPONSE 409 Conflict:
   { "detail": "Cannot delete metadata type 'department' because it is in use by 5 files." }
 
 RESPONSE 403 Forbidden:
-  { "detail": "Cannot delete system metadata type: 'access_scope'. System metadata types are protected." }
+    { "detail": "Cannot delete system metadata type: 'access_scope'. 'access_scope' is protected." }
 
 RESPONSE 404 Not Found:
   { "detail": "Metadata type 'department' not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Kiểm tra isSystem: Chặn xóa metadata hệ thống (403).
+  3. Kiểm tra totalFiles: Chặn xóa nếu có file đang sử dụng metadata này (409).
+  4. Hard delete bản ghi khỏi MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.6. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
+4.8. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -525,6 +643,12 @@ RESPONSE 409 Conflict:
 
 RESPONSE 404 Not Found:
   { "detail": "Value 'xxx' not found in metadata type 'yyy'" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Kiểm tra total_files của giá trị metadata cụ thể.
+  3. Nếu total_files > 0: Từ chối xóa (409).
+  4. Thực hiện xóa giá trị đó khỏi mảng allowedValues trong DB.
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -535,8 +659,12 @@ RESPONSE 404 Not Found:
    Header: Authorization: Bearer <jwt_token>  (role phải là "admin")
 
 Files được lưu trong R2 (binary) và indexed trong Gemini File Search.
-Hỗ trợ: PDF, DOCX, DOC, TXT, MD, HTML (max 20MB)
-
+🔒 XÁC THỰC:
+   - GET /api/files                  → Authentication: Required (any valid user)
+   - GET /api/files/{file_id}        → Authentication: Required (any valid user)
+   - GET /api/files/{file_id}/download → Authentication: Required (any valid user)
+   - GET /api/files/check-sync       → Yêu cầu role admin
+   - Các API khác (Upload, Batch, Sync, Delete) → Yêu cầu role admin
 ────────────────────────────────────────────────────────────────────────────────
 5.1. POST /api/files - Upload File
 ────────────────────────────────────────────────────────────────────────────────
@@ -550,23 +678,23 @@ YÊU CẦU METADATA (BẮT BUỘC):
 
 REQUEST (multipart/form-data):
   - file: <binary>                                                        // required
-  - store_id: "67a5f2c8abc123def456789"                                   // optional
-  - display_name: "Quy chế đào tạo 2026"                                 // optional
-  - custom_metadata: '{"access_scope":"cong_khai","academic_year":"2024-2025"}' // required
-  - enable_chunking: true                                                  // optional
+  - storeId: "67a5f2c8abc123def456789"                                   // optional
+  - displayName: "Quy chế đào tạo 2026"                                 // optional
+  - customMetadata: '{"accessScope":"student","academicYear":"2024-2025"}' // required
+  - enableChunking: true                                                  // optional
 
 RESPONSE 201 Created:
   {
-    "file_id": "67a5f2c8abc123def456791",
-    "store_id": "67a5f2c8abc123def456789",
-    "original_filename": "document.pdf",
-    "display_name": "Quy chế đào tạo 2026",
-    "file_size": 1048576,
-    "mime_type": "application/pdf",
+    "fileId": "67a5f2c8abc123def456791",
+    "storeId": "67a5f2c8abc123def456789",
+    "originalFilename": "document.pdf",
+    "displayName": "Quy chế đào tạo 2026",
+    "fileSize": 1048576,
+    "mimeType": "application/pdf",
     "status": "active",
-    "gemini_document_name": "fileSearchStores/xxx/documents/yyy",
-    "custom_metadata": {"access_scope": "cong_khai", "academic_year": "2024-2025"},
-    "created_at": "2026-03-11T10:30:00.000000",
+    "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
+    "customMetadata": {"access_scope": "student", "academic_year": "2024-2025"},
+    "createdAt": "2026-03-11T10:30:00.000000",
     "message": "File uploaded successfully"
   }
 
@@ -597,8 +725,10 @@ ROLLBACK:
 ────────────────────────────────────────────────────────────────────────────────
 
 QUERY PARAMETERS:
-  - store_id: string (optional) - filter by store
-  - file_status: string (optional) - active|processing|failed
+  - storeId: string (optional) - filter by store
+  - fileStatus: string (optional) - active|processing|failed
+  - metadataFilter: string (optional, JSON format) - e.g. {"academicYear": "2024-2025"}
+    - Hỗ trợ giá trị "all" để lấy tất cả (ví dụ: file có academicYear="all" sẽ luôn xuất hiện khi filter bất kỳ năm học nào)
   - page: int (optional, default: 1)
   - limit: int (optional, default: 50, max: 100)
 
@@ -606,24 +736,29 @@ RESPONSE 200 OK:
   {
     "files": [
       {
-        "file_id": "67a5f2c8abc123def456791",
-        "store_id": "67a5f2c8abc123def456789",
-        "original_filename": "document.pdf",
-        "display_name": "Quy chế đào tạo 2026",
-        "gemini_document_name": "fileSearchStores/xxx/documents/yyy",
-        "file_size": 1048576,
-        "mime_type": "application/pdf",
-        "storage_path": "xxx/2026/03/document.pdf",
+        "fileId": "67a5f2c8abc123def456791",
+        "storeId": "67a5f2c8abc123def456789",
+        "originalFilename": "document.pdf",
+        "displayName": "Quy chế đào tạo 2026",
+        "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
+        "fileSize": 1048576,
+        "mimeType": "application/pdf",
+        "storagePath": "xxx/2026/03/document.pdf",
         "status": "active",
-        "custom_metadata": {"department": "dao_tao"},
-        "created_at": "2026-03-11T10:30:00.000000",
-        "updated_at": "2026-03-11T10:30:00.000000"
+        "customMetadata": {"department": "dao_tao"},
+        "createdAt": "2026-03-11T10:30:00.000000",
+        "updatedAt": "2026-03-11T10:30:00.000000"
       }
     ],
-    "total": 42,
-    "page": 1,
     "limit": 50
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Parse query filters: storeId, fileStatus, metadataFilter.
+  3. Lọc MongoDB: Hỗ trợ query theo mảng hoặc giá trị đơn qua $in.
+  4. Trả về danh sách file kèm metadata dạng camelCase.
+  5. Đã tích hợp filter `visibleRoles`: mọi user (kể cả admin) khi lấy file list/detail chỉ nhận được những metadata field phù hợp với ROLE của mình (key sẽ bị xóa nếu user không thuộc `visibleRoles` của allowedValues).
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -634,6 +769,11 @@ RESPONSE 200 OK: (FileDetailResponse)
 
 RESPONSE 404 Not Found:
   { "detail": "File 67a5... not found" }
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Truy vấn MongoDB theo file_id.
+  3. Áp dụng filter `visibleRoles`: loại bỏ các key trong `customMetadata` nếu role của user không nằm trong `visibleRoles` của giá trị đó.
+  4. Trả về chi tiết file kèm metadata đã lược bỏ các field không được phép, hoặc lỗi 404.
 
 ────────────────────────────────────────────────────────────────────────────────
 5.5. GET /api/files/{file_id}/download - Download File
@@ -649,6 +789,11 @@ RESPONSE 200 OK:
 
 RESPONSE 404 Not Found:
   { "detail": "File not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_auth.
+  2. Lấy thông tin file từ MongoDB để biết storagePath.
+  3. Stream dữ liệu từ Cloudflare R2 về cho client.
 
 ────────────────────────────────────────────────────────────────────────────────
 5.6. DELETE /api/files/{file_id} - Xóa File
@@ -661,6 +806,14 @@ RESPONSE 204 No Content
 
 RESPONSE 404 Not Found:
   { "detail": "File not found" }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Lấy thông tin file từ MongoDB.
+  3. Xóa file trên Gemini File Search API.
+  4. Xóa file trên Cloudflare R2.
+  5. Xóa bản ghi trong MongoDB.
+  6. Cập nhật lại total_files trong Metadata Type.
 
 ────────────────────────────────────────────────────────────────────────────────
 5.8. POST /api/files/batch - Batch Upload Files
@@ -671,10 +824,10 @@ MÔ TẢ:
 
 REQUEST (multipart/form-data):
   - files: <binary[]>                                              // required, multiple
-  - store_id: "67a5f2c8abc123def456789"                           // optional
-  - display_names: '["Tên 1", null, "Tên 3"]'                    // optional, JSON array
-  - metadata_list: '[{"department":"dt"}, {}, {"cat":"policy"}]'  // optional, JSON array
-  - enable_chunking: true                                         // optional
+  - storeId: "67a5f2c8abc123def456789"                           // optional
+  - displayNames: '["Tên 1", null, "Tên 3"]'                    // optional, JSON array
+  - metadataList: '[{"department":"dt"}, {}, {"cat":"policy"}]'  // optional, JSON array
+  - enableChunking: true                                         // optional
 
 RESPONSE 201 Created:
   {
@@ -683,21 +836,27 @@ RESPONSE 201 Created:
     "failed": 1,
     "results": [
       {
-        "original_filename": "doc1.pdf",
+        "originalFilename": "doc1.pdf",
         "success": true,
-        "file_id": "67a5...",
-        "store_id": "67a5...",
-        "display_name": "Tên 1",
+        "fileId": "67a5...",
+        "storeId": "67a5...",
+        "displayName": "Tên 1",
         "error": null
       },
       {
-        "original_filename": "doc2.pdf",
+        "originalFilename": "doc2.pdf",
         "success": false,
-        "file_id": null,
+        "fileId": null,
         "error": "File type not allowed"
       }
     ]
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Duyệt qua từng file trong danh sách gửi lên.
+  3. Thực hiện luồng upload (R2 + Gemini + DB + Metadata Update) cho mỗi file.
+  4. Trả về tổng hợp kết quả thành công/thất bại.
 
 ────────────────────────────────────────────────────────────────────────────────
 5.9. DELETE /api/files/all - Xóa toàn bộ files
@@ -708,13 +867,18 @@ MÔ TẢ:
   ⚠️ NGUY HIỂM: Không thể hoàn tác!
 
 QUERY PARAMETERS:
-  - store_id: string (optional) - ID của store cần xóa file (dùng default nếu bỏ qua)
+  - storeId: string (optional) - ID của store cần xóa file (dùng default nếu bỏ qua)
 
 RESPONSE 200 OK:
   {
-    "deleted_count": 42,
+    "deletedCount": 42,
     "message": "Deleted 42 files from store 67a5..."
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Lấy danh sách tất cả file thuộc store cụ thể (hoặc default store).
+  3. Thực hiện xóa triệt để từng file (Gemini + R2 + MongoDB).
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -727,22 +891,28 @@ MÔ TẢ:
 
 RESPONSE 200 OK:
   {
-    "is_synced": false,
-    "total_db": 42,
-    "total_r2": 41,
-    "total_gemini": 40,
-    "synced_count": 39,
+    "isSynced": false,
+    "totalDb": 42,
+    "totalR2": 41,
+    "totalGemini": 40,
+    "syncedCount": 39,
     "issues": [
       {
-        "file_id": "67a5...",
-        "original_filename": "document.pdf",
-        "storage_path": "xxx/document.pdf",
-        "gemini_document_name": null,
+        "fileId": "67a5...",
+        "originalFilename": "document.pdf",
+        "storagePath": "xxx/document.pdf",
+        "geminiDocumentName": null,
         "issue": "missing_in_gemini"
       }
     ]
   }
 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Lấy danh sách file IDs từ: MongoDB, R2 (storage layer) và Gemini (File Search store).
+  3. So sánh chéo để phát hiện file bị thiếu/thừa giữa 3 hệ thống.
+  4. Trả về chi tiết các vấn đề lệch sync.
+ 
 ISSUE TYPES:
   missing_in_gemini — File có trong DB + R2 nhưng không có trong Gemini
   missing_in_r2  — File có trong DB (có gemini_document_name) nhưng không có trong R2
@@ -764,22 +934,28 @@ SYNC RULES:
 
 RESPONSE 200 OK:
   {
-    "total_issues": 3,
-    "uploaded_to_gemini": 1,
+    "totalIssues": 3,
+    "uploadedToGemini": 1,
     "deleted": 2,
     "failed": 0,
     "results": [
       {
-        "file_id": "67a5...",
-        "original_filename": "document.pdf",
-        "storage_path": "xxx/document.pdf",
-        "gemini_document_name": "fileSearchStores/xxx/documents/yyy",
+        "fileId": "67a5...",
+        "originalFilename": "document.pdf",
+        "storagePath": "xxx/document.pdf",
+        "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
         "action": "upload_to_gemini",
         "success": true,
-        "error": null
-      }
     ]
   }
+ 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Chạy check_sync để tìm các issues.
+  3. Xử lý repair:
+     - missing_in_gemini: Re-upload từ R2 lên Gemini.
+     - Các lỗi khác: Xóa các phần thừa (record DB, object R2 hoặc Gemini doc).
+  4. Trả về kết quả thực hiện sync.
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -799,13 +975,13 @@ MÔ TẢ:
 REQUEST EXAMPLE:
   {
     "question": "Điều kiện tốt nghiệp là gì?",
-    "user_context": {
-      "user_id": "sv001_anon",
+    "userContext": {
+      "userId": "sv001_anon",
       "name": "Sinh viên A",
       "cohort": "K20",
       "role": "student"
     },
-    "chat_history": [
+    "chatHistory": [
       {
         "role": "user",
         "content": "Câu hỏi trước",
@@ -817,10 +993,10 @@ REQUEST EXAMPLE:
         "timestamp": "2026-03-11T10:00:05"
       }
     ],
-    "store_id": "67a5f2c8abc123def456789",  // optional, dùng default nếu bỏ qua
-    "metadata_filter": {                     // optional, filter theo metadata
+    "storeId": "67a5f2c8abc123def456789",  // optional, dùng default nếu bỏ qua
+    "metadataFilter": {                     // optional, filter theo metadata
       "department": "dao_tao",
-      "access_scope": "cong_khai"
+      "accessScope": "student"
     }
   }
 
@@ -832,15 +1008,15 @@ RESPONSE 200 OK:
         "title": "Quy chế đào tạo 2026",
         "text": "Điều 15: Điều kiện tốt nghiệp...",
         "url": "http://localhost:9000/presigned-url/...",
-        "file_id": "67a5..."
+        "fileId": "67a5..."
       }
     ],
-    "token_usage": {
+    "tokenUsage": {
       "prompt_tokens": 1234,
       "candidates_tokens": 256,
       "total_tokens": 1490
     },
-    "processing_time_ms": 2340
+    "processingTimeMs": 2340
   }
 
 RESPONSE 400 Bad Request:
@@ -848,10 +1024,11 @@ RESPONSE 400 Bad Request:
 
 WORKFLOW:
   1. Resolve store (request.store_id → default store → error)
-  2. Convert metadata_filter dict → Gemini filter string
-  3. Enforce access_scope theo user_context.role:
-     - student: access_scope="cong_khai" (bắt buộc)
-     - staff/admin: không filter access_scope
+  2. Convert metadataFilter dict → Gemini filter string
+  3. Enforce accessScope theo userContext.role:
+     - student: Only "student" scope
+     - lecture: "lecture" and "student" scopes
+     - admin: All scopes
   4. Gọi Gemini generate_content với File Search tool
   5. Extract sources từ grounding metadata
   6. Lấy presigned URLs cho mỗi source từ R2
@@ -879,10 +1056,17 @@ Content-Type: text/event-stream
   data: {
     "done": true,
     "sources": [...],
-    "token_usage": {...},
-    "processing_time_ms": 2340
+    "tokenUsage": {...},
+    "processingTimeMs": 2340
   }
 
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Resolve store_id.
+  2. Convert metadataFilter sang định dạng Gemini.
+  3. Gọi Gemini stream_chat_response (RAG enabled).
+  4. Stream các text chunks về cho client qua SSE.
+  5. Gửi sources và token usage trong chunk cuối cùng.
+ 
   // Nếu lỗi:
   data: {"error": "No store available", "done": true}
 
@@ -936,13 +1120,13 @@ SỬ DỤNG:
 Các endpoint FILES, CHAT, EMAIL DRAFT đều hỗ trợ auto store resolution:
 
   Priority:
-    1. store_id trong request (nếu có)
-    2. Default store từ database (is_default=true)
+    1. storeId trong request (nếu có)
+    2. Default store từ database (isDefault=true)
     3. Raise 400 nếu không tìm thấy store nào
 
   Cách thiết lập default store:
-    - Khi tạo store: POST /api/stores với "set_as_default": true
-    - Cập nhật sau: PATCH /api/stores/{store_id} với "is_default": true
+    - Khi tạo store: POST /api/stores với "setAsDefault": true
+    - Cập nhật sau: PATCH /api/stores/{store_id} với "isDefault": true
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -1052,20 +1236,20 @@ METADATA FILTER FORMAT (dùng trong Chat và File Search):
   JSON format (request):
     {
       "department": "dao_tao",
-      "access_scope": "cong_khai"
+      "access_scope": "admin" | "lecture" | "student" (Required)
     }
 
   Gemini filter string (sau khi convert):
-    'department="dao_tao" AND access_scope="cong_khai"'
+    'department="dao_tao" AND accessScope="student"'
 
   List values (OR điều kiện):
     Request: { "cohort": ["K20", "K21"] }
     Gemini:  '(cohort="K20" OR cohort="K21")'
 
-  has_all_value=true (metadata type có AllowedValue với value="all"):
+  hasAllValue=true (metadata type có AllowedValue với value="all"):
     Request: { "department": "dao_tao" }
     Gemini:  '(department="dao_tao" OR department="all")'
 
-Role-based access_scope (trong /api/chat/query):
-  - role="student": access_scope="cong_khai" (override, bắt buộc)
-  - role="staff" hoặc "admin": không thêm filter access_scope
+Role-based accessScope (trong /api/chat/query):
+  - role="student": accessScope="student" (override, bắt buộc)
+  - role="lecture" hoặc "admin": không thêm filter accessScope

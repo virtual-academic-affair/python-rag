@@ -116,11 +116,14 @@ class AllowedValue:
     Allowed value for metadata type.
     Used for validation and UI rendering.
     """
-    value: str                          # Value stored in DB and used in filter (e.g., 'noi_bo')
-    display_name: str                   # Display name for UI (e.g., 'Nội bộ')
+    value: str                          # Value stored in DB and used in filter (e.g., 'student')
+    display_name: str                   # Display name for UI (e.g., 'Student')
     is_active: bool = True              # False = hidden from UI, but filter still works
     color: Optional[str] = None         # Hex color for this value (e.g., '#E74C3C')
     total_files: int = 0                # Total active files associated with this value
+    visible_roles: List[str] = field(default_factory=list)
+    # Roles that can see this value: ["admin", "lecture", "student"]
+    # Empty list = NOT visible to anyone (strictly enforced)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for MongoDB storage."""
@@ -130,6 +133,7 @@ class AllowedValue:
             "is_active": self.is_active,
             "color": self.color,
             "total_files": self.total_files,
+            "visible_roles": self.visible_roles,
         }
     
     @staticmethod
@@ -141,6 +145,7 @@ class AllowedValue:
             is_active=data.get("is_active", True),
             color=data.get("color"),
             total_files=data.get("total_files", 0),
+            visible_roles=data.get("visible_roles", []),
         )
 
 

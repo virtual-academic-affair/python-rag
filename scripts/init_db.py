@@ -224,8 +224,8 @@ async def create_default_store(store_config: dict) -> str:
             raise Exception(f"Failed to create store: {response.text}")
 
         data = response.json()
-        store_id = data["store_id"]
-        store_name = data["store_name"]
+        store_id = data["storeId"]
+        store_name = data["storeName"]
 
         logger.info(f"  ✓ Created store: {store_name}")
         logger.info(f"  ✓ Store ID: {store_id}")
@@ -244,7 +244,7 @@ async def upload_files(store_id: str, files_config: list):
     async with httpx.AsyncClient(timeout=120) as client:
         for file_config in files_config:
             filename = file_config["filename"]
-            display_name = file_config["display_name"]
+            display_name = file_config["displayName"]
             metadata = file_config.get("metadata", {})
 
             file_path = UPLOADS_DIR / filename
@@ -258,9 +258,9 @@ async def upload_files(store_id: str, files_config: list):
                 with open(file_path, "rb") as f:
                     files = {"file": (filename, f, "application/octet-stream")}
                     data = {
-                        "store_id": store_id,
-                        "display_name": display_name,
-                        "custom_metadata": json.dumps(metadata),
+                        "storeId": store_id,
+                        "displayName": display_name,
+                        "customMetadata": json.dumps(metadata),
                     }
 
                     response = await client.post(
@@ -272,7 +272,7 @@ async def upload_files(store_id: str, files_config: list):
 
                 if response.status_code == 201:
                     result = response.json()
-                    logger.info(f"  ✓ Uploaded: {display_name} (ID: {result['file_id']})")
+                    logger.info(f"  ✓ Uploaded: {display_name} (ID: {result['fileId']})")
                     success_count += 1
                 else:
                     logger.warning(f"  ⚠ Failed to upload {filename}: {response.text}")

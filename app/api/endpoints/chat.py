@@ -16,6 +16,7 @@ from app.models.schemas import (
 from app.services.rag.chat_service import chat_service
 from app.services.rag.utils.store_utils import resolve_store
 from app.services.rag.utils.filter_builder import convert_metadata_filter_to_gemini_format
+from app.services.rag.utils.file_utils import convert_custom_metadata_to_snake
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -46,6 +47,10 @@ async def chat_query(request: ChatQueryRequest):
         # Resolve store (request → default store → error)
         store_id, store_name = await resolve_store(request.store_id)
         
+        # Convert metadata filter keys from camelCase to snake_case
+        if request.metadata_filter:
+            request.metadata_filter = convert_custom_metadata_to_snake(request.metadata_filter)
+            
         # Convert metadata filter from dict to Gemini format
         metadata_filter = convert_metadata_filter_to_gemini_format(request.metadata_filter)
         
@@ -96,6 +101,10 @@ async def chat_stream(request: ChatStreamRequest):
         # Resolve store (request → default store → error)
         store_id, store_name = await resolve_store(request.store_id)
         
+        # Convert metadata filter keys from camelCase to snake_case
+        if request.metadata_filter:
+            request.metadata_filter = convert_custom_metadata_to_snake(request.metadata_filter)
+            
         # Convert metadata filter from dict to Gemini format
         metadata_filter = convert_metadata_filter_to_gemini_format(request.metadata_filter)
         

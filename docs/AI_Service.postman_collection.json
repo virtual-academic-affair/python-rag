@@ -150,7 +150,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"display_name\": \"Văn bản Đào tạo 2026\",\n  \"set_as_default\": true\n}",
+              "raw": "{\n  \"displayName\": \"Văn bản Đào tạo 2026\",\n  \"setAsDefault\": true\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -193,7 +193,7 @@
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "50" },
-                { "key": "is_default", "value": "true", "disabled": true }
+                { "key": "isDefault", "value": "true", "disabled": true }
               ]
             },
             "description": "List all stores. Enable is_default=true query param to get only the default store."
@@ -226,7 +226,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"display_name\": \"Tên store mới\",\n  \"is_default\": true\n}",
+              "raw": "{\n  \"displayName\": \"Tên store mới\",\n  \"isDefault\": true\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -234,7 +234,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "stores", "{{store_id}}"]
             },
-            "description": "Update store display_name or set as default. Both fields are optional."
+            "description": "Update store displayName or set as default. Both fields are optional."
           },
           "response": []
         },
@@ -304,7 +304,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\" },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\" },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\" },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\" }\n  ]\n}",
+              "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -326,7 +326,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"cong_khai\", \"displayName\": \"Public\", \"isActive\": true, \"color\": \"#2ECC71\" },\n    { \"value\": \"noi_bo\", \"displayName\": \"Internal\", \"isActive\": true, \"color\": \"#E67E22\" }\n  ]\n}",
+              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"admin\", \"displayName\": \"Admin\", \"isActive\": true, \"color\": \"#E67E22\", \"visibleRoles\": [\"admin\"] },\n    { \"value\": \"student\", \"displayName\": \"Student\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -350,7 +350,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata"],
               "query": [
-                { "key": "is_active", "value": "true", "disabled": true }
+                { "key": "activeOnly", "value": "true", "disabled": true }
               ]
             },
             "description": "List all metadata type definitions. Enable is_active=true to filter active only."
@@ -383,7 +383,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"displayName\": \"New name\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\" },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\" },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\" },\n    { \"value\": \"htqt\", \"displayName\": \"Intl Relations\", \"isActive\": true, \"color\": \"#9B59B6\" },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\" }\n  ]\n}",
+              "raw": "{\n  \"displayName\": \"New name\",\n  \"isActive\": true\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -391,7 +391,51 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}"]
             },
-            "description": "Update metadata type. Cannot change key or is_system.\n\nallowedValues merge rules:\n- value is IMMUTABLE — cannot be changed\n- Only displayName, isActive, color can be updated for existing entries\n- New entries (new value keys) are added\n- Entries NOT in the request are kept as-is (not deleted)"
+            "description": "Update metadata type. Cannot change key or is_system.\n\nUse standalone endpoints to update allowedValues."
+          },
+          "response": []
+        },
+        {
+          "name": "Create metadata value",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"admin\", \"lecture\", \"student\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values",
+              "host": ["{{base_url}}"],
+              "path": ["api", "metadata", "{{metadata_key}}", "values"]
+            },
+            "description": "Add a new allowed value to a metadata type."
+          },
+          "response": []
+        },
+        {
+          "name": "Update metadata value",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"International Relations (Updated)\",\n  \"isActive\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/htqt",
+              "host": ["{{base_url}}"],
+              "path": ["api", "metadata", "{{metadata_key}}", "values", "htqt"]
+            },
+            "description": "Update an existing allowed value in a metadata type."
           },
           "response": []
         },
@@ -443,10 +487,10 @@
               "mode": "formdata",
               "formdata": [
                 { "key": "file", "type": "file", "src": [], "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML - max 20MB)" },
-                { "key": "store_id", "value": "{{store_id}}", "type": "text", "description": "Optional - uses default store if empty" },
-                { "key": "display_name", "value": "Quy che dao tao 2026", "type": "text", "description": "Optional display name" },
-                { "key": "custom_metadata", "value": "{\"access_scope\":\"cong_khai\",\"academic_year\":\"2024-2025\"}", "type": "text", "description": "Required: must include access_scope AND at least one of academic_year/cohort" },
-                { "key": "enable_chunking", "value": "false", "type": "text", "disabled": true }
+                { "key": "storeId", "value": "{{store_id}}", "type": "text", "description": "Optional - uses default store if empty" },
+                { "key": "displayName", "value": "Quy che dao tao 2026", "type": "text", "description": "Optional display name" },
+                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope AND at least one of academicYear/cohort" },
+                { "key": "enableChunking", "value": "false", "type": "text", "disabled": true }
               ]
             },
             "url": {
@@ -489,11 +533,12 @@
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "50" },
-                { "key": "store_id", "value": "{{store_id}}", "disabled": true },
-                { "key": "file_status", "value": "active", "disabled": true, "description": "active|processing|failed" }
+                { "key": "storeId", "value": "{{store_id}}", "disabled": true },
+                { "key": "fileStatus", "value": "active", "disabled": true, "description": "active|processing|failed" },
+                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true, "description": "JSON filter for metadata. 'all' value logic is supported." }
               ]
             },
-            "description": "List files with optional filters and pagination."
+            "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes, meaning users (including admin) only see fields meant for their role."
           },
           "response": []
         },
@@ -509,7 +554,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "{{file_id}}"]
             },
-            "description": "Get file details by MongoDB ObjectId."
+            "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles."
           },
           "response": []
         },
@@ -540,9 +585,9 @@
               "mode": "formdata",
               "formdata": [
                 { "key": "files", "type": "file", "src": [], "description": "Multiple files" },
-                { "key": "store_id", "value": "{{store_id}}", "type": "text" },
-                { "key": "display_names", "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]", "type": "text", "description": "JSON array - use null for auto name" },
-                { "key": "metadata_list", "value": "[{\"access_scope\":\"cong_khai\",\"academic_year\":\"2024-2025\"}, {\"access_scope\":\"noi_bo\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. access_scope required + academic_year or cohort" }
+                { "key": "storeId", "value": "{{store_id}}", "type": "text" },
+                { "key": "displayNames", "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]", "type": "text", "description": "JSON array - use null for auto name" },
+                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope required + academicYear or cohort" }
               ]
             },
             "url": {
@@ -578,11 +623,11 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{base_url}}/api/files/all?store_id={{store_id}}",
+              "raw": "{{base_url}}/api/files/all?storeId={{store_id}}",
               "host": ["{{base_url}}"],
               "path": ["api", "files", "all"],
               "query": [
-                { "key": "store_id", "value": "{{store_id}}" }
+                { "key": "storeId", "value": "{{store_id}}" }
               ]
             },
             "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB). store_id parameter is optional (uses default if empty)."
@@ -635,7 +680,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"user_context\": {\n    \"user_id\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chat_history\": [],\n  \"store_id\": \"{{store_id}}\",\n  \"metadata_filter\": {\n    \"department\": \"dao_tao\",\n    \"access_scope\": \"cong_khai\"\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": \"dao_tao\",\n    \"accessScope\": \"student\"\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -643,12 +688,12 @@
               "host": ["{{base_url}}"],
               "path": ["api", "chat", "query"]
             },
-            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to 'cong_khai'.\nFor staff/admin role, no access_scope filter is applied."
+            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to 'student'.\nFor lecture/admin role, access_scope filter is applied hierarchically.\n"
           },
           "response": []
         },
         {
-          "name": "Chat query - Staff role",
+          "name": "Chat query - Lecture role",
           "request": {
             "method": "POST",
             "header": [
@@ -656,7 +701,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"user_context\": {\n    \"user_id\": \"staff001\",\n    \"name\": \"Trần Thị B\",\n    \"cohort\": \"\",\n    \"role\": \"staff\"\n  },\n  \"chat_history\": [],\n  \"store_id\": \"{{store_id}}\"\n}",
+              "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"userContext\": {\n    \"userId\": \"lecture001\",\n    \"name\": \"Trần Thị B\",\n    \"cohort\": \"\",\n    \"role\": \"lecture\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -664,7 +709,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "chat", "query"]
             },
-            "description": "Staff role: no access_scope filter, can see all documents including internal ones."
+            "description": "Lecture role: can see documents with scope 'lecture' and 'student'."
           },
           "response": []
         },
@@ -677,7 +722,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"user_context\": {\n    \"user_id\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chat_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ],\n  \"store_id\": \"{{store_id}}\"\n}",
+              "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ],\n  \"storeId\": \"{{store_id}}\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -699,7 +744,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"user_context\": {\n    \"user_id\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chat_history\": [],\n  \"store_id\": \"{{store_id}}\",\n  \"metadata_filter\": {\n    \"department\": \"dao_tao\"\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": \"dao_tao\"\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
