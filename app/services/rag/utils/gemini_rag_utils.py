@@ -99,9 +99,20 @@ def extract_sources(response) -> tuple[Optional[list[dict]], dict]:
     if hasattr(candidate, "grounding_metadata") and candidate.grounding_metadata:
         metadata = candidate.grounding_metadata
         
+        # Collect actually used chunk indices from grounding_supports
+        used_indices = set()
+        if hasattr(metadata, "grounding_supports") and metadata.grounding_supports:
+            for support in metadata.grounding_supports:
+                if hasattr(support, "grounding_chunk_indices"):
+                    for idx in support.grounding_chunk_indices:
+                        used_indices.add(idx)
+        
         # Extract from grounding_chunks (File Search results)
         if hasattr(metadata, "grounding_chunks") and metadata.grounding_chunks:
             for idx, chunk in enumerate(metadata.grounding_chunks):
+                if idx not in used_indices:
+                    continue
+                    
                 citation = None
                 # Check for retrieved_context (File Search)
                 if hasattr(chunk, "retrieved_context") and chunk.retrieved_context:
@@ -181,7 +192,7 @@ async def enrich_sources_with_urls(sources: Optional[list[dict]], file_repo: Fil
             }
     
     # Enrich sources with presigned URLs
-    from app.storage.minio_client import minio_storage
+    from app.storage.r2_client import r2_storage
     
     for source in sources:
         title = source.get("title")
@@ -190,7 +201,7 @@ async def enrich_sources_with_urls(sources: Optional[list[dict]], file_repo: Fil
             path = file_info["storage_path"]
             if path:
                 try:
-                    source["url"] = await minio_storage.get_file_url(path)
+                    source["url"] = await r2_storage.get_file_url(path)
                 except Exception:
                     pass
             source["file_id"] = file_info["file_id"]

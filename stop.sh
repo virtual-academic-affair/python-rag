@@ -1,7 +1,4 @@
 #!/bin/bash
-# Usage:
-#   ./stop.sh           Dừng FastAPI + MinIO (giữ RabbitMQ)
-#   ./stop.sh --all     Dừng FastAPI + MinIO + RabbitMQ
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -11,53 +8,36 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODE="default"
-if [[ "$1" == "--all" ]]; then
-  MODE="all"
-fi
-
 echo ""
 echo -e "${CYAN}=================================================="
 echo "   AI Service — Shutdown"
-if [[ "$MODE" == "all" ]]; then
-  echo "   Mode: tất cả (app + MinIO + RabbitMQ)"
-else
-  echo "   Mode: chỉ app + MinIO (giữ RabbitMQ)"
-fi
 echo -e "==================================================${NC}"
 
-# ── Stop FastAPI process ─────────────────────────────────────────
-echo ""
-echo -e "${YELLOW}🛑 Dừng FastAPI...${NC}"
-PID_FILE="logs/app.pid"
-if [[ -f "$PID_FILE" ]]; then
-  PID=$(cat "$PID_FILE")
-  if kill -0 "$PID" 2>/dev/null; then
-    kill "$PID"
-    echo -e "${GREEN}   Đã dừng process PID=$PID${NC}"
-  fi
-  rm -f "$PID_FILE"
-else
-  # Fallback: kill by port
-  PIDS=$(lsof -ti :8000 2>/dev/null || true)
-  if [[ -n "$PIDS" ]]; then
-    echo "$PIDS" | xargs kill 2>/dev/null || true
-    echo -e "${GREEN}   Đã dừng process trên port 8000${NC}"
+# 1. Kill FastAPI process nếu có lưu PID
+if [[ -f logs/app.pid ]]; then
+  APP_PID=$(cat logs/app.pid)
+  echo ""
+  echo -e "${YELLOW}🛑 Dừng FastAPI (PID: $APP_PID)...${NC}"
+  
+  if kill -0 "$APP_PID" 2>/dev/null; then
+    kill "$APP_PID"
+    echo -e "${GREEN}✅ Đã dừng FastAPI.${NC}"
   else
-    echo "   Không tìm thấy process FastAPI đang chạy"
+    echo -e "${YELLOW}⚠️  Tiến trình FastAPI không tồn tại hoặc đã dừng trước đó.${NC}"
+  fi
+  rm logs/app.pid
+else
+  # Cleanup theo port nếu không có PID file
+  OLD_PID=$(lsof -ti :8000 2>/dev/null || true)
+  if [[ -n "$OLD_PID" ]]; then
+    echo -e "${YELLOW}🛑 Dừng process trên port 8000 (PID: $OLD_PID)...${NC}"
+    kill "$OLD_PID" 2>/dev/null || true
+    echo -e "${GREEN}✅ Đã dừng process.${NC}"
+  else
+    echo -e "${YELLOW}⚠️  Không tìm thấy FastAPI log PID hay process nào trên port 8000.${NC}"
   fi
 fi
 
-# ── Stop Docker services ─────────────────────────────────────────
 echo ""
-echo -e "${YELLOW}🐳 Dừng Docker services...${NC}"
-
-if [[ "$MODE" == "all" ]]; then
-  docker-compose down
-else
-  docker-compose stop minio minio-init 2>/dev/null || true
-  docker-compose rm -f minio minio-init 2>/dev/null || true
-fi
-
+echo -e "${GREEN}✅ Hệ thống đã được shutdown hoàn toàn.${NC}"
 echo ""
-echo -e "${GREEN}✅ Đã dừng tất cả services${NC}"

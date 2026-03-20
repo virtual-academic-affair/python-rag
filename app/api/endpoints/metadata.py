@@ -3,7 +3,7 @@ Metadata Type Management Endpoints - Phase 4 refactored.
 CRUD operations for metadata field definitions with AllowedValue support.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
 import logging
 from typing import Dict, Any
 
@@ -13,6 +13,7 @@ from app.models.schemas import (
     MetadataTypeResponse,
     MetadataTypeListResponse,
     AllowedValueSchema,
+    AllowedValueResponse,
 )
 from app.models.database import AllowedValue
 from app.services.rag.metadata_service import get_metadata_service
@@ -39,6 +40,7 @@ def _convert_allowed_values_to_schema(allowed_values_list) -> list[AllowedValueS
             display_name=av.display_name,
             is_active=av.is_active,
             color=av.color,
+            total_files=av.total_files,
         )
         for av in allowed_values_list
     ]
@@ -105,6 +107,7 @@ async def create_metadata_type(request: CreateMetadataTypeRequest, _admin: Dict[
             allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
             is_active=metadata_type.is_active,
             is_system=metadata_type.is_system,
+            total_files=metadata_type.total_files,
             created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
             updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
         )
@@ -138,7 +141,8 @@ async def create_metadata_type(request: CreateMetadataTypeRequest, _admin: Dict[
     description="List all metadata type definitions with optional active filter (Phase 4).",
 )
 async def list_metadata_types(
-    active_only: bool = Query(False, description="If true, only return is_active=true types")
+    active_only: bool = Query(False, description="If true, only return is_active=true types"),
+    _user: Dict[str, Any] = Depends(require_auth)
 ):
     """
     List all metadata type definitions.
@@ -158,6 +162,7 @@ async def list_metadata_types(
                 allowed_values=_convert_allowed_values_to_schema(mt.get_allowed_values()),
                 is_active=mt.is_active,
                 is_system=mt.is_system,
+                total_files=mt.total_files,
                 created_at=mt.created_at.isoformat() if mt.created_at else None,
                 updated_at=mt.updated_at.isoformat() if mt.updated_at else None,
             )
@@ -183,7 +188,10 @@ async def list_metadata_types(
     summary="Get metadata type",
     description="Get a specific metadata type by key (Phase 4).",
 )
-async def get_metadata_type(key: str):
+async def get_metadata_type(
+    key: str,
+    _user: Dict[str, Any] = Depends(require_auth)
+):
     """
     Get metadata type details by key.
     """
@@ -204,6 +212,7 @@ async def get_metadata_type(key: str):
             allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
             is_active=metadata_type.is_active,
             is_system=metadata_type.is_system,
+            total_files=metadata_type.total_files,
             created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
             updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
         )
@@ -252,6 +261,7 @@ async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _ad
             allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
             is_active=metadata_type.is_active,
             is_system=metadata_type.is_system,
+            total_files=metadata_type.total_files,
             created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
             updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
         )
@@ -279,33 +289,92 @@ async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _ad
 
 
 @router.delete(
-    "/{key}",
+    "/{key}/values/{value}",
     response_model=MetadataTypeResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Deactivate metadata type",
-    description="Soft-delete a metadata type by setting isActive=false. Cannot deactivate is_system=true types.",
+    summary="Delete a specific value from metadata type",
+    description="Hard deletes a value from allowed_values if its total_files is 0. If it has active files, returns 409 Conflict.",
+)
+async def delete_metadata_value(
+    key: str = Path(..., description="The unique key of the metadata type"),
+    value: str = Path(..., description="The value to delete from allowed_values"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Hard-delete a metadata value.
+    Can only be deleted if total_files for this value is 0.
+    """
+    metadata_svc = get_metadata_service()
+    try:
+        updated_metadata = await metadata_svc.delete_metadata_value(key, value)
+        
+        # Convert to response
+        allowed_values = None
+        if updated_metadata.allowed_values:
+            allowed_values = [
+                AllowedValueResponse(
+                    value=av["value"],
+                    display_name=av.get("display_name", av["value"]),
+                    is_active=av.get("is_active", True),
+                    color=av.get("color"),
+                    total_files=av.get("total_files", 0)
+                ) for av in updated_metadata.allowed_values
+            ]
+            
+        return MetadataTypeResponse(
+            metadata_id=str(updated_metadata.id),
+            key=updated_metadata.key,
+            display_name=updated_metadata.display_name,
+            description=updated_metadata.description,
+            allowed_values=allowed_values,
+            is_active=updated_metadata.is_active,
+            is_system=updated_metadata.is_system,
+            total_files=updated_metadata.total_files,
+            created_at=updated_metadata.created_at.isoformat() if updated_metadata.created_at else "",
+            updated_at=updated_metadata.updated_at.isoformat() if updated_metadata.updated_at else ""
+        )
+
+    except NotFoundException as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except ConflictException as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error deleting metadata value {value} from {key}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete metadata value: {str(e)}",
+        )
+
+
+@router.delete(
+    "/{key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete metadata type",
+    description="Hard-delete a metadata type. Cannot delete system metadata types.",
 )
 async def delete_metadata_type(key: str, _admin: Dict[str, Any] = Depends(require_admin)):
     metadata_svc = get_metadata_service()
 
     try:
-        metadata_type = await metadata_svc.delete_metadata_type(key)
-        return MetadataTypeResponse(
-            metadata_id=str(metadata_type.id),
-            key=metadata_type.key,
-            display_name=metadata_type.display_name,
-            description=metadata_type.description,
-            allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
-            is_active=metadata_type.is_active,
-            is_system=metadata_type.is_system,
-            created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
-            updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
-        )
+        await metadata_svc.delete_metadata_type(key)
+        return None
 
     except ForbiddenException as e:
-        logger.warning(f"Forbidden: cannot deactivate system metadata: {e}")
+        logger.warning(f"Forbidden: cannot delete system metadata: {e}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+    except ConflictException as e:
+        logger.warning(f"Conflict: cannot delete metadata type in use: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 
@@ -317,14 +386,8 @@ async def delete_metadata_type(key: str, _admin: Dict[str, Any] = Depends(requir
         )
 
     except Exception as e:
-        logger.error(f"Error deactivating metadata type {key}: {e}", exc_info=True)
+        logger.error(f"Error deleting metadata type {key}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to deactivate metadata type: {str(e)}",
+            detail=f"Failed to delete metadata type: {str(e)}",
         )
-
-
-# ====================================
-# NOTE: POST /api/metadata/validate REMOVED (Phase 4)
-# Validation is now done internally during file upload
-# ====================================

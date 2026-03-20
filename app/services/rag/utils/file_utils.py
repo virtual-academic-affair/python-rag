@@ -171,3 +171,15 @@ def get_file_extension(filename: str) -> str:
         Extension string (e.g., ".pdf")
     """
     return os.path.splitext(filename)[1].lower()
+
+def cleanup_temp_file(file_path: str) -> None:
+    try:
+        if file_path and os.path.exists(file_path):
+            os.unlink(file_path)
+    except Exception:
+        pass
+
+def convert_metadata_for_gemini(custom_metadata: dict) -> list[dict]:
+    if not custom_metadata:
+        return []
+    return [{'key': k, 'stringValue': v} if isinstance(v, str) else {'key': k, 'numericValue': v} if isinstance(v, (int, float)) else {'key': k, 'stringListValue': {'values': v}} for k, v in custom_metadata.items()]

@@ -76,9 +76,9 @@ class FileDocument(BaseModel):
     display_name: str = Field(..., description="Display name for file")
     original_filename: str = Field(..., description="Original filename when uploaded")
     
-    # MinIO storage info
-    storage_path: str = Field(..., description="Path in MinIO bucket")
-    storage_bucket: str = Field(..., description="MinIO bucket name")
+    # R2 storage info
+    storage_path: str = Field(..., description="Path in R2 bucket")
+    storage_bucket: str = Field(..., description="R2 bucket name")
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str = Field(..., description="MIME type")
     
@@ -120,6 +120,7 @@ class AllowedValue:
     display_name: str                   # Display name for UI (e.g., 'Nội bộ')
     is_active: bool = True              # False = hidden from UI, but filter still works
     color: Optional[str] = None         # Hex color for this value (e.g., '#E74C3C')
+    total_files: int = 0                # Total active files associated with this value
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for MongoDB storage."""
@@ -128,6 +129,7 @@ class AllowedValue:
             "display_name": self.display_name,
             "is_active": self.is_active,
             "color": self.color,
+            "total_files": self.total_files,
         }
     
     @staticmethod
@@ -138,6 +140,7 @@ class AllowedValue:
             display_name=data["display_name"],
             is_active=data.get("is_active", True),
             color=data.get("color"),
+            total_files=data.get("total_files", 0),
         )
 
 
@@ -178,6 +181,12 @@ class MetadataTypeDocument(BaseModel):
     is_system: bool = Field(
         default=False,
         description="If True, cannot be deleted (403 Forbidden)"
+    )
+    
+    # Statistics
+    total_files: int = Field(
+        default=0, 
+        description="Total active files having this metadata key"
     )
     
     # Timestamps

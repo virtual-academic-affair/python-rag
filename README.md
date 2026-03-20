@@ -24,7 +24,7 @@ Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiế
 | Web framework | FastAPI | 0.125.0 |
 | AI / LLM | Google Gemini (google-genai) | 1.56.0 |
 | Database | MongoDB (Motor async) | 3.3.2 |
-| Object storage | MinIO (S3-compatible) | 7.2.3 |
+| Object storage | R2 (S3-compatible) | 7.2.3 |
 | Message broker | RabbitMQ (pika) | 1.3.2 |
 | gRPC client | grpcio + grpcio-tools | 1.71.0 |
 | Config | pydantic-settings | 2.x |
@@ -34,13 +34,17 @@ Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiế
 ## Cấu trúc thư mục
 
 ```
-email_langchain/
+python-rag/
 ├── app/
 │   ├── main.py                         # FastAPI app + lifespan
 │   ├── api/
 │   │   ├── router.py                   # Tổng hợp tất cả router
 │   │   └── endpoints/
-│   │       └── classification.py       # POST /process, /api/test/classification/ingested
+│   │       ├── classification.py       # POST /process, /api/test/classification/ingested
+│   │       ├── stores.py               # CRUD store + Gemini sync
+│   │       ├── files.py                # Upload, download, retry, batch, delete
+│   │       ├── metadata.py             # CRUD metadata types
+│   │       └── chat.py                 # POST /api/chat/query, /api/chat/stream
 │   ├── core/
 │   │   ├── config.py                   # Settings từ .env (pydantic-settings)
 │   │   ├── database.py                 # MongoDB connection (Motor)
@@ -82,21 +86,22 @@ email_langchain/
 │   │   │       ├── task_service.py
 │   │   │       └── other_service.py
 │   │   └── rag/
-│   │       ├── gemini_service.py       # Gemini client (chat + draft)
-│   │       ├── file_service.py         # Upload file → MinIO + Gemini
-│   │       ├── store_service.py        # Quản lý Gemini File Search store
+│   │       ├── chat_service.py         # POST /api/chat/query, /api/chat/stream
+│   │       ├── email_draft_service.py  # Hàm soạn email trả lời (RAG)
+│   │       ├── file_service.py         # Upload file → R2 + Gemini
+│   │       ├── gemini_client.py        # Gemini client singleton
 │   │       ├── metadata_service.py     # CRUD + validate metadata types
-│   │       └── email_draft_service.py  # Hàm soạn email trả lời (RAG)
+│   │       ├── store_service.py        # Quản lý Gemini File Search store
+│   │       └── utils/
+│   │           ├── file_utils.py       # Validate size, extension, MIME
+│   │           ├── filter_builder.py   # Build Gemini filter string
+│   │           ├── gemini_rag_utils.py # Helpers cho Gemini RAG
+│   │           └── store_utils.py      # Resolve store ID, convert filter
 │   ├── storage/
-│   │   └── minio_client.py             # MinIO client singleton
+│   │   └── r2_client.py             # R2 client singleton
 │   └── utils/
-│       ├── filter_builder.py           # Build Gemini filter string
-│       ├── store_utils.py              # Resolve store ID, convert filter
-│       ├── file_utils.py               # Validate size, extension, MIME
 │       ├── db_utils.py                 # MongoDB helper
 │       └── pagination.py               # Paginated response helper
-├── config/
-│   └── settings.py                     # Base config
 ├── scripts/
 │   ├── gen_proto.py                    # Generate protobuf stubs
 │   ├── init_db.py                      # Khởi tạo index MongoDB
@@ -144,13 +149,13 @@ Tạo file `.env` (xem phần Environment Variables bên dưới).
 
 ### 3. Khởi động Docker services
 
-`docker-compose.yml` chứa các services: **MinIO** và **RabbitMQ**.
+`docker-compose.yml` chứa các services: **R2** và **RabbitMQ**.
 
 ```bash
-# Chỉ khởi động MinIO (nếu RabbitMQ đã chạy riêng)
+# Chỉ chạy APP (dùng nếu RabbitMQ đã chạy từ nest-api)
 ./start.sh
 
-# Khởi động tất cả – MinIO + RabbitMQ
+# Chạy APP + RabbitMQ
 ./start.sh --all
 ```
 
@@ -182,7 +187,7 @@ python run.py
 |---|---|
 | API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
-| MinIO Console | http://localhost:9001 |
+| R2 Console | http://localhost:9001 |
 | RabbitMQ Management | http://localhost:15672 |
 
 ---
@@ -203,12 +208,14 @@ POST /api/chat/stream
 
 ### Files
 ```
-POST   /api/files
-POST   /api/files/batch
-GET    /api/files
-GET    /api/files/{id}
-DELETE /api/files/{id}
-DELETE /api/files/bulk
+POST   /api/files                   # Upload file
+POST   /api/files/batch             # Upload nhiều file
+GET    /api/files                   # Lấy danh sách file
+GET    /api/files/check-sync        # Kiểm tra đồng bộ file
+GET    /api/files/{id}              # Thông tin file
+GET    /api/files/{id}/download     # Tải file từ Cloudflare R2
+DELETE /api/files/{id}              # Hard delete (MongoDB + R2 + Gemini)
+DELETE /api/files/all               # Hard delete tất cả file trong store
 ```
 
 ### Stores
@@ -218,6 +225,7 @@ GET    /api/stores
 GET    /api/stores/{id}
 PATCH  /api/stores/{id}
 DELETE /api/stores/{id}
+POST   /api/stores/{id}/sync        # Đồng bộ thống kê file từ Gemini
 ```
 
 ### Metadata
@@ -225,8 +233,9 @@ DELETE /api/stores/{id}
 POST   /api/metadata
 GET    /api/metadata
 GET    /api/metadata/{key}
-PATCH  /api/metadata/{key}
-DELETE /api/metadata/{key}
+PATCH  /api/metadata/{key}                  # Soft Delete hỗ trợ qua việc chỉnh sửa `is_active`
+DELETE /api/metadata/{key}                  # Explicit Hard Delete API (Chỉ xóa nếu totalFiles == 0)
+DELETE /api/metadata/{key}/values/{value}   # Tương tự cho Delete AllowedValue
 ```
 
 ---
@@ -284,7 +293,7 @@ Service gọi nest-api qua gRPC:
 | Service | Method | Khi nào |
 |---|---|---|
 | AuthService | VerifyToken(token) | Mọi request cần auth |
-| EmailService | CreateDraft(messageId, draftSubject, draftBody) | Sau khi soạn xong draft inquiry |
+| InquiryService | Create(CreateInquiryRequest) | Sau khi soạn xong draft inquiry |
 | TaskService | Create(CreateTaskRequest) | Khi label = task |
 | ClassRegistrationService | Create(CreateRegistrationRequest) | Khi label = classRegistration |
 
@@ -308,14 +317,14 @@ RELOAD=true
 
 # === MongoDB ===
 MONGODB_URL=mongodb+srv://...
-MONGODB_DB_NAME=email_ai_service
+MONGODB_DB_NAME=ai_service
 
-# === MinIO ===
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET_NAME=documents
-MINIO_SECURE=false
+# === R2 ===
+R2_ENDPOINT=localhost:9000
+R2_ACCESS_KEY=r2admin
+R2_SECRET_KEY=r2admin
+R2_BUCKET_NAME=rag-files
+R2_SECURE=false
 
 # === RabbitMQ ===
 RABBITMQ_ENABLED=true
@@ -323,15 +332,15 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
-RABBITMQ_INGEST_QUEUE=email.ingest
+RABBITMQ_INGEST_QUEUE=email_ingest_queue
 
 # === gRPC (nest-api) ===
 GRPC_URL=localhost:5000   # gRPC AuthService.VerifyToken + InquiryService.Create
 GRPC_ENABLED=true
-GRPC_TIMEOUT_SECONDS=15
+GRPC_TIMEOUT_SECONDS=3.0
 
 # === Upload ===
-MAX_FILE_SIZE_MB=50
+MAX_FILE_SIZE_MB=20
 ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html
 ```
 

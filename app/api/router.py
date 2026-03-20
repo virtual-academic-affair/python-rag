@@ -42,6 +42,3 @@ api_router.include_router(files.router, prefix="/api", tags=["Files"])
 api_router.include_router(stores.router, prefix="/api", tags=["Stores"])
 api_router.include_router(metadata.router, prefix="/api", tags=["Metadata"])
 logger.info("✅ RAG endpoints included (chat, files, stores, metadata)")
-
-# NOTE: Email draft is NOT an API endpoint - it's an internal service function
-# called when label=inquiry (see email_workflow_orchestrator.py)

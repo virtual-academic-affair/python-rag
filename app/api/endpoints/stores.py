@@ -155,40 +155,6 @@ async def list_stores(
 
 
 @router.get(
-    "/gemini/list",
-    summary="List Gemini stores",
-    description="List all stores directly from Gemini API (discovery).",
-)
-async def list_gemini_stores():
-    """
-    List stores from Gemini API.
-    
-    **Use Case:**
-    - Discover stores not yet tracked in database
-    - Verify Gemini API connectivity
-    - Find orphaned stores
-    """
-    try:
-        store_svc = get_store_service()
-        stores = await store_svc.list_gemini_stores()
-        return {"stores": stores, "count": len(stores)}
-        
-    except GeminiException as e:
-        logger.error(f"Failed to list Gemini stores: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Error listing Gemini stores: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list Gemini stores: {str(e)}",
-        )
-
-
-@router.get(
     "/{store_id}",
     response_model=StoreDetailResponse,
     summary="Get store details",
@@ -251,19 +217,15 @@ async def update_store(store_id: str, request: UpdateStoreRequest, _admin: Dict[
             detail=f"Failed to update store: {str(e)}",
         )
 
-
-# NOTE: Static routes (/all, /gemini/all) must come BEFORE dynamic routes (/{store_id})
-# to prevent FastAPI from matching "all" as a store_id parameter.
-
 @router.delete(
     "/all",
     response_model=BulkDeleteResponse,
     summary="Delete all stores",
-    description="Delete all stores (from Gemini, MinIO, and MongoDB).",
+    description="Delete all stores (from Gemini, R2, and MongoDB).",
 )
 async def delete_all_stores():
     """
-    Delete all stores (full delete from Gemini, MinIO, and MongoDB).
+    Delete all stores (full delete from Gemini, R2, and MongoDB).
     
     **Warning:** This will permanently delete all stores and their files!
     """
@@ -288,41 +250,6 @@ async def delete_all_stores():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete all stores: {str(e)}",
-        )
-
-
-@router.delete(
-    "/gemini/all",
-    response_model=BulkDeleteResponse,
-    summary="Delete all Gemini stores",
-    description="Delete all stores from Gemini API only (keeps MongoDB and MinIO records).",
-)
-async def delete_all_gemini_stores():
-    """
-    Delete all stores from Gemini API only.
-    Does NOT delete from MongoDB or MinIO - use this to sync or clear Gemini.
-    """
-    try:
-        store_svc = get_store_service()
-        deleted_count = await store_svc.delete_all_gemini_stores()
-        
-        return BulkDeleteResponse(
-            deleted_count=deleted_count,
-            message=f"Deleted {deleted_count} Gemini stores",
-        )
-        
-    except GeminiException as e:
-        logger.error(f"Gemini error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Error deleting all Gemini stores: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete all Gemini stores: {str(e)}",
         )
 
 
@@ -379,7 +306,7 @@ async def delete_store(
 
 
 @router.post(
-    "/{store_id}/syncs",
+    "/{store_id}/sync",
     response_model=StoreDetailResponse,
     summary="Sync store stats",
     description="Synchronize store statistics with Gemini API.",

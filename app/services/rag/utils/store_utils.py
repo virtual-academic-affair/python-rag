@@ -49,12 +49,12 @@ async def resolve_store(request_store_id: Optional[str] = None) -> Tuple[str, st
                 detail=f"Store not found: {request_store_id}",
             )
 
-        return store["_id"], store["store_name"]
+        return str(store["_id"]), str(store["store_name"])
 
     # 2. Get default store from database
     default_store = await store_repo.find_default_store()
     if default_store and default_store.get("store_name"):
-        return default_store["_id"], default_store["store_name"]
+        return str(default_store["_id"]), str(default_store["store_name"])
 
     # 3. No store available - raise error
     raise HTTPException(

@@ -1,3 +1,3 @@
 """
-Storage Package - MinIO client and storage interfaces.
+Storage Package - R2 client and storage interfaces.
 """

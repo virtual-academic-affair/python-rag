@@ -97,7 +97,7 @@ class FileTypeException(ValidationException):
 # ====================================
 
 class StorageException(AppException):
-    """Storage (MinIO) operation failed."""
+    """Storage (R2) operation failed."""
     def __init__(self, message: str, details: Optional[Any] = None):
         super().__init__(message, status_code=500, details=details)
 

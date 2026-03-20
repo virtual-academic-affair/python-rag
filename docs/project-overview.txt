@@ -23,7 +23,7 @@ MUC LUC
 16.  Auth Service — xác thực JWT
 17.  Cấu trúc MongoDB (3 collections)
 18.  Repository Layer
-19.  Storage Layer — MinIO
+19.  Storage Layer — R2
 20.  RabbitMQ Consumer
 21.  Exception Hierarchy
 22.  REST API Endpoints (ảy đủ)
@@ -46,7 +46,7 @@ AI Service là một FastAPI microservice kết hợp hai chức năng lớn:
        other             — Không xác định / không liên quan
 
   B) RAG DOCUMENT SERVICE
-     Quản lý kho tài liệu (Gemini File Search + MinIO) và cung cấp
+     Quản lý kho tài liệu (Gemini File Search + R2) và cung cấp
      chat hỏi đáp dựa trên nội dung tài liệu thực. Bao gồm:
        - Upload / quản lý file (PDF, DOCX, DOC, TXT, MD, HTML)
        - Quản lý Store (Gemini File Search Store)
@@ -61,7 +61,7 @@ Giao tiếp với:
   - NestJS Backend  → gửi email qua RabbitMQ, nhận kết quả classification
   - Gemini API      → phân loại email + RAG File Search + soạn email
   - MongoDB Atlas   → lưu metadata store / file / metadata_types
-  - MinIO           → lưu file binary (PDF, DOCX...)
+  - R2           → lưu file binary (PDF, DOCX...)
   - RabbitMQ        → nhận email từ queue email_ingest_queue
 
 
@@ -144,14 +144,13 @@ Giao tiếp với:
   |   |   +-- enums.py         Enums (FileStatus: UPLOADING/PROCESSING/ACTIVE/FAILED)
   |   |
   |   |-- api/
-  |   |   |-- routes.py        Router chính: /process,
-  |   |   |                    /api/test/classification/ingested
+  |   |   |-- router.py        Router chính: tổng hợp module
   |   |   +-- endpoints/
   |   |       |-- stores.py    CRUD store + Gemini sync
   |   |       |-- files.py     Upload, download, retry, batch, delete
   |   |       |-- metadata.py  CRUD metadata types
   |   |       |-- chat.py      POST /api/chat/query, /api/chat/stream
-  |   |       +-- email.py     /api/test/classification/ingested
+  |   |       +-- classification.py  /process, /api/test/classification/ingested
   |   |
   |   |-- dependencies/
   |   |   +-- auth.py             require_auth, require_admin (FastAPI Depends)
@@ -159,12 +158,17 @@ Giao tiếp với:
   |   |
   |   |-- proto/
   |   |   |-- __init__.py
-  |   |   |-- auth.proto           gRPC AuthService.VerifyToken (package app_server)
-  |   |   |-- auth_pb2.py          Compiled protobuf
-  |   |   |-- auth_pb2_grpc.py     AuthServiceStub (client-only)
-  |   |   |-- inquiry.proto          gRPC InquiryService.Create (package app_server)
-  |   |   |-- inquiry_pb2.py         Compiled protobuf
-  |   |   +-- inquiry_pb2_grpc.py    EmailServiceStub (client-only)
+  |   |   |-- auth/                  Compiled protobuf auth
+  |   |   |-- class_registration/    Compiled protobuf class registration
+  |   |   |-- inquiry/               Compiled protobuf inquiry draft
+  |   |   |-- label/                 Compiled protobuf label
+  |   |   |-- task/                  Compiled protobuf task
+  |   |   |-- common.proto           Shared enum/message
+  |   |   |-- auth.proto             Source proto
+  |   |   |-- class_registration.proto
+  |   |   |-- inquiry.proto
+  |   |   |-- label.proto
+  |   |   +-- task.proto
   |   |
   |   |-- services/
   |   |   |-- integrations/
@@ -186,11 +190,17 @@ Giao tiếp với:
   |   |   |       +-- other_service.py                Ghi log other
   |   |   |
   |   |   +-- rag/
-  |   |       |-- gemini_service.py      Singleton: chat, stream, draft_email_reply
-  |   |       |-- store_service.py       CRUD store + Gemini File Search API
-  |   |       |-- file_service.py        Upload/download/delete (MinIO + Gemini)
+  |   |       |-- chat_service.py        POST /api/chat/query, /api/chat/stream
+  |   |       |-- email_draft_service.py Hàm soạn email trả lời (RAG)
+  |   |       |-- file_service.py        Upload/download/delete (R2 + Gemini)
+  |   |       |-- gemini_client.py       Gemini Client (Singleton)
   |   |       |-- metadata_service.py    CRUD metadata type definitions
-  |   |       +-- email_draft_service.py Pure function: draft email reply qua RAG
+  |   |       |-- store_service.py       CRUD store + Gemini File Search API
+  |   |       +-- utils/
+  |   |           |-- file_utils.py       validate_file_size, validate_extension, detect_mime
+  |   |           |-- filter_builder.py   dict metadata → Gemini filter string
+  |   |           |-- gemini_rag_utils.py Helpers cho Gemini RAG
+  |   |           +-- store_utils.py      resolve_store() theo priority
   |   |
   |   |-- repositories/
   |   |   |-- base.py             BaseRepository: CRUD MongoDB
@@ -200,14 +210,11 @@ Giao tiếp với:
   |   |
   |   |-- storage/
   |   |   |-- base.py             Abstract StorageBase
-  |   |   +-- minio_client.py     MinIO singleton: upload/download/delete/presigned
+  |   |   +-- r2_client.py     R2 singleton: upload/download/delete/presigned
   |   |
   |   +-- utils/
   |       |-- db_utils.py         ObjectId<->str, doc->model helpers
-  |       |-- file_utils.py       validate_file_size, validate_extension, detect_mime
-  |       |-- filter_builder.py   dict metadata → Gemini filter string
-  |       |-- pagination.py       Pagination helper
-  |       +-- store_utils.py      resolve_store() theo priority
+  |       +-- pagination.py       Pagination helper
   |
   |-- docs/
   |   |-- api.txt                       Tài liệu API đầy đủ
@@ -233,8 +240,8 @@ trong app/main.py thực hiện 5 bước tuần tự:
     Database.connect() → tạo pool kết nối (min=10, max=100)
     Nếu thất bại → raise exception, server không khởi động
 
-  BUOC 2: Khởi tạo MinIO client (singleton)
-    minio_storage → kiểm tra kết nối, list S3 buckets
+  BUOC 2: Khởi tạo R2 client (singleton)
+    r2_storage → kiểm tra kết nối, list S3 buckets
     Nếu thất bại → chỉ warning (không crash), file upload sẽ lỗi sau
 
   BUOC 3: Khởi tạo RabbitMQ service
@@ -357,37 +364,26 @@ chain_prompt(prompt, llm) → LangChain-style chain (prompt | llm)
 ================================================================================
 
 ClassRegistrationService
-  Gọi Gemini trích xuất học phần đăng ký dạng JSON:
-  {
-    "studentCode": "SV001",
-    "studentName": "Nguyễn Văn A",
-    "academicYear": 2026,
-    "note": "",
-    "messageId": 123,
-    "items": [
-      {
-        "action": "register",        // register | cancel | change
-        "subjectName": "Toán cao cấp",
-        "subjectCode": "MATH101",
-        "className": "L01",
-        "slotInfo": "",
-        "isInCurriculum": true
-      }
-    ]
-  }
+  - Gọi Gemini trích xuất học phần đăng ký dạng JSON.
+  - Sau đó gọi `GrpcClient.create_class_registration(payload)` gửi thông tin sang nest-api (tạo ticket hỗ trợ).
+  - Trả về payload cấu trúc bao gồm `extracted` chứa action (register/cancel/change), mã học phần,...
 
 InquiryService
-  1. Gọi draft_inquiry_email_reply() → Gemini RAG soạn draft
-  2. Nếu messageId != None: gọi GrpcClient.create_inquiry(messageId, answer, ...)
-     → gRPC InquiryService.Create tới nest-api → tạo Gmail draft
-     → Graceful: bỏ qua nếu nest-api trả UNIMPLEMENTED
-  3. Trả về InquiryResponse (answer, question, types, sources)
+  1. Trích xuất ý chính (intent/question) và phân loại thắc mắc (inquiry types).
+  2. Gọi `draft_inquiry_email_reply()` → Gemini RAG tham khảo tài liệu soạn trả lời (draft).
+  3. Nếu messageId != None: gọi `GrpcClient.create_inquiry(...)` gRPC tới nest-api.
+     → tạo Gmail draft trên giao diện, đính kèm answer, intent, types và sources (chi tiết tài liệu trích dẫn).
+     → Graceful: log warning và bỏ qua nếu nest-api trả UNIMPLEMENTED.
+  4. Trả về InquiryResponse (answer, question, types, sources).
 
 TaskService
-  Ghi log nội dung nhiệm vụ. Trả về label="task".
+  - Gọi Gemini trích xuất công việc nội bộ và danh sách người được giao (assignee_ids dạng tên/từ khóa).
+  - Gọi gRPC `GrpcClient.find_auth_user_by_keyword(keyword)` đồng thời (asyncio.gather) để tra cứu User IDs thực tế bên nest-api.
+  - Tạo task qua `GrpcClient.create_task(payload)`.
+  - Trả về label="task" với dữ liệu đã map ID đầy đủ.
 
 OtherService
-  Ghi log. Trả về label="other".
+  Ghi log đối với những email không liên quan, spam... Trả về label="other".
 
 
 ================================================================================
@@ -398,39 +394,33 @@ File: app/services/rag/email_draft_service.py
 
 Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inquiry.
 
-  draft_inquiry_email_reply(subject, body, sender_name, sender_email,
-                             additional_context, store_id, metadata_filter) → dict
+  draft_inquiry_email_reply(subject, body, extracted_question, inquiry_types,
+                            sender_name, sender_email, additional_context, store_id, metadata_filter) → dict
 
   Quy trinh:
   1. resolve_store(store_id)
      → store_id có trong request? dùng ngay
      → không? lấy default store từ DB (is_default=True)
-     → không có default? raise HTTPException 400
+     → không có default? log/raise error.
 
   2. convert_metadata_filter_to_gemini_format(metadata_filter)
      → {"department":"dao_tao"} → 'department="dao_tao"'
 
-  3. Build context string: sender_name + sender_email + additional_context
+  3. Built context string (bao gồm extracted_question và inquiry_types để tập trung LLM suy luận/truy vấn đúng tài liệu).
 
-  4. gemini_service.draft_email_reply(original_subject, original_body,
-         sender_name, additional_context, store_name, metadata_filter)
-     → Gemini tìm tài liệu liên quan + soạn email trả lời
+  4. draft_email_reply(original_subject, original_body,
+         additional_context, store_name, metadata_filter)
+     → Gemini tìm tài liệu liên quan + soạn email trả lời tự động
 
   5. Trả về:
      {
-       "question": "Điều kiện tốt nghiệp là gì?",
        "answer": "Kính gửi em Nguyễn Văn A...",
        "sources": [{"title":"...", "text":"...", "url":"..."}],
-       "token_usage": {...}
      }
 
   Nếu lỗi → log warning, trả về fallback email (tránh crash toàn luồng)
 
-  6. (InquiryService, sau bước 5) Nếu message_id != None:
-     GrpcClient.create_inquiry(message_id, answer, question, types, sources)
-     → gRPC CreateInquiryRequest(messageId, answer, question, types, sources)
-     → nest-api tạo Gmail draft, response CreateEmailDraftResponse { success }
-     → UNIMPLEMENTED → log warning, tiếp tục (không raise exception)
+  6. Quá trình tiếp theo do InquiryService điều phối với gRPC (xem Section 8).
 
 
 ================================================================================
@@ -455,24 +445,30 @@ File: app/services/rag/file_service.py
   STEP 3: Tạo record MongoDB
     status = UPLOADING
 
-  STEP 4: Upload lên MinIO
+  STEP 4: Upload lên R2
     storage_path = {store_name}/{timestamp}_{filename}
     status → PROCESSING
 
   STEP 5: Upload Gemini (đồng bộ)
     Upload binary lên Gemini Files API
     Gắn vào File Search store
-    Cập nhật MongoDB: gemini_document_name + status = ACTIVE
-    Nếu lỗi: status = FAILED (file vẫn còn trong MinIO, có thể retry)
+    Cập nhật MongoDB: gemini_document_name + status = ACTIVE.
+    [Quan trọng]: Lúc này hệ thống tự động gọi `MetadataRepository.sync_metadata_counters(custom_metadata, delta=1)`
+    (Sử dụng atomic update `$inc`) để tăng biến đếm `total_files` cho từng config metadata key tương ứng và value tương ứng bên trong `allowed_values`.
+    Nếu lỗi: status = FAILED (file vẫn còn trong R2, có thể retry)
     → Trả về response với status="active"
 
   UploadState — Rollback thông minh:
-    @dataclass theo dõi từng bước: DB_CREATED, MINIO_UPLOADED, GEMINI_UPLOADED
+    @dataclass theo dõi từng bước: DB_CREATED, R2_UPLOADED, GEMINI_UPLOADED
     Khi lỗi: chỉ rollback các bước đã hoàn thành
+
+  CHIẾN LƯỢC XÓA FILE (Explicit Hard Delete):
+    - `DELETE /api/files/{file_id}`: Hard delete hoàn toàn. Gỡ file khỏi R2, gỡ Document khỏi Gemini File Search và xóa bản ghi DB. Đồng thời tự động Trigger `MetadataRepository.sync_metadata_counters(delta=-1)` để giảm bộ đếm `total_files` trong các metadata_types.
+    - Xóa toàn lô / Batch delete (`DELETE /api/files/all?store_id=...`) cũng lặp qua và áp dụng rollback số lượng `total_files` (các record metadata), cũng như xóa triệt để tại (DB + R2 + Gemini).
 
   Retry file failed:
     POST /api/files/{file_id}/retry
-    → File phải ở status FAILED và còn trong MinIO
+    → File phải ở status FAILED và còn trong R2
     → Gọi lại Gemini upload → status → ACTIVE
 
 
@@ -488,24 +484,34 @@ CẤU TRUC MetadataTypeDocument:
   display_name      : Tên hiển thị trên UI (vd: "Năm học")
   description       : Mô tả ngắn
   allowed_values    : List[AllowedValue] hoặc null (null = free text)
-  support_all_value : bool — nếu true, filter tự thêm OR key="all"
-  is_active         : bool — false = ẩn, không validate
+  is_active         : bool — false = ẩn, không validate (Soft Delete)
   is_system         : bool — true = không cho phép xóa qua API
+  total_files       : int — Biến auto-increment/statistics: Số lượng file hiện đang sử dụng tag này
 
 CẤU TRUC AllowedValue:
   value        : Giá trị trong filter (vd: "cong_khai", "2024-2025")
   display_name : Hiển thị UI (vd: "Công khai", "Năm học 2024-2025")
-  is_active    : bool — false = ẩn, không nhận khi upload
+  is_active    : bool — false = ẩn, không nhận khi upload (Soft Delete)
   color        : Hex color (vd: "#3498DB")
+  total_files  : int — Biến auto-increment/statistics: Số lượng file mang giá trị này (được quản lý tự động bởi `MetadataRepository.sync_metadata_counters` thông qua query `$inc` để tránh race condition)
+
+CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
+  1. Soft Delete: Thực hiện qua thao tác Update (PUT/PATCH), gán `is_active = False` cho MetadataType hoặc cấu hình AllowedValue.
+     Lịch sử và file vẫn giữ tag mà không phá vỡ logic, nhưng UI ngừng đề xuất khi upload file mới.
+  2. Hard Delete: 
+     - `DELETE /api/metadata/{key}` hoặc `DELETE /api/metadata/{key}/values/{value}`
+     - API Explicit Hard Delete có cơ chế bảo vệ: CHỈ cho phép xóa khi `total_files == 0`.
+     - Nếu `total_files > 0`, trả về 409 Conflict.
+     - System metadata (`is_system = True`) sẽ bị cấm xóa.
 
 3 SYSTEM METADATA (seed bởi scripts/seed_metadata.py, is_system=True):
 
   academic_year (Năm học):
-    has_all_value = True (allowedValues chứa value="all")
+    Chứa entry value="all" trong allowed_values.
     Giá trị: 2020-2021, 2021-2022, 2022-2023, 2023-2024, 2024-2025, 2025-2026, all
 
   cohort (Khóa sinh viên):
-    has_all_value = True (allowedValues chứa value="all")
+    Chứa entry value="all" trong allowed_values.
     Giá trị: K62, K63, K64, K65, K66, K67, K68, all
 
   access_scope (Phạm vi truy cập):
@@ -526,7 +532,7 @@ QUY TAC VALIDATE khi upload file:
 12. FILTER BUILDER & ROLE-BASED ACCESS
 ================================================================================
 
-File: app/utils/filter_builder.py
+File: app/services/rag/utils/filter_builder.py
 
 convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
 
@@ -553,35 +559,35 @@ Phan quyen theo role trong Chat API:
 
 
 ================================================================================
-13. GEMINISERVICE - RAG VOI GEMINI FILE SEARCH
+13. CHAT SERVICE & GEMINI CLIENT - RAG VOI GEMINI FILE SEARCH
 ================================================================================
 
-File: app/services/rag/gemini_service.py
+File: app/services/rag/chat_service.py và app/services/rag/gemini_client.py
 
-Singleton pattern: __new__() → một instance duy nhất.
-Client: google-genai SDK (genai.Client)
+Client: google-genai SDK (genai.Client) (singleton trong gemini_client.py)
 Model: gemini-2.5-flash (cấu hình qua GEMINI_MODEL)
 
 3 PHUONG THUC CHINH:
 
-1. generate_chat_response(question, user_context, chat_history,
+1. chat_service.generate_chat_response(question, user_context, chat_history,
                            store_name, metadata_filter) → dict
    Trả về câu trả lời đầy đủ (không streaming).
    Dùng CHAT_SYSTEM_PROMPT + CHAT_WITH_CONTEXT_TEMPLATE
    Kết quả: { "answer", "sources", "token_usage", "processing_time_ms" }
 
-2. stream_chat_response(question, user_context, chat_history,
+2. chat_service.stream_chat_response(question, user_context, chat_history,
                          store_name, metadata_filter) → AsyncGenerator
    Streaming response qua SSE (Server-Sent Events)
    Mỗi chunk: {"chunk": "text", "done": false}
    Chunk cuối: {"done": true, "sources": [...], "token_usage": {...}}
    Lỗi: {"error": "...", "done": true}
 
-3. draft_email_reply(original_subject, original_body, sender_name,
+3. (Trong email_draft_service.py)
+   draft_email_reply(original_subject, original_body,
                       additional_context, store_name, metadata_filter) → dict
    Soạn email trả lời cho inquiry emails
    Dùng EMAIL_DRAFT_REPLY_PROMPT
-   Kết quả: { "answer", "question", "types", "sources" }
+   Kết quả: { "answer", "sources", "token_usage" }
 
 Co che Gemini File Search:
   types.FileSearch(fileSearchStoreNames=[store_name], metadataFilter=filter_str)
@@ -590,8 +596,8 @@ Co che Gemini File Search:
 Extract sources:
   Từ grounding metadata (response.candidates[0].grounding_metadata)
   → lấy retrieved_context → gemini_document_name
-  → tra MinIO presigned URL (1 giờ)
-  → Sources kèm URL download trực tiếp từ MinIO
+  → tra R2 presigned URL (1 giờ)
+  → Sources kèm URL download trực tiếp từ R2
 
 
 ================================================================================
@@ -624,7 +630,7 @@ CAC THAO TAC:
   delete_all_stores() → xóa toàn bộ (NGUY HIEM)
   list_gemini_stores() → list trực tiếp từ Gemini (debug)
 
-Auto Store Resolution (app/utils/store_utils.py):
+Auto Store Resolution (app/services/rag/utils/store_utils.py):
   resolve_store(request_store_id) → (store_id, store_name)
   Priority: request_store_id > default store > raise 400
   Dùng trong: upload file, chat API, email draft service
@@ -656,7 +662,7 @@ POST /api/chat/query — Chat thường (blocking)
   Quy trinh:
     1. resolve_store(store_id) → (store_id, store_name)
     2. build_filter(user_context.role, metadata_filter) → filter string
-    3. gemini_service.generate_chat_response(...)
+    3. chat_service.generate_chat_response(...)
     4. Trả về: { "answer", "sources", "token_usage", "processing_time_ms" }
 
 POST /api/chat/stream — Chat streaming (SSE)
@@ -708,7 +714,7 @@ PHÂN QUYỀN CÁC ENDPOINT:
 17. CAU TRUC MONGODB (3 COLLECTIONS)
 ================================================================================
 
-Database name: cấu hình qua MONGODB_DB_NAME (default: "email_ai_service")
+Database name: cấu hình qua MONGODB_DB_NAME (default: "ai_service")
 
 Collection: file_search_stores
   _id           ObjectId  → store_id trong API
@@ -798,18 +804,18 @@ MetadataRepository: collection "metadata_types"
 
 
 ================================================================================
-19. STORAGE LAYER - MINIO
+19. STORAGE LAYER - R2
 ================================================================================
 
-File: app/storage/minio_client.py
+File: app/storage/r2_client.py
 
-Singleton: minio_storage (khởi tạo 1 lần khi import)
-Client: minio.Minio (sync, dùng asyncio.to_thread trong async context)
+Singleton: r2_storage (khởi tạo 1 lần khi import)
+Client: r2.R2 (sync, dùng asyncio.to_thread trong async context)
 
 Config:
-  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-  MINIO_BUCKET_NAME = "rag-files"
-  MINIO_USE_SSL = False (localhost) | True (production)
+  R2_ENDPOINT, R2_ACCESS_KEY, R2_SECRET_KEY
+  R2_BUCKET_NAME = "rag-files"
+  R2_USE_SSL = False (localhost) | True (production)
 
 Cac phuong thuc:
   upload_file(bucket, path, data, size, mime_type) → True
@@ -877,7 +883,7 @@ EmailAIException(Exception):           Base class
   ConflictException    (409) — Trùng tên store, trùng tên file, trùng key metadata
   ForbiddenException   (403) — Xóa system metadata, xóa default store...
   ValidationException  (400) — File quá lớn, sai extension, metadata không hợp lệ
-  StorageException     (500) — Lỗi MinIO
+  StorageException     (500) — Lỗi R2
   GeminiException      (502) — Lỗi Gemini API
   RabbitMQException    (500) — Lỗi kết nối RabbitMQ
   DatabaseException    (500) — Lỗi MongoDB
@@ -889,7 +895,7 @@ DEBUG=true → response kèm thêm stack trace và request path
 
 
 ================================================================================
-22. REST API ENDPOINTS (TOAN BO - 33 ENDPOINTS)
+22. REST API ENDPOINTS (TOAN BO - 30 ENDPOINTS)
 ================================================================================
 
   HEALTH CHECK
@@ -903,38 +909,30 @@ DEBUG=true → response kèm thêm stack trace và request path
   STORE MANAGEMENT (9 endpoints)
     POST   /api/stores                     Tạo store mới
     GET    /api/stores                     Liệt kê (? is_default, page, limit)
-    GET    /api/stores/gemini/list         Discovery từ Gemini API
     GET    /api/stores/{store_id}          Chi tiết store
     PATCH  /api/stores/{store_id}          Cập nhật display_name hoặc is_default
     DELETE /api/stores/{store_id}          Xóa store (? force=false/true)
     DELETE /api/stores/all                 Xóa TAT CA stores
-    DELETE /api/stores/gemini/all          Xóa tất cả stores trên Gemini (giữ MongoDB)
-    POST   /api/stores/{store_id}/syncs    Sync file_count + total_size từ Gemini
+    POST   /api/stores/{store_id}/sync     Sync file_count + total_size từ Gemini
 
-  METADATA TYPES (5 endpoints)
-    POST   /api/metadata                   Tạo metadata type mới
-    GET    /api/metadata                   Liệt kê (? is_active)
-    GET    /api/metadata/{key}             Chi tiết theo key
-    PATCH  /api/metadata/{key}             Cập nhật (không đổi được key, is_system)
-                                           allowedValues: merge — value bất biến,
-                                           chỉ sửa displayName/isActive/color;
-                                           entry mới được thêm; entry vắng mặt giữ nguyên
-    DELETE /api/metadata/{key}             Soft delete: đặt isActive=false (200 + body)
-                                           Từ chối nếu is_system=true (403)
+  METADATA TYPES (6 endpoints)
+    POST   /api/metadata                        Tạo metadata type mới
+    GET    /api/metadata                        Liệt kê (? is_active)
+    GET    /api/metadata/{key}                  Chi tiết theo key
+    PATCH  /api/metadata/{key}                  Update mềm (Soft delete qua is_active), không đổi key/is_system; merge allowed_values.
+    DELETE /api/metadata/{key}                  Hard delete (Chỉ xóa nếu total_files=0)
+    DELETE /api/metadata/{key}/values/{value}   Hard delete 1 allowed value (Chỉ xóa nếu total_files=0)
 
-  FILE MANAGEMENT (12 endpoints)
-    POST   /api/files                          Upload file (luôn đồng bộ)
-    GET    /api/files                          Liệt kê (? store_id, file_status, page, limit)
-    GET    /api/files/gemini/list              Discovery từ Gemini (? store_name)
-    GET    /api/files/check-sync               Kiểm tra đồng bộ DB/MinIO/Gemini
-    GET    /api/files/{file_id}                Chi tiết file
-    GET    /api/files/{file_id}/download       Download file từ MinIO
-    DELETE /api/files/{file_id}                Xóa file (MinIO + Gemini + MongoDB)
-    POST   /api/files/{file_id}/retry          Retry upload FAILED file lên Gemini
-    POST   /api/files/batch                    Batch upload nhiều file
-    POST   /api/files/sync                     Đồng bộ files giữa DB/MinIO/Gemini
-    DELETE /api/files/store/{store_id}/all     Xóa TAT CA files trong store
-    DELETE /api/files/store/{store_id}/gemini  Xóa files trên Gemini (giữ MinIO/MongoDB)
+  FILE MANAGEMENT (9 endpoints)
+    POST   /api/files                           Upload file (luôn đồng bộ)
+    GET    /api/files                           Liệt kê (? store_id, file_status, page, limit)
+    GET    /api/files/check-sync                Kiểm tra đồng bộ DB/R2/Gemini
+    GET    /api/files/{file_id}                 Chi tiết file
+    GET    /api/files/{file_id}/download        Download file từ R2
+    DELETE /api/files/{file_id}                 Xóa file (Hard Delete R2 + Gemini + MongoDB)
+    DELETE /api/files/all                       Xóa tất cả file trong 1 store (Hard Delete)
+    POST   /api/files/batch                     Batch upload nhiều file
+    POST   /api/files/sync                      Đồng bộ files giữa DB/R2/Gemini
 
   CHAT (2 endpoints)
     POST /api/chat/query                   Chat RAG — response đầy đủ
@@ -951,8 +949,8 @@ Tự động load từ file .env trong thư mục gốc.
 BAT BUOC (server không khởi động nếu thiếu):
   GOOGLE_API_KEY       Gemini API key
   MONGODB_URL          MongoDB connection string
-  MINIO_ACCESS_KEY     MinIO access key
-  MINIO_SECRET_KEY     MinIO secret key
+  R2_ACCESS_KEY     R2 access key
+  R2_SECRET_KEY     R2 secret key
 
 GRPC (kết nối tới nest-api):
   GRPC_URL        Địa chỉ gRPC nest-api       default: localhost:5000
@@ -965,9 +963,9 @@ QUAN TRONG (có default):
   LLM_TEMPERATURE      Temperature classify     default: 0.1
   GEMINI_TEMPERATURE   Temperature RAG          default: 0.7
   GEMINI_MAX_OUTPUT_TOKENS                      default: 2048
-  MONGODB_DB_NAME      Tên database             default: email_ai_service
-  MINIO_ENDPOINT       MinIO server             default: localhost:9000
-  MINIO_BUCKET_NAME    MinIO bucket             default: rag-files
+  MONGODB_DB_NAME      Tên database             default: ai_service
+  R2_ENDPOINT       R2 server             default: localhost:9000
+  R2_BUCKET_NAME    R2 bucket             default: rag-files
   RABBITMQ_HOST        RabbitMQ host            default: localhost
   RABBITMQ_PORT        RabbitMQ port            default: 5672
   RABBITMQ_USER        RabbitMQ username        default: guest
