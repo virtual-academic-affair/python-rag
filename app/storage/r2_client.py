@@ -59,6 +59,11 @@ class R2Storage(BaseStorage):
                 logger.info("✅ R2 client setup (boto3)")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize R2 client: {e}")
+                if settings.R2_BYPASS_ON_INIT_ERROR:
+                    logger.warning("R2 bypass enabled. Continue startup with R2 disabled.")
+                    self.disabled = True
+                    self._client = None
+                    return
                 raise StorageException(f"R2 initialization failed: {e}")
 
     def get_client(self):

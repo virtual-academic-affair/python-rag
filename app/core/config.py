@@ -64,13 +64,14 @@ class Settings(BaseSettings):
     # ====================================
     # r2/S3 Configuration
     # ====================================
-    R2_ENDPOINT: str = "localhost:9000"
-    R2_ACCESS_KEY: str
-    R2_SECRET_KEY: str
+    R2_ENDPOINT: str = "http://localhost:9000"
+    R2_ACCESS_KEY: str = ""
+    R2_SECRET_KEY: str = ""
     R2_BUCKET_NAME: str = "rag-files"
     R2_USE_SSL: bool = False
     R2_REGION: str = "us-east-1"
     R2_DISABLED: bool = False
+    R2_BYPASS_ON_INIT_ERROR: bool = True
     R2_PUBLIC_DOMAIN: Optional[str] = None
 
     # ====================================
