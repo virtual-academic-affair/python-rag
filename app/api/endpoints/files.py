@@ -24,6 +24,7 @@ from app.models.schemas import (
     SyncResponse,
 )
 from app.services.rag.file_service import get_file_service
+from app.services.rag.utils.file_utils import convert_custom_metadata_to_snake, convert_custom_metadata_to_camel
 
 from app.core.exceptions import (
     NotFoundException,
@@ -33,6 +34,8 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.dependencies.auth import require_admin, require_auth
+from app.services.rag.utils.store_utils import resolve_store
+from app.models.enums import FileStatus
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +51,10 @@ router = APIRouter(prefix="/files", tags=["Files"])
 )
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
-    display_name: Optional[str] = Form(None, description="Display name for the file"),
-    store_id: Optional[str] = Form(None, description="Target store ID (uses default if not provided)"),
-    custom_metadata: Optional[str] = Form(None, description="JSON string of custom metadata"),
-    enable_chunking: Optional[bool] = Form(None, description="Enable custom chunking"),
+    display_name: Optional[str] = Form(None, alias="displayName", description="Display name for the file"),
+    store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
+    custom_metadata: Optional[str] = Form(None, alias="customMetadata", description="JSON string of custom metadata"),
+    enable_chunking: Optional[bool] = Form(None, alias="enableChunking", description="Enable custom chunking"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -60,11 +63,11 @@ async def upload_file(
     Waits until both R2 and Gemini processing complete before returning.
 
     **Required metadata:**
-    - `access_scope`: bắt buộc (e.g. `"cong_khai"` hoặc `"noi_bo"`)
+    - `access_scope`: bắt buộc (e.g. `"admin"`, `"lecture"`, hoặc `"student"`)
     - `academic_year` hoặc `cohort`: ít nhất một trong hai
 
     **Custom Metadata example:**
-    `'{"access_scope": "cong_khai", "academic_year": "2024-2025", "cohort": "K21"}'`
+    `'{"accessScope": "student", "academicYear": "2024-2025", "cohort": "K21"}'`
     """
     temp_file_path = None
     file_svc = get_file_service()
@@ -81,6 +84,8 @@ async def upload_file(
         if custom_metadata:
             try:
                 metadata_dict = json.loads(custom_metadata)
+                # Convert camelCase keys to snake_case for DB validation
+                metadata_dict = convert_custom_metadata_to_snake(metadata_dict)
             except json.JSONDecodeError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -88,7 +93,7 @@ async def upload_file(
                 )
         
         # Save uploaded file to temp location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
             contents = await file.read()
             temp_file.write(contents)
             temp_file_path = temp_file.name
@@ -115,7 +120,7 @@ async def upload_file(
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
-            custom_metadata=file_doc.custom_metadata,
+            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
             message=message,
         )
@@ -164,17 +169,21 @@ async def upload_file(
     description="List files with optional filters and pagination.",
 )
 async def list_files(
-    store_id: Optional[str] = Query(None, description="Filter by store ID"),
-    file_status: Optional[str] = Query(None, description="Filter by status"),
+    store_id: Optional[str] = Query(None, alias="storeId", description="Filter by store ID"),
+    file_status: Optional[str] = Query(None, alias="fileStatus", description="Filter by status"),
+    metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="JSON filter for metadata"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    _admin: Dict[str, Any] = Depends(require_admin),
+    _user: Dict[str, Any] = Depends(require_auth),
 ):
     """
     List files with pagination and filters.
+    
+    **Metadata Filter example:**
+    `?metadataFilter={"academicYear":"2024-2025"}`
     """
+        
     try:
-        from app.models.enums import FileStatus
         
         file_svc = get_file_service()
         
@@ -189,10 +198,25 @@ async def list_files(
                     detail=f"Invalid status: {file_status}",
                 )
         
+        # Parse metadata filter
+        custom_metadata_filter = None
+        if metadata_filter:
+            try:
+                custom_metadata_filter = json.loads(metadata_filter)
+                # Convert camelCase keys to snake_case for DB query
+                custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid metadataFilter JSON format",
+                )
+        
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             store_id=store_id,
             status=status_enum,
+            custom_metadata_filter=custom_metadata_filter,
+            user_role=_user.get("role", "student"),
             skip=skip,
             limit=limit,
         )
@@ -209,7 +233,7 @@ async def list_files(
                     mime_type=f.mime_type,
                     storage_path=f.storage_path,
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
-                    custom_metadata=f.custom_metadata or {},
+                    custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
                     created_at=f.created_at.isoformat() if f.created_at else "",
                     updated_at=f.updated_at.isoformat() if f.updated_at else "",
                 )
@@ -259,10 +283,10 @@ async def check_sync(_admin: Dict[str, Any] = Depends(require_admin)):
 )
 async def batch_upload_files(
     files: List[UploadFile] = File(..., description="Files to upload"),
-    store_id: Optional[str] = Form(None, description="Target store ID (uses default if not provided)"),
-    display_names: Optional[str] = Form(None, description="JSON array of display names (one per file, use null for auto)"),
-    metadata_list: Optional[str] = Form(None, description="JSON array of metadata objects (one per file, use null or {} for no metadata)"),
-    enable_chunking: Optional[bool] = Form(None, description="Enable custom chunking for all files"),
+    store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
+    display_names: Optional[str] = Form(None, alias="displayNames", description="JSON array of display names (one per file, use null for auto)"),
+    metadata_list: Optional[str] = Form(None, alias="metadataList", description="JSON array of metadata objects (one per file, use null or {} for no metadata)"),
+    enable_chunking: Optional[bool] = Form(None, alias="enableChunking", description="Enable custom chunking for all files"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -271,7 +295,6 @@ async def batch_upload_files(
     file_svc = get_file_service()
     
     try:
-        from app.services.rag.utils.store_utils import resolve_store
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
         
@@ -292,6 +315,8 @@ async def batch_upload_files(
                 meta_list = json.loads(metadata_list)
                 if not isinstance(meta_list, list):
                     raise HTTPException(status_code=400, detail="metadata_list must be a list")
+                # Convert each metadata object's keys to snake_case
+                meta_list = [convert_custom_metadata_to_snake(m) if isinstance(m, dict) else m for m in meta_list]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
         
@@ -299,13 +324,14 @@ async def batch_upload_files(
         successful = 0
         failed = 0
         
+        # Save each file to temp location and upload
         for idx, file in enumerate(files):
             temp_file_path = None
             try:
                 display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
                 metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
                 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
                     contents = await file.read()
                     temp_file.write(contents)
                     temp_file_path = temp_file.name
@@ -370,12 +396,15 @@ async def sync_files(_admin: Dict[str, Any] = Depends(require_admin)):
     response_model=BulkDeleteResponse,
     summary="Delete all files in store",
 )
-async def delete_all_files_in_store(store_id: Optional[str] = Query(None)):
+async def delete_all_files_in_store(
+    store_id: Optional[str] = Query(None, alias="storeId"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
     """
     Delete all files in a store.
     """
     try:
-        from app.services.rag.utils.store_utils import resolve_store
+        # Resolve store_id if not provided
         resolved_store_id, _ = await resolve_store(store_id)
         
         file_svc = get_file_service()
@@ -395,10 +424,10 @@ async def delete_all_files_in_store(store_id: Optional[str] = Query(None)):
     response_model=FileDetailResponse,
     summary="Get file details",
 )
-async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
+async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     try:
         file_svc = get_file_service()
-        file_doc = await file_svc.get_file_by_id(file_id)
+        file_doc = await file_svc.get_file_by_id(file_id, user_role=_user.get("role", "student"))
         if not file_doc:
             raise HTTPException(status_code=404, detail="File not found")
 
@@ -412,7 +441,7 @@ async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=file_doc.custom_metadata or {},
+            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
@@ -429,7 +458,7 @@ async def get_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)
 async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     try:
         file_svc = get_file_service()
-        file_obj, filename, mime_type = await file_svc.download_file(file_id)
+        file_obj, filename, mime_type = await file_svc.download_file(file_id, user_role=_user.get("role", "student"))
         file_data = file_obj.read()
         return StreamingResponse(
             BytesIO(file_data),

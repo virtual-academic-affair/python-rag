@@ -9,10 +9,21 @@
 BASE_URL="${AI_SERVICE_URL:-http://localhost:8000}"
 API_URL="${BASE_URL}/api"
 
+# Output file
+OUTPUT_DIR="scripts/test_results"
+mkdir -p "$OUTPUT_DIR"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+OUTPUT_FILE="${OUTPUT_DIR}/test_output_${TIMESTAMP}.txt"
+
+# Tee stdout + stderr ra màn hình và file cùng lúc
+exec > >(tee -a "$OUTPUT_FILE") 2>&1
+
+echo "Test output saved to: $OUTPUT_FILE"
+echo "Started at: $(date)"
+
 # JWT Token (admin role) — thay đổi nếu cần
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYmx1ZWxvb3AudXNAZ21haWwuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzcxOTEzOTgzLCJleHAiOjM3NzcxOTEzOTgzLCJhdWQiOiJ2YWEtYXVkIiwiaXNzIjoidmFhLWlzcyJ9.RtRCZsru6KuCkHUt06cr0v31z9SG0lWWdOORTo47-j4"
+TOKEN=""
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-TIMESTAMP=$(date +%s)
 
 # Colors
 RED='\033[0;31m'
@@ -211,13 +222,13 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
     -d "{
-        \"display_name\": \"Test Store ${TIMESTAMP}\",
-        \"set_as_default\": true
+        \"displayName\": \"Test Store ${TIMESTAMP}\",
+        \"setAsDefault\": true
     }" 2>/dev/null || echo -e "\n000")
 
 if check_response "$RESPONSE" "201" "Create Store"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
-    STORE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('store_id',''))" 2>/dev/null || echo "")
+    STORE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('storeId',''))" 2>/dev/null || echo "")
     log_info "  -> store_id = $STORE_ID"
 fi
 
@@ -229,8 +240,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/stores?page=1&limit=10" \
 check_response "$RESPONSE" "200" "List Stores"
 
 # 4.3 Loc store mac dinh
-log_info "GET /api/stores?is_default=true — Lay store mac dinh"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/stores?is_default=true" \
+log_info "GET /api/stores?isDefault=true — Lay store mac dinh"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/stores?isDefault=true" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Default Store"
@@ -252,7 +263,7 @@ if [ -n "$STORE_ID" ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/stores/${STORE_ID}" \
         -H "Content-Type: application/json" \
         -H "${AUTH_HEADER}" \
-        -d "{\"display_name\": \"Test Store ${TIMESTAMP} (Updated)\"}" \
+        -d "{\"displayName\": \"Test Store ${TIMESTAMP} (Updated)\"}" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update Store"
 else
@@ -274,7 +285,7 @@ fi
 log_info "POST /api/stores — khong co token (expect 401)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
     -H "Content-Type: application/json" \
-    -d '{"display_name": "Unauthorized Store"}' \
+    -d '{"displayName": "Unauthorized Store"}' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "401" "Create Store — no token -> 401"
 
@@ -307,10 +318,10 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata" \
         "displayName": "Phong ban",
         "description": "Phong ban phu trach tai lieu",
         "allowedValues": [
-            { "value": "dao_tao", "displayName": "Dao tao", "isActive": true, "color": "#3498DB" },
-            { "value": "khcn",    "displayName": "KHCN",    "isActive": true, "color": "#2ECC71" },
-            { "value": "ctsv",    "displayName": "CTSV",    "isActive": true, "color": "#E74C3C" },
-            { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6" }
+            { "value": "dao_tao", "displayName": "Dao tao", "isActive": true, "color": "#3498DB", "visibleRoles": ["admin", "lecture", "student"] },
+            { "value": "khcn",    "displayName": "KHCN",    "isActive": true, "color": "#2ECC71", "visibleRoles": ["admin", "lecture", "student"] },
+            { "value": "ctsv",    "displayName": "CTSV",    "isActive": true, "color": "#E74C3C", "visibleRoles": ["admin", "lecture", "student"] },
+            { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6", "visibleRoles": ["admin", "lecture", "student"] }
         ]
     }' 2>/dev/null || echo -e "\n000")
 HTTP_CODE_META=$(echo "$RESPONSE" | tail -n1)
@@ -353,26 +364,41 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Get Metadata Type — department"
 
-# 5.5 Cap nhat — them gia tri htqt
-log_info "PATCH /api/metadata/${METADATA_KEY} — Them gia tri htqt (require_admin)"
+# 5.5 Cap nhat — phan core (displayName)
+log_info "PATCH /api/metadata/${METADATA_KEY} — Cap nhat type core (require_admin)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/metadata/${METADATA_KEY}" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
     -d '{
-        "allowedValues": [
-            { "value": "dao_tao", "displayName": "Dao tao", "isActive": true, "color": "#3498DB" },
-            { "value": "khcn",    "displayName": "KHCN",    "isActive": true, "color": "#2ECC71" },
-            { "value": "ctsv",    "displayName": "CTSV",    "isActive": true, "color": "#E74C3C" },
-            { "value": "htqt",    "displayName": "HTQT",    "isActive": true, "color": "#9B59B6" },
-            { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6" }
-        ]
+        "displayName": "Phòng ban (Updated)"
     }' 2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Update Metadata Type — them htqt"
+check_response "$RESPONSE" "200" "Update Metadata Type Core"
 
-# 5.6 Xoa mot gia tri (hard delete value)
-log_info "DELETE /api/metadata/${METADATA_KEY}/values/htqt — Xoa gia tri htqt"
+# 5.6 Them gia tri test
+VAL_KEY="test_val_${TIMESTAMP}"
+log_info "POST /api/metadata/${METADATA_KEY}/values — Them gia tri ${VAL_KEY} (require_admin)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata/${METADATA_KEY}/values" \
+    -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
+    -d '{
+        "value": "'"${VAL_KEY}"'", "displayName": "Giá trị Test", "isActive": true, "color": "#9B59B6", "visibleRoles": ["admin", "lecture", "student"]
+    }' 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Add Metadata Value — test_val"
+
+# 5.7 Cap nhat gia tri test
+log_info "PATCH /api/metadata/${METADATA_KEY}/values/${VAL_KEY} — Cap nhat ${VAL_KEY} (require_admin)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/metadata/${METADATA_KEY}/values/${VAL_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
+    -d '{
+        "displayName": "Giá trị Test (Updated)"
+    }' 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Update Metadata Value — test_val"
+
+# 5.8 Xoa mot gia tri (hard delete value)
+log_info "DELETE /api/metadata/${METADATA_KEY}/values/${VAL_KEY} — Xoa gia tri ${VAL_KEY}"
 # Bo qua loi neu dang dung, se test delete 1 gia tri moi tao
-RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/${METADATA_KEY}/values/htqt" \
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/${METADATA_KEY}/values/${VAL_KEY}" \
     -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
 HTTP_VAL=$(echo "$RESPONSE" | tail -n1)
 if [ "$HTTP_VAL" = "200" ] || [ "$HTTP_VAL" = "409" ]; then
@@ -381,13 +407,13 @@ else
     log_error "Delete Metadata Value test failed (HTTP $HTTP_VAL)"
 fi
 
-# 5.7 Thu xoa system type (expect 403)
+# 5.9 Thu xoa system type (expect 403)
 log_info "DELETE /api/metadata/access_scope — Xoa system type (expect 403)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/access_scope" \
     -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "403" "Cannot delete system metadata"
 
-# 5.8 Xoa metadata type (Hard Delete)
+# 5.10 Xoa metadata type (Hard Delete)
 log_info "DELETE /api/metadata/test_to_delete — Test Hard Delete metadata type"
 # Tao tam mot type de xoa
 curl -s -X POST "${API_URL}/metadata" -H "Content-Type: application/json" -H "${AUTH_HEADER}" \
@@ -396,7 +422,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/test_to_de
     -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "204" "Hard Delete Metadata Type"
 
-# 5.7 Thu tao metadata khong co token (expect 401)
+# 5.11 Thu tao metadata khong co token (expect 401)
 log_info "POST /api/metadata — khong co token (expect 401)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata" \
     -H "Content-Type: application/json" \
@@ -419,13 +445,13 @@ if [ -n "$STORE_ID" ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
         -F "file=@${TEST_FILE}" \
-        -F "display_name=Quy che dao tao ${TIMESTAMP}" \
-        -F "store_id=${STORE_ID}" \
-        -F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}' \
+        -F "displayName=Quy che dao tao ${TIMESTAMP}" \
+        -F "storeId=${STORE_ID}" \
+        -F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}' \
         2>/dev/null || echo -e "\n000")
     if check_response "$RESPONSE" "201" "Upload File (store_id)"; then
         BODY=$(echo "$RESPONSE" | sed '$d')
-        FILE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('file_id',''))" 2>/dev/null || echo "")
+        FILE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
         log_info "  -> file_id = $FILE_ID"
     fi
 else
@@ -433,27 +459,27 @@ else
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
         -F "file=@${TEST_FILE}" \
-        -F "display_name=Quy che dao tao ${TIMESTAMP}" \
-        -F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}' \
+        -F "displayName=Quy che dao tao ${TIMESTAMP}" \
+        -F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}' \
         2>/dev/null || echo -e "\n000")
     if check_response "$RESPONSE" "201" "Upload File (default store)"; then
         BODY=$(echo "$RESPONSE" | sed '$d')
-        FILE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('file_id',''))" 2>/dev/null || echo "")
+        FILE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
         log_info "  -> file_id = $FILE_ID"
     fi
 fi
 
 # 6.2 Upload file thu hai
 log_info "POST /api/files — Upload file thu hai (require_admin)"
-UPLOAD_ARGS=(-F "file=@${TEST_FILE_2}" -F "display_name=Quy dinh hoc bong ${TIMESTAMP}")
-[ -n "$STORE_ID" ] && UPLOAD_ARGS+=(-F "store_id=${STORE_ID}")
-UPLOAD_ARGS+=(-F 'custom_metadata={"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"}')
+UPLOAD_ARGS=(-F "file=@${TEST_FILE_2}" -F "displayName=Quy dinh hoc bong ${TIMESTAMP}")
+[ -n "$STORE_ID" ] && UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
+UPLOAD_ARGS+=(-F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
     "${UPLOAD_ARGS[@]}" 2>/dev/null || echo -e "\n000")
 if check_response "$RESPONSE" "201" "Upload File thu hai"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
-    FILE_ID_2=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('file_id',''))" 2>/dev/null || echo "")
+    FILE_ID_2=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
     log_info "  -> file_id_2 = $FILE_ID_2"
 fi
 
@@ -466,19 +492,29 @@ check_response "$RESPONSE" "200" "List Files"
 
 # 6.4 Loc theo store
 if [ -n "$STORE_ID" ]; then
-    log_info "GET /api/files?store_id=${STORE_ID} — Loc theo store (require_auth)"
-    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?store_id=${STORE_ID}" \
+    log_info "GET /api/files?storeId=${STORE_ID} — Loc theo store (require_auth)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?storeId=${STORE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
-    check_response "$RESPONSE" "200" "List Files by store_id"
+    check_response "$RESPONSE" "200" "List Files by storeId"
 fi
 
 # 6.5 Loc theo status
-log_info "GET /api/files?status=active — Loc theo status=active (require_auth)"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?status=active" \
+log_info "GET /api/files?fileStatus=active — Loc theo status=active (require_auth)"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=active" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Files by status=active"
+ 
+# 6.6 Loc theo metadataFilter
+log_info "GET /api/files?metadataFilter=... — Loc theo metadata (require_auth)"
+FILTER_JSON='{"academicYear":"2024-2025"}'
+# URL Encode filter
+ENCODED_FILTER=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?metadataFilter=${ENCODED_FILTER}" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "List Files by metadataFilter"
 
 # 6.6 Discovery tu Gemini
 log_info "GET /api/files/check-sync — Comparison across DB, R2, Gemini (require_admin)"
@@ -519,8 +555,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     -H "${AUTH_HEADER}" \
     -F "files=@${TEST_FILE}" \
     -F "files=@${TEST_FILE_2}" \
-    -F "display_names=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
-    -F 'metadata_list=[{"department":"dao_tao","access_scope":"cong_khai","academic_year":"2025-2026"},{"department":"khcn","access_scope":"cong_khai","academic_year":"2025-2026"}]' \
+    -F "displayNames=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
+    -F 'metadataList=[{"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"},{"department":"khcn","accessScope":"student","academicYear":"2025-2026"}]' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 
@@ -544,8 +580,8 @@ fi
 
 # 6.13 Xoa tat ca files trong store
 if [ -n "$STORE_ID" ]; then
-    log_info "DELETE /api/files/all?store_id=${STORE_ID} — Xoa tat ca file trong store"
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/all?store_id=${STORE_ID}" \
+    log_info "DELETE /api/files/all?storeId=${STORE_ID} — Xoa tat ca file trong store"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/all?storeId=${STORE_ID}" \
         -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Delete All Files in Store"
 fi
@@ -577,56 +613,56 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"question\": \"Dieu kien tot nghiep cua truong la gi?\",
-        \"user_context\": {
-            \"user_id\": \"sv001_test\",
+        \"userContext\": {
+            \"userId\": \"sv001_test\",
             \"name\": \"Nguyen Test\",
             \"cohort\": \"K20\",
             \"role\": \"student\"
         },
-        \"chat_history\": [],
-        \"store_id\": \"${STORE_ID}\"
+        \"chatHistory\": [],
+        \"storeId\": \"${STORE_ID}\"
     }" 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Chat Query — student role"
 
 # 7.2 Chat query - voi metadata filter
-log_info "POST /api/chat/query — With metadata_filter (require_auth)"
+log_info "POST /api/chat/query — With metadataFilter (require_auth)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"question\": \"So tin chi toi thieu moi ky la bao nhieu?\",
-        \"user_context\": {
-            \"user_id\": \"sv002_test\",
+        \"userContext\": {
+            \"userId\": \"sv002_test\",
             \"name\": \"Tran Test\",
             \"cohort\": \"K21\",
             \"role\": \"student\"
         },
-        \"chat_history\": [],
-        \"store_id\": \"${STORE_ID}\",
-        \"metadata_filter\": {
+        \"chatHistory\": [],
+        \"storeId\": \"${STORE_ID}\",
+        \"metadataFilter\": {
             \"department\": \"dao_tao\",
-            \"access_scope\": \"cong_khai\"
+            \"accessScope\": \"student\"
         }
     }" 2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Chat Query — with metadata_filter"
+check_response "$RESPONSE" "200" "Chat Query — with metadataFilter"
 
-# 7.3 Chat query - staff role
-log_info "POST /api/chat/query — Staff role (require_auth)"
+# 7.3 Chat query - lecture role
+log_info "POST /api/chat/query — Lecture role (require_auth)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"question\": \"Tong hop cac quy che dang co trong he thong?\",
-        \"user_context\": {
-            \"user_id\": \"staff001_test\",
-            \"name\": \"Staff Test\",
+        \"userContext\": {
+            \"userId\": \"lecture001_test\",
+            \"name\": \"Lecture Test\",
             \"cohort\": \"\",
-            \"role\": \"staff\"
+            \"role\": \"lecture\"
         },
-        \"chat_history\": [],
-        \"store_id\": \"${STORE_ID}\"
+        \"chatHistory\": [],
+        \"storeId\": \"${STORE_ID}\"
     }" 2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Chat Query — staff role"
+check_response "$RESPONSE" "200" "Chat Query — lecture role"
 
 # 7.4 Chat query - co lich su hoi thoai
 log_info "POST /api/chat/query — With chat history (require_auth)"
@@ -635,13 +671,13 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"question\": \"Vay diem GPA toi thieu la bao nhieu de tot nghiep?\",
-        \"user_context\": {
-            \"user_id\": \"sv001_test\",
+        \"userContext\": {
+            \"userId\": \"sv001_test\",
             \"name\": \"Nguyen Test\",
             \"cohort\": \"K20\",
             \"role\": \"student\"
         },
-        \"chat_history\": [
+        \"chatHistory\": [
             {
                 \"role\": \"user\",
                 \"content\": \"Dieu kien tot nghiep la gi?\",
@@ -653,7 +689,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
                 \"timestamp\": \"2026-03-11T10:00:05\"
             }
         ],
-        \"store_id\": \"${STORE_ID}\"
+        \"storeId\": \"${STORE_ID}\"
     }" 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Chat Query — with history"
 
@@ -665,14 +701,14 @@ STREAM_OUTPUT=$(curl -s -N --max-time 5 -X POST "${API_URL}/chat/stream" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"question\": \"Can bao nhieu tin chi de tot nghiep?\",
-        \"user_context\": {
-            \"user_id\": \"sv001_test\",
+        \"userContext\": {
+            \"userId\": \"sv001_test\",
             \"name\": \"Nguyen Test\",
             \"cohort\": \"K20\",
             \"role\": \"student\"
         },
-        \"chat_history\": [],
-        \"store_id\": \"${STORE_ID}\"
+        \"chatHistory\": [],
+        \"storeId\": \"${STORE_ID}\"
     }" 2>/dev/null)
 
 if echo "$STREAM_OUTPUT" | grep -q '"chunk"'; then
@@ -693,7 +729,7 @@ fi
 log_info "POST /api/chat/query - no token, public endpoint"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
-    -d '{"question":"test","user_context":{"user_id":"x","name":"x","cohort":"K20","role":"student"},"chat_history":[]}' \
+    -d '{"question":"test","userContext":{"userId":"x","name":"x","cohort":"K20","role":"student"},"chatHistory":[]}' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Chat Query - no token"
 
@@ -737,5 +773,11 @@ else
     echo "  - Chat/File co the FAIL neu store chua co file status=active"
     echo "  - Auth verify (gRPC) co the FAIL neu NestJS chua chay"
     echo "  - Store/File/Metadata operations co the FAIL neu token het han"
-    exit 1
 fi
+
+echo ""
+echo "====================================================================="
+echo "Output saved to: $OUTPUT_FILE"
+echo "====================================================================="
+
+[ "$TESTS_FAILED" -eq 0 ] && exit 0 || exit 1

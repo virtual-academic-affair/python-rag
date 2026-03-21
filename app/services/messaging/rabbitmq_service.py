@@ -52,6 +52,7 @@ class RabbitMQService:
                 connection_attempts=3,
                 retry_delay=2,
                 socket_timeout=5,
+                heartbeat=60,
             )
 
             self.connection = pika.BlockingConnection(parameters)

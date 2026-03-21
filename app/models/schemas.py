@@ -2,7 +2,17 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
+from pydantic.alias_generators import to_camel
+
+
+class BaseSchema(BaseModel):
+    """Base schema with camelCase alias generator for all API models."""
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
 
 
 class SystemLabel(str, Enum):
@@ -14,44 +24,35 @@ class SystemLabel(str, Enum):
     Other = "other"
 
 
-class RequestData(BaseModel):
+class RequestData(BaseSchema):
     """Manual request payload for HTTP endpoint."""
 
     title: str = Field(..., description="Email title/subject")
     content: str = Field(..., description="Email content/body")
 
 
-class LabelClassificationResponse(BaseModel):
+class LabelClassificationResponse(BaseSchema):
     """Classification result for one email."""
 
-    message_id: Optional[int] = Field(default=None, alias="messageId")
+    message_id: Optional[int] = Field(default=None)
     label: SystemLabel
 
-    class Config:
-        populate_by_name = True
 
-
-class IngestEmailData(BaseModel):
+class IngestEmailData(BaseSchema):
     """Email data received from RabbitMQ ingest queue."""
 
-    message_id: int = Field(..., alias="messageId")
+    message_id: int = Field(...)
     subject: str = Field(default="")
-    sender_email: str = Field(default="", alias="senderEmail")
-    sender_name: str = Field(default="", alias="senderName")
+    sender_email: str = Field(default="")
+    sender_name: str = Field(default="")
     content: str = Field(default="")
 
-    class Config:
-        populate_by_name = True
 
-
-class IngestMessage(BaseModel):
+class IngestMessage(BaseSchema):
     """Wrapper message received from RabbitMQ (pattern optional)."""
 
     pattern: Optional[str] = None
     data: IngestEmailData
-
-    class Config:
-        populate_by_name = True
 
 
 
@@ -63,43 +64,34 @@ class RegistrationAction(str, Enum):
     RequestOpen = "requestOpen"
 
 
-class ClassRegistrationItem(BaseModel):
+class ClassRegistrationItem(BaseSchema):
     """One subject/class registration instruction extracted from email."""
 
     action: RegistrationAction
-    subject_name: str = Field(default="", alias="subjectName")
-    subject_code: str = Field(default="", alias="subjectCode")
-    class_name: str = Field(default="", alias="className")
-    slot_info: str = Field(default="", alias="slotInfo")
-    is_in_curriculum: bool = Field(default=False, alias="isInCurriculum")
-
-    class Config:
-        populate_by_name = True
+    subject_name: str = Field(default="")
+    subject_code: str = Field(default="")
+    class_name: str = Field(default="")
+    slot_info: str = Field(default="")
+    is_in_curriculum: bool = Field(default=False)
 
 
-class ClassRegistrationPayload(BaseModel):
+class ClassRegistrationPayload(BaseSchema):
     """Structured payload for classRegistration emails."""
 
-    message_id: Optional[int] = Field(default=None, alias="messageId")
+    message_id: Optional[int] = Field(default=None)
     status: str = Field(default="")
-    student_code: str = Field(default="", alias="studentCode")
-    academic_year: Optional[int] = Field(default=None, alias="academicYear")
-    student_name: str = Field(default="", alias="studentName")
+    student_code: str = Field(default="")
+    academic_year: Optional[int] = Field(default=None)
+    student_name: str = Field(default="")
     note: str = Field(default="")
     items: List[ClassRegistrationItem] = Field(default_factory=list)
 
-    class Config:
-        populate_by_name = True
 
-
-class BaseLabelResponse(BaseModel):
+class BaseLabelResponse(BaseSchema):
     """Base response for classification endpoints."""
 
-    message_id: Optional[int] = Field(default=None, alias="messageId")
+    message_id: Optional[int] = Field(default=None)
     label: SystemLabel
-
-    class Config:
-        populate_by_name = True
 
 
 class ClassRegistrationExtractResponse(BaseLabelResponse):
@@ -109,7 +101,7 @@ class ClassRegistrationExtractResponse(BaseLabelResponse):
     extracted: ClassRegistrationPayload
 
 
-class TaskPayload(BaseModel):
+class TaskPayload(BaseSchema):
     """Structured payload for task emails."""
 
     name: str = Field(default="")
@@ -117,14 +109,11 @@ class TaskPayload(BaseModel):
     due: Optional[str] = Field(default=None)
     priority: str = Field(default="")
     assigners: List[str] = Field(default_factory=list)
-    assignee_ids: List[str] = Field(default_factory=list, alias="assigneeIds")
-    message_id: Optional[int] = Field(default=None, alias="messageId")
-
-    class Config:
-        populate_by_name = True
+    assignee_ids: List[str] = Field(default_factory=list)
+    message_id: Optional[int] = Field(default=None)
 
 
-class TaskExtractResponse(BaseModel):
+class TaskExtractResponse(BaseSchema):
     """Classification + extracted payload for task emails."""
 
     label: SystemLabel = Field(default=SystemLabel.Task)
@@ -134,7 +123,7 @@ class TaskExtractResponse(BaseModel):
 
 
 
-class ProcessResponse(BaseModel):
+class ProcessResponse(BaseSchema):
     """Process response wrapper (kept for compatibility)."""
 
     success: bool
@@ -146,7 +135,7 @@ class ProcessResponse(BaseModel):
 # HEALTH CHECK & ERROR RESPONSES
 # ====================================
 
-class HealthCheckResponse(BaseModel):
+class HealthCheckResponse(BaseSchema):
     """Health check response."""
 
     status: str = Field(..., description="Service status: healthy, degraded, unhealthy")
@@ -156,7 +145,7 @@ class HealthCheckResponse(BaseModel):
     mongodb_connected: bool = Field(default=False, description="MongoDB connectivity")
 
 
-class ErrorResponse(BaseModel):
+class ErrorResponse(BaseSchema):
     """Standard error response."""
 
     error: str = Field(..., description="Error code/type")
@@ -168,7 +157,7 @@ class ErrorResponse(BaseModel):
 # RAG SCHEMAS (for Chat & Email Draft)
 # ====================================
 
-class UserContext(BaseModel):
+class UserContext(BaseSchema):
     """User context information sent from NestJS."""
     user_id: str = Field(..., description="Anonymized user ID")
     name: str = Field(..., description="User name")
@@ -176,14 +165,14 @@ class UserContext(BaseModel):
     role: str = Field(default="student", description="User role: student, staff, admin")
 
 
-class ChatHistoryItem(BaseModel):
+class ChatHistoryItem(BaseSchema):
     """Single chat message in history."""
     role: str = Field(..., description="Message sender: user or assistant")
     content: str = Field(..., description="Message content")
     timestamp: Optional[str] = Field(default=None, description="Message timestamp")
 
 
-class SourceCitation(BaseModel):
+class SourceCitation(BaseSchema):
     """Citation information from File Search grounding metadata."""
     citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
     title: Optional[str] = Field(None, description="Document title/name")
@@ -196,27 +185,24 @@ class SourceCitation(BaseModel):
 # INQUIRY WORKFLOW SCHEMAS
 # ====================================
 
-class InquiryIntent(BaseModel):
+class InquiryIntent(BaseSchema):
     """Extracted intent from an inquiry email."""
     question: str = Field(description="The main question or intent extracted from the email.")
 
 
-class InquiryTypesResult(BaseModel):
+class InquiryTypesResult(BaseSchema):
     """Extracted array of inquiry types/categories."""
-    inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.", alias="inquiryTypes")
+    inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.")
 
 
-class InquiryPayload(BaseModel):
+class InquiryPayload(BaseSchema):
     """Structured payload for inquiry emails (email draft response)."""
-    
+
     answer: str = Field(..., description="Generated reply email body")
     question: Optional[str] = Field(default=None, description="Extracted question/intent from the sender")
     types: List[str] = Field(default_factory=list, description="Categorized inquiry types")
     sources: List[SourceCitation] = Field(default_factory=list, description="RAG source citations")
-    message_id: Optional[int] = Field(default=None, alias="messageId", description="Original email message ID")
-
-    class Config:
-        populate_by_name = True
+    message_id: Optional[int] = Field(default=None, description="Original email message ID")
 
 
 class InquiryResponse(BaseLabelResponse):
@@ -240,78 +226,84 @@ ResponseModel: TypeAlias = Union[LabelClassificationResponse, ClassRegistrationE
 # METADATA TYPE SCHEMAS (Phase 4)
 # ====================================
 
-class AllowedValueSchema(BaseModel):
+class AllowedValueSchema(BaseSchema):
     """Allowed value schema for metadata type API."""
     value: str = Field(..., description="Value stored in DB and used in filter")
-    display_name: str = Field(..., alias="displayName", description="Display name for UI")
-    is_active: bool = Field(True, alias="isActive", description="Active status (hidden if False)")
+    display_name: str = Field(..., description="Display name for UI")
+    is_active: bool = Field(True, description="Active status (hidden if False)")
     color: Optional[str] = Field(None, description="Hex color code (e.g., #E74C3C)")
-    total_files: int = Field(default=0, alias="totalFiles", description="Count of files using this value")
-    
-    class Config:
-        populate_by_name = True
+    total_files: int = Field(default=0, description="Count of files using this value")
+    visible_roles: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Roles that can see this value: ['admin','lecture','student']. Cannot be empty."
+    )
+
 
 class AllowedValueResponse(AllowedValueSchema):
     pass
 
 
-class CreateMetadataTypeRequest(BaseModel):
+class CreateMetadataTypeRequest(BaseSchema):
     """Request body for POST /api/metadata."""
     key: str = Field(..., min_length=1, max_length=50, description="Unique metadata key")
-    display_name: str = Field(..., alias="displayName", description="Display name for UI")
+    display_name: str = Field(..., description="Display name for UI")
     description: str = Field("", description="Description (auto-generated if empty)")
     allowed_values: Optional[List[AllowedValueSchema]] = Field(
         None,
-        alias="allowedValues",
         description="Allowed values list (None = free text)"
     )
-    
-    class Config:
-        populate_by_name = True
 
 
-class UpdateMetadataTypeRequest(BaseModel):
+class UpdateMetadataTypeRequest(BaseSchema):
     """Request body for PATCH /api/metadata/{key}."""
-    display_name: Optional[str] = Field(None, alias="displayName")
+    display_name: Optional[str] = Field(None)
     description: Optional[str] = None
-    allowed_values: Optional[List[AllowedValueSchema]] = Field(None, alias="allowedValues")
-    is_active: Optional[bool] = Field(None, alias="isActive")
-    
-    class Config:
-        populate_by_name = True
+    is_active: Optional[bool] = Field(None)
 
 
-class MetadataTypeResponse(BaseModel):
+class AllowedValueCreateRequest(BaseSchema):
+    """Request body for POST /api/metadata/{key}/values."""
+    value: str = Field(..., description="Value stored in DB and used in filter")
+    display_name: str = Field(..., description="Display name for UI")
+    is_active: bool = Field(True, description="Active status")
+    color: Optional[str] = Field(None, description="Hex color code")
+    visible_roles: List[str] = Field(..., min_length=1, description="Roles that can see this value")
+
+
+class AllowedValueUpdateRequest(BaseSchema):
+    """Request body for PATCH /api/metadata/{key}/values/{value}."""
+    display_name: Optional[str] = Field(None, description="Display name for UI")
+    is_active: Optional[bool] = Field(None, description="Active status")
+    color: Optional[str] = Field(None, description="Hex color code")
+    visible_roles: Optional[List[str]] = Field(None, min_length=1, description="Roles that can see this value")
+
+
+class MetadataTypeResponse(BaseSchema):
     """Response for metadata type operations."""
-    metadata_id: str = Field(..., alias="metadataId", description="MongoDB ObjectId")
+    metadata_id: str = Field(..., description="MongoDB ObjectId")
     key: str
-    display_name: str = Field(..., alias="displayName")
+    display_name: str
     description: str
-    allowed_values: Optional[List[AllowedValueSchema]] = Field(None, alias="allowedValues")
-    total_files: int = Field(default=0, alias="totalFiles", description="Count of files using this metadata type")
-    is_active: bool = Field(..., alias="isActive")
-    is_system: bool = Field(..., alias="isSystem")
-    created_at: str = Field(..., alias="createdAt")
-    updated_at: str = Field(..., alias="updatedAt")
-    
-    class Config:
-        populate_by_name = True
+    allowed_values: Optional[List[AllowedValueSchema]] = Field(None)
+    total_files: int = Field(default=0, description="Count of files using this metadata type")
+    is_active: bool
+    is_system: bool
+    created_at: str
+    updated_at: str
 
 
-class MetadataTypeListResponse(BaseModel):
+class MetadataTypeListResponse(BaseSchema):
     """Response for GET /api/metadata (Phase 4)."""
-    metadata_types: List[MetadataTypeResponse] = Field(..., alias="metadataTypes")
+    metadata_types: List[MetadataTypeResponse]
     total: int
-    
-    class Config:
-        populate_by_name = True
 
 
 # ====================================
 # CHAT ENDPOINT SCHEMAS
 # ====================================
 
-class ChatQueryRequest(BaseModel):
+class ChatQueryRequest(BaseSchema):
     """Request body for POST /api/chat/query."""
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     user_context: UserContext = Field(..., description="User information")
@@ -320,7 +312,7 @@ class ChatQueryRequest(BaseModel):
     metadata_filter: Optional[Dict[str, Any]] = Field(None, description="Metadata filter as key-value pairs")
 
 
-class ChatQueryResponse(BaseModel):
+class ChatQueryResponse(BaseSchema):
     """Response body for POST /api/chat/query."""
     answer: str = Field(..., description="Generated answer from Gemini")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
@@ -328,7 +320,7 @@ class ChatQueryResponse(BaseModel):
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")
 
 
-class ChatStreamRequest(BaseModel):
+class ChatStreamRequest(BaseSchema):
     """Request body for POST /api/chat/stream."""
     question: str = Field(..., min_length=1, max_length=2000)
     user_context: UserContext
@@ -341,7 +333,7 @@ class ChatStreamRequest(BaseModel):
 # FILE MANAGEMENT SCHEMAS
 # ====================================
 
-class FileUploadResponse(BaseModel):
+class FileUploadResponse(BaseSchema):
     """Response body for POST /api/files/upload."""
     file_id: str = Field(..., description="MongoDB ObjectId as file ID")
     store_id: str = Field(..., description="Store ID (MongoDB ObjectId)")
@@ -356,7 +348,7 @@ class FileUploadResponse(BaseModel):
     message: Optional[str] = None
 
 
-class FileDetailResponse(BaseModel):
+class FileDetailResponse(BaseSchema):
     """Response for GET /api/files/{file_id}."""
     file_id: str
     store_id: str
@@ -372,7 +364,7 @@ class FileDetailResponse(BaseModel):
     updated_at: str
 
 
-class FileListResponse(BaseModel):
+class FileListResponse(BaseSchema):
     """Response for GET /api/files."""
     files: List[FileDetailResponse]
     total: int
@@ -380,7 +372,7 @@ class FileListResponse(BaseModel):
     limit: int
 
 
-class BatchFileUploadResult(BaseModel):
+class BatchFileUploadResult(BaseSchema):
     """Result for a single file in batch upload."""
     original_filename: str
     success: bool
@@ -390,7 +382,7 @@ class BatchFileUploadResult(BaseModel):
     error: Optional[str] = None
 
 
-class BatchFileUploadResponse(BaseModel):
+class BatchFileUploadResponse(BaseSchema):
     """Response for POST /api/files/batch."""
     total: int = Field(..., description="Total files processed")
     successful: int
@@ -398,7 +390,7 @@ class BatchFileUploadResponse(BaseModel):
     results: List[BatchFileUploadResult]
 
 
-class BulkDeleteResponse(BaseModel):
+class BulkDeleteResponse(BaseSchema):
     """Response for bulk delete operations."""
     deleted_count: int
     message: str
@@ -408,7 +400,7 @@ class BulkDeleteResponse(BaseModel):
 # SYNC CHECK SCHEMAS
 # ====================================
 
-class SyncIssueItem(BaseModel):
+class SyncIssueItem(BaseSchema):
     """Một file bị lệch sync."""
     file_id: Optional[str] = Field(None, description="MongoDB ObjectId (nếu có)")
     original_filename: Optional[str] = None
@@ -417,7 +409,7 @@ class SyncIssueItem(BaseModel):
     issue: str = Field(..., description="Mô tả vấn đề")
 
 
-class SyncCheckResponse(BaseModel):
+class SyncCheckResponse(BaseSchema):
     """Response cho GET /api/files/check-sync."""
     is_synced: bool = Field(..., description="True nếu 3 nơi đồng bộ hoàn toàn")
     total_db: int = Field(..., description="Số file trong MongoDB")
@@ -427,7 +419,7 @@ class SyncCheckResponse(BaseModel):
     issues: List[SyncIssueItem] = Field(default_factory=list, description="Danh sách file bị lệch sync")
 
 
-class SyncActionResult(BaseModel):
+class SyncActionResult(BaseSchema):
     """Kết quả xử lý một file khi sync."""
     file_id: Optional[str] = None
     original_filename: Optional[str] = None
@@ -438,7 +430,7 @@ class SyncActionResult(BaseModel):
     error: Optional[str] = None
 
 
-class SyncResponse(BaseModel):
+class SyncResponse(BaseSchema):
     """Response cho POST /api/files/sync."""
     total_issues: int
     uploaded_to_gemini: int = Field(..., description="Số file được import vào Gemini")
@@ -451,19 +443,19 @@ class SyncResponse(BaseModel):
 # STORE MANAGEMENT SCHEMAS
 # ====================================
 
-class CreateStoreRequest(BaseModel):
+class CreateStoreRequest(BaseSchema):
     """Request body for POST /api/stores."""
     display_name: str = Field(..., min_length=1, max_length=512, description="Display name for the store")
     set_as_default: bool = Field(False, description="Set as default store")
 
 
-class UpdateStoreRequest(BaseModel):
+class UpdateStoreRequest(BaseSchema):
     """Request body for PATCH /api/stores/{store_id}."""
     display_name: Optional[str] = Field(None, min_length=1, max_length=512, description="Display name for the store")
     is_default: Optional[bool] = Field(None, description="Set as default store")
 
 
-class StoreDetailResponse(BaseModel):
+class StoreDetailResponse(BaseSchema):
     """Response for GET /api/stores/{store_id}."""
     store_id: str = Field(..., description="MongoDB ObjectId as store ID")
     store_name: str = Field(..., description="Gemini store name (fileSearchStores/xxx)")
@@ -475,7 +467,7 @@ class StoreDetailResponse(BaseModel):
     updated_at: str
 
 
-class StoreListResponse(BaseModel):
+class StoreListResponse(BaseSchema):
     """Response for GET /api/stores."""
     stores: List[StoreDetailResponse]
     total: int

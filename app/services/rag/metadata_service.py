@@ -4,7 +4,7 @@ Handles CRUD operations for metadata field definitions and validation rules.
 """
 
 import logging
-from typing import Optional, List
+from typing import List, Optional, Dict, Any
 
 from app.core.exceptions import (
     ValidationException,
@@ -74,6 +74,10 @@ class MetadataService:
         # Convert AllowedValue list to dict list for MongoDB
         allowed_values_dict = None
         if allowed_values is not None:
+            for av in allowed_values:
+                # CRITICAL: visible_roles is mandatory and cannot be empty
+                if not av.visible_roles:
+                    raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{av.value}'")
             allowed_values_dict = [v.to_dict() for v in allowed_values]
         
         # Create metadata type
@@ -95,12 +99,11 @@ class MetadataService:
         key: str,
         display_name: Optional[str] = None,
         description: Optional[str] = None,
-        allowed_values: Optional[List[AllowedValue]] = None,
         is_active: Optional[bool] = None,
     ) -> MetadataTypeDocument:
         """
-        Update an existing metadata type.
-        Cannot update: key (immutable), is_system (immutable after creation).
+        Update an existing metadata type top-level properties.
+        Cannot update: key (immutable), is_system (immutable after creation), allowed_values (use separate APIs).
         """
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
@@ -111,28 +114,6 @@ class MetadataService:
             updates["display_name"] = display_name
         if description is not None:
             updates["description"] = description
-        if allowed_values is not None:
-            # Merge incoming allowed_values with existing ones.
-            # The `value` field is immutable — only display_name, is_active, color can change.
-            # New entries (new value keys) are added; existing entries not in the request are kept.
-            existing_values_map = {}
-            for av in (existing.get("allowed_values") or []):
-                existing_values_map[av["value"]] = av
-
-            for new_av in allowed_values:
-                vk = new_av.value
-                if vk in existing_values_map:
-                    existing_values_map[vk] = {
-                        "value": vk,
-                        "display_name": new_av.display_name,
-                        "is_active": new_av.is_active,
-                        "color": new_av.color,
-                        "total_files": existing_values_map[vk].get("total_files", 0)
-                    }
-                else:
-                    existing_values_map[vk] = new_av.to_dict()
-
-            updates["allowed_values"] = list(existing_values_map.values())
         if is_active is not None:
             updates["is_active"] = is_active
 
@@ -141,7 +122,77 @@ class MetadataService:
 
         await self.metadata_repo.update_by_key(key, updates)
         updated = await self.metadata_repo.find_by_key(key)
-        logger.info(f"Updated metadata type: {key}")
+        logger.info(f"Updated metadata type properties: {key}")
+        return _to_metadata_model(updated)
+
+    async def add_metadata_value(
+        self,
+        key: str,
+        allowed_value: AllowedValue
+    ) -> MetadataTypeDocument:
+        """Add a new allowed value to a metadata type."""
+        existing = await self.metadata_repo.find_by_key(key)
+        if not existing:
+            raise NotFoundException("MetadataType", key)
+            
+        if not allowed_value.visible_roles:
+            raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{allowed_value.value}'")
+
+        existing_values = existing.get("allowed_values") or []
+        
+        # Check if value already exists
+        for av in existing_values:
+            if av["value"] == allowed_value.value:
+                raise ConflictException(f"Allowed value '{allowed_value.value}' already exists in metadata type '{key}'")
+                
+        existing_values.append(allowed_value.to_dict())
+        
+        await self.metadata_repo.update_by_key(key, {"allowed_values": existing_values})
+        updated = await self.metadata_repo.find_by_key(key)
+        logger.info(f"Added metadata value '{allowed_value.value}' to type '{key}'")
+        return _to_metadata_model(updated)
+
+    async def update_metadata_value(
+        self,
+        key: str,
+        value_key: str,
+        display_name: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        color: Optional[str] = None,
+        visible_roles: Optional[list[str]] = None,
+    ) -> MetadataTypeDocument:
+        """Update properties of an existing allowed value."""
+        existing = await self.metadata_repo.find_by_key(key)
+        if not existing:
+            raise NotFoundException("MetadataType", key)
+
+        existing_values = existing.get("allowed_values") or []
+        target_idx = -1
+        
+        for i, av in enumerate(existing_values):
+            if av["value"] == value_key:
+                target_idx = i
+                break
+                
+        if target_idx == -1:
+            raise NotFoundException(f"Metadata value '{value_key}' in type '{key}'", value_key)
+
+        av = existing_values[target_idx]
+        
+        if display_name is not None:
+            av["display_name"] = display_name
+        if is_active is not None:
+            av["is_active"] = is_active
+        if color is not None:
+            av["color"] = color
+        if visible_roles is not None:
+            if not visible_roles:
+                raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{value_key}'")
+            av["visible_roles"] = visible_roles
+
+        await self.metadata_repo.update_by_key(key, {"allowed_values": existing_values})
+        updated = await self.metadata_repo.find_by_key(key)
+        logger.info(f"Updated metadata value '{value_key}' in type '{key}'")
         return _to_metadata_model(updated)
 
     async def delete_metadata_type(self, key: str) -> None:
@@ -306,21 +357,124 @@ class MetadataService:
             
             # Handle single value vs list
             if isinstance(value, list):
-                for v in value:
-                    if v not in active_values:
-                        errors.append(
-                            f"Invalid value '{v}' for metadata '{key}'. "
-                            f"Allowed active values: {active_values}"
-                        )
-            else:
-                if value not in active_values:
-                    errors.append(
-                        f"Invalid value '{value}' for metadata '{key}'. "
-                        f"Allowed active values: {active_values}"
-                    )
+                errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed).")
+                continue
+            
+            if value not in active_values:
+                errors.append(
+                    f"Invalid value '{value}' for metadata '{key}'. "
+                    f"Allowed active values: {active_values}"
+                )
         
         return len(errors) == 0, errors
 
+    async def sync_metadata_counters(self, custom_metadata: dict, delta: int) -> None:
+        """
+        Sync metadata total_files counters.
+        Delegates to MetadataRepository.
+        
+        Args:
+            custom_metadata: Dictionary of current file custom metadata
+            delta: +1 for new file, -1 for deleted/deactivated file
+        """
+        await self.metadata_repo.sync_metadata_counters(custom_metadata, delta)
+        
+    async def get_metadata_types_by_keys(self, keys: list[str]) -> List[MetadataTypeDocument]:
+        """
+        Fetch metadata types by a list of keys.
+        
+        Args:
+            keys: List of metadata keys to fetch
+            
+        Returns:
+            List of matching MetadataTypeDocument objects
+        """
+        if not keys:
+            return []
+        
+        types = await self.metadata_repo.find_many({"key": {"$in": keys}})
+        return [_to_metadata_model(t) for t in types]
+
+    async def validate_file_metadata_requirements(self, custom_metadata: Dict[str, Any]) -> None:
+        """
+        Validate file metadata requirements (system fields and value validation).
+        Rules:
+        - All system metadata fields are required.
+        - Exception: At least one of academic_year or cohort is required.
+        """
+        from app.core.exceptions import ValidationException
+        if not custom_metadata:
+            custom_metadata = {}
+
+        # 1. Get all system metadata types
+        all_types = await self.list_all_metadata_types(active_only=True)
+        system_types = [mt for mt in all_types if mt.is_system]
+        
+        # 2. Separate standard system keys from the academic/cohort pair
+        standard_system_keys = [
+            mt.key for mt in system_types 
+            if mt.key not in ["academic_year", "cohort"]
+        ]
+        
+        # 3. Check standard system keys are present
+        for key in standard_system_keys:
+            if key not in custom_metadata:
+                raise ValidationException(f"Metadata '{key}' is required (system metadata).")
+        
+        # 4. Check academic_year or cohort (at least one required if they are system types)
+        is_academic_system = any(mt.key == "academic_year" for mt in system_types)
+        is_cohort_system = any(mt.key == "cohort" for mt in system_types)
+        
+        if (is_academic_system or is_cohort_system) and ("academic_year" not in custom_metadata and "cohort" not in custom_metadata):
+            raise ValidationException(
+                "Metadata must include at least one of 'academic_year' or 'cohort'."
+            )
+
+        # 5. Value validation against registered metadata types
+        is_valid, errors = await self.validate_metadata(custom_metadata)
+
+        if not is_valid:
+            error_msg = "; ".join(errors)
+            raise ValidationException(f"Metadata validation failed: {error_msg}")
+
+    async def filter_custom_metadata_by_role(self, file_dicts: List[Dict[str, Any]], user_role: str) -> None:
+        """Filter out metadata keys from custom_metadata based on visible_roles."""
+        if not file_dicts:
+            return
+            
+        # Collect all metadata keys
+        keys_to_fetch = set()
+        for f in file_dicts:
+            cm = f.get("custom_metadata") or {}
+            keys_to_fetch.update(cm.keys())
+            
+        if not keys_to_fetch:
+            return
+            
+        all_metadata = await self.get_metadata_types_by_keys(list(keys_to_fetch))
+        
+        meta_map = {}
+        for meta in all_metadata:
+            key = meta.key
+            allowed_values = meta.get_allowed_values() or []
+            values_map = {av.value: av.visible_roles for av in allowed_values}
+            meta_map[key] = values_map
+            
+        for f in file_dicts:
+            cm = f.get("custom_metadata") or {}
+            if not cm:
+                continue
+                
+            filtered_cm = {}
+            for k, v in cm.items():
+                roles = meta_map.get(k, {}).get(v)
+                if roles is None:
+                    # Value not found in allowed_values, keep it
+                    filtered_cm[k] = v
+                elif user_role in roles:
+                    filtered_cm[k] = v
+            f["custom_metadata"] = filtered_cm
+        
 
 def get_metadata_service() -> MetadataService:
     """Get MetadataService instance."""

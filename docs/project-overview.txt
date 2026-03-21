@@ -108,12 +108,12 @@ Giao tiếp với:
   Client (NestJS / Postman)
        |
        v
-  FastAPI Router (/api/...)
-       |-- /api/stores    --> StoreService (CRUD + Gemini sync)
-       |-- /api/files     --> FileService (upload, download, retry, batch)
-       |-- /api/metadata  --> MetadataService (CRUD metadata types)
-       |-- /api/chat      --> GeminiService (query + SSE stream)
-       +-- /process       --> EmailWorkflowOrchestrator (manual classify)
+   FastAPI Router (/api/...)
+       |-- /api/stores    --> StoreService (CRUD + Native Async Sync)
+       |-- /api/files     --> FileService (High-level coordination: R2 + Gemini)
+       |-- /api/metadata  --> MetadataService (Validations + CRUD)
+       |-- /api/chat      --> ChatService (Native Async Query + SSE Stream)
+       +-- /process       --> EmailWorkflowOrchestrator (Manual Classify)
 
 
 ================================================================================
@@ -190,12 +190,12 @@ Giao tiếp với:
   |   |   |       +-- other_service.py                Ghi log other
   |   |   |
   |   |   +-- rag/
-  |   |       |-- chat_service.py        POST /api/chat/query, /api/chat/stream
-  |   |       |-- email_draft_service.py Hàm soạn email trả lời (RAG)
-  |   |       |-- file_service.py        Upload/download/delete (R2 + Gemini)
-  |   |       |-- gemini_client.py       Gemini Client (Singleton)
-  |   |       |-- metadata_service.py    CRUD metadata type definitions
-  |   |       |-- store_service.py       CRUD store + Gemini File Search API
+  |   |       |-- chat_service.py        Native Async Query + SSE Streaming
+  |   |       |-- email_draft_service.py Native Async draft reply (RAG)
+  |   |       |-- file_service.py        Coordinated Upload (R2 + Gemini)
+  |   |       |-- gemini_client.py       Gemini Client (Singleton, Sync + Async)
+  |   |       |-- metadata_service.py    CRUD + Metadata Requirements Validations
+  |   |       |-- store_service.py       Native Async Store Management
   |   |       +-- utils/
   |   |           |-- file_utils.py       validate_file_size, validate_extension, detect_mime
   |   |           |-- filter_builder.py   dict metadata → Gemini filter string
@@ -408,8 +408,8 @@ Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inqui
 
   3. Built context string (bao gồm extracted_question và inquiry_types để tập trung LLM suy luận/truy vấn đúng tài liệu).
 
-  4. draft_email_reply(original_subject, original_body,
-         additional_context, store_name, metadata_filter)
+  4. draft_email_reply(originalSubject, originalBody,
+         additionalContext, storeName, metadataFilter)
      → Gemini tìm tài liệu liên quan + soạn email trả lời tự động
 
   5. Trả về:
@@ -437,7 +437,7 @@ File: app/services/rag/file_service.py
     Kiểm tra file trùng tên trong cùng store (ConflictException)
 
   STEP 2: Validate metadata (BẮT BUỘC)
-    access_scope BẮT BUỘC phải có (ValidationException nếu thiếu)
+    access_scope BẮT BUỘC phải có (admin, lecture, student)
     Phải có ít nhất academic_year HOẶC cohort (ValidationException nếu thiếu)
     Từng key phải là metadata type đã đăng ký và is_active=True
     Từng value phải nằm trong allowed_values và AllowedValue.is_active=True
@@ -452,19 +452,21 @@ File: app/services/rag/file_service.py
   STEP 5: Upload Gemini (đồng bộ)
     Upload binary lên Gemini Files API
     Gắn vào File Search store
-    Cập nhật MongoDB: gemini_document_name + status = ACTIVE.
-    [Quan trọng]: Lúc này hệ thống tự động gọi `MetadataRepository.sync_metadata_counters(custom_metadata, delta=1)`
-    (Sử dụng atomic update `$inc`) để tăng biến đếm `total_files` cho từng config metadata key tương ứng và value tương ứng bên trong `allowed_values`.
+    Cập nhật MongoDB: geminiDocumentName + status = ACTIVE.
+    [Quan trọng]: Lúc này hệ thống tự động gọi `MetadataRepository.sync_metadata_counters(customMetadata, delta=1)`
+    (Sử dụng atomic update `$inc`) để tăng biến đếm `totalFiles` cho từng config metadata key tương ứng và value tương ứng bên trong `allowedValues`.
     Nếu lỗi: status = FAILED (file vẫn còn trong R2, có thể retry)
     → Trả về response với status="active"
 
-  UploadState — Rollback thông minh:
-    @dataclass theo dõi từng bước: DB_CREATED, R2_UPLOADED, GEMINI_UPLOADED
-    Khi lỗi: chỉ rollback các bước đã hoàn thành
+  FileService Refactoring (High-level coordination):
+    - Massive methods decomposed into atomic sub-methods.
+    - specialized logic (MIME, ID, Gemini operation waiting) moved to specialized utils.
+    - Metadata requirements and role filtration moved to MetadataService.
+    - Coordinated retry/rollback using UploadState dataclass.
 
   CHIẾN LƯỢC XÓA FILE (Explicit Hard Delete):
-    - `DELETE /api/files/{file_id}`: Hard delete hoàn toàn. Gỡ file khỏi R2, gỡ Document khỏi Gemini File Search và xóa bản ghi DB. Đồng thời tự động Trigger `MetadataRepository.sync_metadata_counters(delta=-1)` để giảm bộ đếm `total_files` trong các metadata_types.
-    - Xóa toàn lô / Batch delete (`DELETE /api/files/all?store_id=...`) cũng lặp qua và áp dụng rollback số lượng `total_files` (các record metadata), cũng như xóa triệt để tại (DB + R2 + Gemini).
+    - `DELETE /api/files/{fileId}`: Hard delete hoàn toàn. Gỡ file khỏi R2, gỡ Document khỏi Gemini File Search và xóa bản ghi DB. Đồng thời tự động Trigger `MetadataRepository.sync_metadata_counters(delta=-1)` để giảm bộ đếm `totalFiles` trong các metadataTypes.
+    - Xóa toàn lô / Batch delete (`DELETE /api/files/all?storeId=...`) cũng lặp qua và áp dụng rollback số lượng `totalFiles` (các record metadata), cũng như xóa triệt để tại (DB + R2 + Gemini).
 
   Retry file failed:
     POST /api/files/{file_id}/retry
@@ -480,20 +482,20 @@ Metadata Type định nghĩa các "trường tag" có thể gắn lên file khi 
 Dùng để filter documents trong RAG query.
 
 CẤU TRUC MetadataTypeDocument:
-  key               : Khóa duy nhất (vd: "academic_year", "access_scope")
-  display_name      : Tên hiển thị trên UI (vd: "Năm học")
+  key               : Khóa duy nhất (vd: "academicYear", "accessScope")
+  displayName      : Tên hiển thị trên UI (vd: "Năm học")
   description       : Mô tả ngắn
-  allowed_values    : List[AllowedValue] hoặc null (null = free text)
-  is_active         : bool — false = ẩn, không validate (Soft Delete)
-  is_system         : bool — true = không cho phép xóa qua API
-  total_files       : int — Biến auto-increment/statistics: Số lượng file hiện đang sử dụng tag này
+  allowedValues    : List[AllowedValue] hoặc null (null = free text)
+  isActive         : bool — false = ẩn, không validate (Soft Delete)
+  isSystem         : bool — true = không cho phép xóa qua API
+  totalFiles       : int — Biến auto-increment/statistics: Số lượng file hiện đang sử dụng tag này
 
 CẤU TRUC AllowedValue:
-  value        : Giá trị trong filter (vd: "cong_khai", "2024-2025")
-  display_name : Hiển thị UI (vd: "Công khai", "Năm học 2024-2025")
-  is_active    : bool — false = ẩn, không nhận khi upload (Soft Delete)
+  value        : Giá trị trong filter (vd: "student", "2024-2025")
+  displayName : Hiển thị UI (vd: "Student", "Năm học 2024-2025")
+  isActive    : bool — false = ẩn, không nhận khi upload (Soft Delete)
   color        : Hex color (vd: "#3498DB")
-  total_files  : int — Biến auto-increment/statistics: Số lượng file mang giá trị này (được quản lý tự động bởi `MetadataRepository.sync_metadata_counters` thông qua query `$inc` để tránh race condition)
+  totalFiles  : int — Biến auto-increment/statistics: Số lượng file mang giá trị này (được quản lý tự động bởi `MetadataRepository.sync_metadata_counters` thông qua query `$inc` để tránh race condition)
 
 CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
   1. Soft Delete: Thực hiện qua thao tác Update (PUT/PATCH), gán `is_active = False` cho MetadataType hoặc cấu hình AllowedValue.
@@ -516,7 +518,7 @@ CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
 
   access_scope (Phạm vi truy cập):
     has_all_value = False
-    Giá trị: cong_khai (Công khai), noi_bo (Nội bộ)
+    Giá trị: admin (Admin), lecture (Lecture), student (Student)
 
 QUY TAC VALIDATE khi upload file:
   1. access_scope BAT BUOC phải có
@@ -524,8 +526,8 @@ QUY TAC VALIDATE khi upload file:
   3. Mỗi key phải là metadata type đã đăng ký và is_active=True
   4. Mỗi value phải nằm trong allowed_values và AllowedValue.is_active=True
 
-  Vi dụ custom_metadata hợp lệ:
-    {"academic_year":"2024-2025","cohort":"K65","access_scope":"cong_khai"}
+  Vi dụ customMetadata hợp lệ:
+    {"academicYear":"2024-2025","cohort":"K65","accessScope":"student"}
 
 
 ================================================================================
@@ -552,52 +554,40 @@ convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
   Input null / empty → Trả về None (không filter Gemini)
 
 Phan quyen theo role trong Chat API:
-  role="student"  → BAT BUOC thêm access_scope="cong_khai" vào filter
-                     (sinh viên chỉ thấy tài liệu công khai)
-  role="staff"    → Xóa access_scope khỏi filter (thấy cả nội bộ + công khai)
-  role="admin"    → Xóa access_scope khỏi filter (quyền cao nhất)
+  role="student"  → BAT BUOC thêm access_scope="student" vào filter
+                      (sinh viên chỉ thấy tài liệu student)
+  role="lecture"  → Thêm access_scope=["lecture", "student"] vào filter
+  role="admin"    → Xóa access_scope khỏi filter (quyền quản trị cao nhất)
 
 
 ================================================================================
-13. CHAT SERVICE & GEMINI CLIENT - RAG VOI GEMINI FILE SEARCH
+13. CHAT SERVICE & GEMINI CLIENT - NATIVE ASYNC RAG
 ================================================================================
 
 File: app/services/rag/chat_service.py và app/services/rag/gemini_client.py
 
 Client: google-genai SDK (genai.Client) (singleton trong gemini_client.py)
-Model: gemini-2.5-flash (cấu hình qua GEMINI_MODEL)
+Async Interface: Sử dụng client.aio cho tất cả operations.
 
 3 PHUONG THUC CHINH:
 
-1. chat_service.generate_chat_response(question, user_context, chat_history,
-                           store_name, metadata_filter) → dict
-   Trả về câu trả lời đầy đủ (không streaming).
-   Dùng CHAT_SYSTEM_PROMPT + CHAT_WITH_CONTEXT_TEMPLATE
-   Kết quả: { "answer", "sources", "token_usage", "processing_time_ms" }
+1. ChatService.generate_chat_response(...)
+   - Native async call (await client.aio.models.generate_content)
+   - Trả về câu trả lời đầy đủ kèm trích dẫn đã được enrich URL.
 
-2. chat_service.stream_chat_response(question, user_context, chat_history,
-                         store_name, metadata_filter) → AsyncGenerator
-   Streaming response qua SSE (Server-Sent Events)
-   Mỗi chunk: {"chunk": "text", "done": false}
-   Chunk cuối: {"done": true, "sources": [...], "token_usage": {...}}
-   Lỗi: {"error": "...", "done": true}
+2. ChatService.stream_chat_response(...)
+   - Native async streaming (await client.aio.models.generate_content_stream)
+   - Sử dụng async for trực tiếp trên Gemini response iterator.
+   - Streaming response qua SSE (Server-Sent Events)
 
-3. (Trong email_draft_service.py)
-   draft_email_reply(original_subject, original_body,
-                      additional_context, store_name, metadata_filter) → dict
-   Soạn email trả lời cho inquiry emails
-   Dùng EMAIL_DRAFT_REPLY_PROMPT
-   Kết quả: { "answer", "sources", "token_usage" }
+3. EmailDraftService.draft_email_reply(...)
+   - Native async draft reply soạn thảo email tự động.
+   - Tích hợp Metadata Filter chuẩn hóa qua FilterBuilder.
 
-Co che Gemini File Search:
-  types.FileSearch(fileSearchStoreNames=[store_name], metadataFilter=filter_str)
-  Gemini tự tìm tài liệu liên quan (không cần embed/vector thủ công)
-
-Extract sources:
-  Từ grounding metadata (response.candidates[0].grounding_metadata)
-  → lấy retrieved_context → gemini_document_name
-  → tra R2 presigned URL (1 giờ)
-  → Sources kèm URL download trực tiếp từ R2
+Extract & Enrich Sources:
+  1. Trích xuất grounding metadata từ candidate.
+  2. Map citation chunks sang tài liệu gốc.
+  3. Enrich sources với presigned URL từ R2 (1 giờ) qua FileRepository.
 
 
 ================================================================================
@@ -610,11 +600,11 @@ Store là Gemini File Search Store, container chứa documents.
 Mỗi store tương ứng một chủ đề (vd: "Văn bản Đào tạo 2026").
 
 THUOC TINH STORE:
-  store_name   : "fileSearchStores/van-ban-dao-tao-abc123" (immutable, unique)
-  display_name : Tên hiển thị
-  file_count   : Số file active (sync từ Gemini)
-  total_size   : Tổng bytes (sync từ Gemini)
-  is_default   : bool — chỉ 1 store là default tại một thời điểm
+  storeName    : "fileSearchStores/van-ban-dao-tao-abc123" (immutable, unique)
+  displayName : Tên hiển thị
+  fileCount   : Số file active (sync từ Gemini)
+  totalSize   : Tổng bytes (sync từ Gemini)
+  isDefault   : bool — chỉ 1 store là default tại một thời điểm
 
 CAC THAO TAC:
   create_store(display_name, set_as_default)
@@ -631,8 +621,8 @@ CAC THAO TAC:
   list_gemini_stores() → list trực tiếp từ Gemini (debug)
 
 Auto Store Resolution (app/services/rag/utils/store_utils.py):
-  resolve_store(request_store_id) → (store_id, store_name)
-  Priority: request_store_id > default store > raise 400
+  resolve_store(requestStoreId) → (storeId, storeName)
+  Priority: requestStoreId > default store > raise 400
   Dùng trong: upload file, chat API, email draft service
 
 
@@ -660,10 +650,10 @@ POST /api/chat/query — Chat thường (blocking)
     }
 
   Quy trinh:
-    1. resolve_store(store_id) → (store_id, store_name)
-    2. build_filter(user_context.role, metadata_filter) → filter string
+    1. resolve_store(storeId) → (storeId, storeName)
+    2. build_filter(userContext.role, metadataFilter) → filter string
     3. chat_service.generate_chat_response(...)
-    4. Trả về: { "answer", "sources", "token_usage", "processing_time_ms" }
+    4. Trả về: { "answer", "sources", "tokenUsage", "processingTimeMs" }
 
 POST /api/chat/stream — Chat streaming (SSE)
   Cùng request body với /api/chat/query.
@@ -705,7 +695,7 @@ CƠ CHẾ AUTH:
 PHÂN QUYỀN CÁC ENDPOINT:
   require_admin: POST/DELETE /api/stores, POST/DELETE /api/files,
                  DELETE /api/files/..., POST/PATCH/DELETE /api/metadata
-  require_auth:  GET /api/files/{id}/download
+  require_auth:  GET /api/files/{fileId}/download
   Public:        GET /api/metadata, GET /api/metadata/{key},
                  /api/chat, /health, /process
 
@@ -736,7 +726,7 @@ Collection: file_documents
   file_size            int       → bytes
   mime_type            string    → "application/pdf"
   gemini_document_name string?   → "fileSearchStores/xxx/documents/yyy"
-  custom_metadata      object    → {"academic_year":"2024-2025","access_scope":"cong_khai"}
+  custom_metadata      object    → {"academic_year":"2024-2025","access_scope":"student"}
   status               string    → UPLOADING | PROCESSING | ACTIVE | FAILED
   created_at           datetime
   updated_at           datetime
@@ -915,19 +905,21 @@ DEBUG=true → response kèm thêm stack trace và request path
     DELETE /api/stores/all                 Xóa TAT CA stores
     POST   /api/stores/{store_id}/sync     Sync file_count + total_size từ Gemini
 
-  METADATA TYPES (6 endpoints)
+  METADATA TYPES (8 endpoints)
     POST   /api/metadata                        Tạo metadata type mới
     GET    /api/metadata                        Liệt kê (? is_active)
     GET    /api/metadata/{key}                  Chi tiết theo key
-    PATCH  /api/metadata/{key}                  Update mềm (Soft delete qua is_active), không đổi key/is_system; merge allowed_values.
-    DELETE /api/metadata/{key}                  Hard delete (Chỉ xóa nếu total_files=0)
+    PATCH  /api/metadata/{key}                  Cập nhật core metadata (không sửa allowed values)
+    POST   /api/metadata/{key}/values           Thêm một allowed value mới
+    PATCH  /api/metadata/{key}/values/{value}   Cập nhật một allowed value
+    DELETE /api/metadata/{key}                  Hard delete metadata type (Chỉ xóa nếu total_files=0)
     DELETE /api/metadata/{key}/values/{value}   Hard delete 1 allowed value (Chỉ xóa nếu total_files=0)
 
   FILE MANAGEMENT (9 endpoints)
     POST   /api/files                           Upload file (luôn đồng bộ)
-    GET    /api/files                           Liệt kê (? store_id, file_status, page, limit)
+    GET    /api/files                           Liệt kê file (filter: storeId, fileStatus, metadataFilter). Áp dụng filter visibleRoles.
     GET    /api/files/check-sync                Kiểm tra đồng bộ DB/R2/Gemini
-    GET    /api/files/{file_id}                 Chi tiết file
+    GET    /api/files/{file_id}                 Chi tiết file. Áp dụng filter visibleRoles.
     GET    /api/files/{file_id}/download        Download file từ R2
     DELETE /api/files/{file_id}                 Xóa file (Hard Delete R2 + Gemini + MongoDB)
     DELETE /api/files/all                       Xóa tất cả file trong 1 store (Hard Delete)
