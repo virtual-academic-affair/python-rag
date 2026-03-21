@@ -108,3 +108,16 @@ class StoreRepository(BaseRepository):
             Number of stores
         """
         return await self.count({})
+
+    async def list_stores(self, skip: int = 0, limit: int = 100) -> tuple[List[Dict[str, Any]], int]:
+        """List stores with pagination."""
+        docs = await self.find_many({}, skip=skip, limit=limit)
+        total = await self.count_all()
+        return docs, total
+
+    async def update_display_name(self, store_id: str, display_name: str) -> Optional[Dict[str, Any]]:
+        """Update store display name."""
+        updated = await self.update_by_id(store_id, {"display_name": display_name})
+        if updated:
+            return await self.find_by_id(store_id)
+        return None

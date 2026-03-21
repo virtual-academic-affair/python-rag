@@ -14,6 +14,8 @@ from app.models.schemas import (
     MetadataTypeListResponse,
     AllowedValueSchema,
     AllowedValueResponse,
+    AllowedValueCreateRequest,
+    AllowedValueUpdateRequest,
 )
 from app.models.database import AllowedValue
 from app.services.rag.metadata_service import get_metadata_service
@@ -41,8 +43,39 @@ def _convert_allowed_values_to_schema(allowed_values_list) -> list[AllowedValueS
             is_active=av.is_active,
             color=av.color,
             total_files=av.total_files,
+            visible_roles=av.visible_roles,
         )
         for av in allowed_values_list
+    ]
+
+
+def _filter_allowed_values_by_role(
+    allowed_values_list,
+    user_role: str,
+) -> list[AllowedValueSchema] | None:
+    """
+    Filter allowed_values to only include entries visible to the given role.
+    An entry is visible if its visible_roles is empty (no restriction) OR
+    contains the user_role.
+    Returns None if the source list is None.
+    Returns empty list if all values are filtered out (caller should hide the key).
+    """
+    if allowed_values_list is None:
+        return None
+    visible = [
+        av for av in allowed_values_list
+        if user_role in av.visible_roles
+    ]
+    return [
+        AllowedValueSchema(
+            value=av.value,
+            display_name=av.display_name,
+            is_active=av.is_active,
+            color=av.color,
+            total_files=av.total_files,
+            visible_roles=av.visible_roles,
+        )
+        for av in visible
     ]
 
 
@@ -56,6 +89,7 @@ def _convert_schema_to_allowed_values(schemas: list[AllowedValueSchema] | None) 
             display_name=s.display_name,
             is_active=s.is_active,
             color=s.color,
+            visible_roles=s.visible_roles,
         )
         for s in schemas
     ]
@@ -81,8 +115,7 @@ async def create_metadata_type(request: CreateMetadataTypeRequest, _admin: Dict[
       "allowedValues": [
         {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB"},
         {"value": "khcn", "displayName": "KHCN", "isActive": true}
-      ],
-      "supportAllValue": false
+      ]
     }
     ```
     """
@@ -141,33 +174,43 @@ async def create_metadata_type(request: CreateMetadataTypeRequest, _admin: Dict[
     description="List all metadata type definitions with optional active filter (Phase 4).",
 )
 async def list_metadata_types(
-    active_only: bool = Query(False, description="If true, only return is_active=true types"),
+    active_only: bool = Query(False, alias="activeOnly", description="If true, only return is_active=true types"),
     _user: Dict[str, Any] = Depends(require_auth)
 ):
     """
     List all metadata type definitions.
     
-    **Phase 4:** Supports `active_only` query param to filter by is_active status.
+    Values inside each metadata type are filtered by the requesting user's role:
+    - `visible_roles` is empty → visible to all roles
+    - `visible_roles` contains the user's role → visible
+    - Otherwise the value is hidden
+    Metadata types where ALL values are hidden for the user's role are excluded entirely.
     """
     try:
+        user_role: str = _user.get("role", "student")
         metadata_svc = get_metadata_service()
         metadata_types = await metadata_svc.list_all_metadata_types(active_only=active_only)
         
-        type_responses = [
-            MetadataTypeResponse(
-                metadata_id=str(mt.id),
-                key=mt.key,
-                display_name=mt.display_name,
-                description=mt.description,
-                allowed_values=_convert_allowed_values_to_schema(mt.get_allowed_values()),
-                is_active=mt.is_active,
-                is_system=mt.is_system,
-                total_files=mt.total_files,
-                created_at=mt.created_at.isoformat() if mt.created_at else None,
-                updated_at=mt.updated_at.isoformat() if mt.updated_at else None,
+        type_responses = []
+        for mt in metadata_types:
+            filtered_avs = _filter_allowed_values_by_role(mt.get_allowed_values(), user_role)
+            # If the type has allowed_values defined but none are visible, skip the whole key
+            if filtered_avs is not None and len(filtered_avs) == 0:
+                continue
+            type_responses.append(
+                MetadataTypeResponse(
+                    metadata_id=str(mt.id),
+                    key=mt.key,
+                    display_name=mt.display_name,
+                    description=mt.description,
+                    allowed_values=filtered_avs,
+                    is_active=mt.is_active,
+                    is_system=mt.is_system,
+                    total_files=mt.total_files,
+                    created_at=mt.created_at.isoformat() if mt.created_at else None,
+                    updated_at=mt.updated_at.isoformat() if mt.updated_at else None,
+                )
             )
-            for mt in metadata_types
-        ]
         
         return MetadataTypeListResponse(
             metadata_types=type_responses,
@@ -194,11 +237,22 @@ async def get_metadata_type(
 ):
     """
     Get metadata type details by key.
+    Values are filtered by the requesting user's role (same rules as list endpoint).
+    Returns 404 if the type exists but all values are hidden for the user's role.
     """
     try:
+        user_role: str = _user.get("role", "student")
         metadata_svc = get_metadata_service()
         metadata_type = await metadata_svc.get_metadata_type(key)
         if not metadata_type:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Metadata type '{key}' not found",
+            )
+        
+        filtered_avs = _filter_allowed_values_by_role(metadata_type.get_allowed_values(), user_role)
+        # If defined but all filtered out → treat as not visible (404)
+        if filtered_avs is not None and len(filtered_avs) == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Metadata type '{key}' not found",
@@ -209,7 +263,7 @@ async def get_metadata_type(
             key=metadata_type.key,
             display_name=metadata_type.display_name,
             description=metadata_type.description,
-            allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
+            allowed_values=filtered_avs,
             is_active=metadata_type.is_active,
             is_system=metadata_type.is_system,
             total_files=metadata_type.total_files,
@@ -231,7 +285,7 @@ async def get_metadata_type(
     "/{key}",
     response_model=MetadataTypeResponse,
     summary="Update metadata type",
-    description="Update an existing metadata type definition (Phase 4). Cannot update key or is_system.",
+    description="Update an existing metadata type definition (Phase 4). Cannot update key or is_system. Does not affect allowed values.",
 )
 async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _admin: Dict[str, Any] = Depends(require_admin)):
     """
@@ -242,14 +296,10 @@ async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _ad
     try:
         metadata_svc = get_metadata_service()
         
-        # Convert schemas to AllowedValue objects
-        allowed_values = _convert_schema_to_allowed_values(request.allowed_values)
-        
         metadata_type = await metadata_svc.update_metadata_type(
             key=key,
             display_name=request.display_name,
             description=request.description,
-            allowed_values=allowed_values,
             is_active=request.is_active,
         )
         
@@ -288,6 +338,101 @@ async def update_metadata_type(key: str, request: UpdateMetadataTypeRequest, _ad
         )
 
 
+@router.post(
+    "/{key}/values",
+    response_model=MetadataTypeResponse,
+    summary="Add an allowed value to metadata type",
+    description="Add a new allowed value to an existing metadata type.",
+)
+async def add_metadata_value(
+    key: str, 
+    request: AllowedValueCreateRequest, 
+    _admin: Dict[str, Any] = Depends(require_admin)
+):
+    try:
+        metadata_svc = get_metadata_service()
+        allowed_value = AllowedValue(
+            value=request.value,
+            display_name=request.display_name,
+            is_active=request.is_active,
+            color=request.color,
+            visible_roles=request.visible_roles,
+        )
+        
+        metadata_type = await metadata_svc.add_metadata_value(key, allowed_value)
+        return MetadataTypeResponse(
+            metadata_id=str(metadata_type.id),
+            key=metadata_type.key,
+            display_name=metadata_type.display_name,
+            description=metadata_type.description,
+            allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
+            is_active=metadata_type.is_active,
+            is_system=metadata_type.is_system,
+            total_files=metadata_type.total_files,
+            created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
+            updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
+        )
+    except (NotFoundException, ValidationException, ConflictException) as e:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(e, NotFoundException) else (status.HTTP_409_CONFLICT if isinstance(e, ConflictException) else status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(
+            status_code=status_code,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error adding metadata value to {key}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add metadata value: {str(e)}",
+        )
+
+@router.patch(
+    "/{key}/values/{value}",
+    response_model=MetadataTypeResponse,
+    summary="Update an allowed value of metadata type",
+    description="Update an existing allowed value.",
+)
+async def update_metadata_value(
+    key: str, 
+    value: str,
+    request: AllowedValueUpdateRequest, 
+    _admin: Dict[str, Any] = Depends(require_admin)
+):
+    try:
+        metadata_svc = get_metadata_service()
+        metadata_type = await metadata_svc.update_metadata_value(
+            key=key,
+            value_key=value,
+            display_name=request.display_name,
+            is_active=request.is_active,
+            color=request.color,
+            visible_roles=request.visible_roles,
+        )
+        return MetadataTypeResponse(
+            metadata_id=str(metadata_type.id),
+            key=metadata_type.key,
+            display_name=metadata_type.display_name,
+            description=metadata_type.description,
+            allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
+            is_active=metadata_type.is_active,
+            is_system=metadata_type.is_system,
+            total_files=metadata_type.total_files,
+            created_at=metadata_type.created_at.isoformat() if metadata_type.created_at else None,
+            updated_at=metadata_type.updated_at.isoformat() if metadata_type.updated_at else None,
+        )
+    except (NotFoundException, ValidationException) as e:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(e, NotFoundException) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(
+            status_code=status_code,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error updating metadata value {value} in {key}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update metadata value: {str(e)}",
+        )
+
+
 @router.delete(
     "/{key}/values/{value}",
     response_model=MetadataTypeResponse,
@@ -316,7 +461,8 @@ async def delete_metadata_value(
                     display_name=av.get("display_name", av["value"]),
                     is_active=av.get("is_active", True),
                     color=av.get("color"),
-                    total_files=av.get("total_files", 0)
+                    total_files=av.get("total_files", 0),
+                    visible_roles=av.get("visible_roles", []),
                 ) for av in updated_metadata.allowed_values
             ]
             

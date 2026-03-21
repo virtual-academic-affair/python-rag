@@ -56,8 +56,8 @@ async def create_store(request: CreateStoreRequest, _admin: Dict[str, Any] = Dep
     **Example:**
     ```json
     {
-      "display_name": "Đào tạo 2026",
-      "set_as_default": false
+      "displayName": "Đào tạo 2026",
+      "setAsDefault": false
     }
     ```
     """
@@ -99,7 +99,7 @@ async def create_store(request: CreateStoreRequest, _admin: Dict[str, Any] = Dep
     description="List all stores with pagination. Use is_default=true to get default store.",
 )
 async def list_stores(
-    is_default: bool = Query(None, description="Filter by default store (true to get default store only)"),
+    is_default: bool = Query(None, alias="isDefault", description="Filter by default store (true to get default store only)"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
     _admin: Dict[str, Any] = Depends(require_admin),
@@ -223,7 +223,7 @@ async def update_store(store_id: str, request: UpdateStoreRequest, _admin: Dict[
     summary="Delete all stores",
     description="Delete all stores (from Gemini, R2, and MongoDB).",
 )
-async def delete_all_stores():
+async def delete_all_stores(_admin: Dict[str, Any] = Depends(require_admin)):
     """
     Delete all stores (full delete from Gemini, R2, and MongoDB).
     

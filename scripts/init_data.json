@@ -1,7 +1,7 @@
 {
   "default_store": {
-    "display_name": "AI Service Store",
-    "set_as_default": true
+    "displayName": "AI Service Store",
+    "setAsDefault": true
   },
   "metadata_types": [
     {
@@ -9,68 +9,68 @@
       "displayName": "Phòng ban",
       "description": "Phòng ban quản lý tài liệu",
       "allowedValues": [
-        {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB"},
-        {"value": "khcn", "displayName": "KHCN", "isActive": true, "color": "#9B59B6"},
-        {"value": "ctsv", "displayName": "CTSV", "isActive": true, "color": "#E67E22"},
-        {"value": "htqt", "displayName": "HTQT", "isActive": true, "color": "#1ABC9C"},
-        {"value": "hanh_chinh", "displayName": "Hành chính", "isActive": true, "color": "#E74C3C"},
-        {"value": "tai_chinh", "displayName": "Tài chính", "isActive": true, "color": "#F39C12"},
-        {"value": "all", "displayName": "Tất cả phòng ban", "isActive": true, "color": "#95A5A6"}
+        {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "khcn", "displayName": "KHCN", "isActive": true, "color": "#9B59B6", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "ctsv", "displayName": "CTSV", "isActive": true, "color": "#E67E22", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "htqt", "displayName": "HTQT", "isActive": true, "color": "#1ABC9C", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "hanh_chinh", "displayName": "Hành chính", "isActive": true, "color": "#E74C3C", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "tai_chinh", "displayName": "Tài chính", "isActive": true, "color": "#F39C12", "visibleRoles": ["admin", "lecture", "student"]},
+        {"value": "all", "displayName": "Tất cả phòng ban", "isActive": true, "color": "#95A5A6", "visibleRoles": ["admin", "lecture", "student"]}
       ]
     }
   ],
   "files": [
     {
       "filename": "test 1.pdf",
-      "display_name": "Quy chế đào tạo 2024-2025",
+      "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
-        "access_scope": "cong_khai",
-        "academic_year": "2024-2025",
+        "accessScope": "student",
+        "academicYear": "2024-2025",
         "department": "dao_tao"
       }
     },
     {
       "filename": "test 2.pdf",
-      "display_name": "Hướng dẫn đăng ký học phần",
+      "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
-        "access_scope": "cong_khai",
-        "academic_year": "2024-2025",
+        "accessScope": "student",
+        "academicYear": "2024-2025",
         "department": "dao_tao"
       }
     },
     {
       "filename": "test 3.pdf",
-      "display_name": "Quy định học bổng sinh viên",
+      "displayName": "Quy định học bổng sinh viên",
       "metadata": {
-        "access_scope": "cong_khai",
-        "academic_year": "2024-2025",
+        "accessScope": "student",
+        "academicYear": "2024-2025",
         "department": "ctsv"
       }
     },
     {
       "filename": "test 4.pdf",
-      "display_name": "Thông tin hợp tác quốc tế",
+      "displayName": "Thông tin hợp tác quốc tế",
       "metadata": {
-        "access_scope": "noi_bo",
-        "academic_year": "2024-2025",
+        "accessScope": "admin",
+        "academicYear": "2024-2025",
         "department": "htqt"
       }
     },
     {
       "filename": "test_document.txt",
-      "display_name": "Quy chế nghiên cứu khoa học",
+      "displayName": "Quy chế nghiên cứu khoa học",
       "metadata": {
-        "access_scope": "cong_khai",
-        "academic_year": "all",
+        "accessScope": "student",
+        "academicYear": "all",
         "department": "khcn"
       }
     },
     {
       "filename": "test_document_2.txt",
-      "display_name": "Hướng dẫn sinh hoạt công dân",
+      "displayName": "Hướng dẫn sinh hoạt công dân",
       "metadata": {
-        "access_scope": "cong_khai",
-        "academic_year": "2024-2025",
+        "accessScope": "student",
+        "academicYear": "2024-2025",
         "department": "ctsv"
       }
     }

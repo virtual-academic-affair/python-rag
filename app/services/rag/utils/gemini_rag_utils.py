@@ -1,11 +1,16 @@
 """
 Gemini RAG Utils - Helpers for formatting, extracting sources, and injecting citations.
 """
-from typing import Optional
+import asyncio
+import time
+import logging
+from typing import Optional, List, Dict, Any, Tuple
 
-from app.models.schemas import ChatHistoryItem
 from app.repositories.file_repository import FileRepository
+from app.storage.r2_client import r2_storage
+from app.core.exceptions import GeminiException
 
+logger = logging.getLogger(__name__)
 
 def inject_citations(text: str, response, chunk_map: dict) -> str:
     """Inject citation markers like [1], [2] at end of grounded sentences."""
@@ -73,8 +78,8 @@ def inject_citations(text: str, response, chunk_map: dict) -> str:
     return result
 
 
-def format_chat_history(history: list[ChatHistoryItem]) -> str:
-    """Format chat history into readable text."""
+def format_chat_history(history: List[Any]) -> str:
+    """Format chat history into readable text. Note: history items should have role and content members."""
     if not history:
         return "(Chưa có lịch sử hội thoại)"
     
@@ -192,8 +197,6 @@ async def enrich_sources_with_urls(sources: Optional[list[dict]], file_repo: Fil
             }
     
     # Enrich sources with presigned URLs
-    from app.storage.r2_client import r2_storage
-    
     for source in sources:
         title = source.get("title")
         if title and title in file_map:
@@ -219,12 +222,58 @@ def extract_token_usage(response) -> Optional[dict]:
         c = response.candidates[0]
         if hasattr(c, "usage_metadata") and c.usage_metadata:
             usage = c.usage_metadata
-
+    
     if not usage:
         return None
-        
+    
     return {
         "prompt_token_count": getattr(usage, "prompt_token_count", 0),
         "candidates_token_count": getattr(usage, "candidates_token_count", 0),
         "total_token_count": getattr(usage, "total_token_count", 0),
     }
+
+
+async def wait_for_gemini_operation(client, operation, display_name: str, store_name: str, timeout: int = 120) -> str:
+    """Wait for Gemini operation to complete and extract document name."""
+    start_time = time.time()
+    
+    while not operation.done:
+        if time.time() - start_time > timeout:
+            raise GeminiException(f"Upload timeout after {timeout}s")
+        await asyncio.sleep(2)
+        operation = await asyncio.to_thread(client.operations.get, operation)
+    
+    if hasattr(operation, "error") and operation.error:
+        raise GeminiException(f"Upload failed: {operation.error}")
+    
+    # Extract document name
+    document_name = (
+        getattr(getattr(operation, "result", None), "name", None) or
+        getattr(getattr(operation, "response", None), "name", None)
+    )
+    
+    # Fallback: list documents to find by display_name
+    if not document_name:
+        document_name = await find_gemini_document_by_name(client, store_name, display_name)
+    
+    if not document_name:
+        raise GeminiException("Could not determine document name after upload")
+    
+    return document_name
+
+
+async def find_gemini_document_by_name(client, store_name: str, display_name: str) -> Optional[str]:
+    """Find document in store by display name."""
+    try:
+        from app.services.rag.gemini_client import gemini_client
+        docs = list(await asyncio.to_thread(
+            client.file_search_stores.documents.list,
+            parent=store_name
+        ))
+        for doc in docs:
+            if getattr(doc, "display_name", None) == display_name:
+                return doc.name
+        return docs[-1].name if docs else None
+    except Exception as e:
+        logger.warning(f"Failed to list Gemini documents: {e}")
+        return None

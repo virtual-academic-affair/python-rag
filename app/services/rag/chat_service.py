@@ -32,7 +32,14 @@ class ChatService:
     """
     
     def __init__(self):
-        self._file_repo = FileRepository()
+        self._file_repo = None
+
+    @property
+    def file_repo(self) -> FileRepository:
+        """Lazy load file repository."""
+        if self._file_repo is None:
+            self._file_repo = FileRepository()
+        return self._file_repo
 
     async def generate_chat_response(
         self,
@@ -70,23 +77,17 @@ class ChatService:
         )
         
         # Add File Search tool
-        if metadata_filter:
-            file_search_config = types.FileSearch(
-                fileSearchStoreNames=[store_name],
-                metadataFilter=metadata_filter
-            )
-        else:
-            file_search_config = types.FileSearch(
-                fileSearchStoreNames=[store_name]
-            )
+        file_search_config = types.FileSearch(
+            fileSearchStoreNames=[store_name],
+            metadataFilter=metadata_filter
+        )
         
         config.tools = [
             types.Tool(fileSearch=file_search_config)
         ]
         
-        # Run in executor to avoid blocking
-        response = await asyncio.to_thread(
-            gemini_client.client.models.generate_content,
+        # Native async Gemini call
+        response = await gemini_client.client.aio.models.generate_content(
             model=settings.GEMINI_MODEL,
             contents=full_prompt,
             config=config,
@@ -105,7 +106,7 @@ class ChatService:
             answer = inject_citations(answer, response, chunk_map)
         
         # Enrich sources with download URLs
-        sources = await enrich_sources_with_urls(sources, self._file_repo)
+        sources = await enrich_sources_with_urls(sources, self.file_repo)
         
         # Extract token usage
         token_usage = extract_token_usage(response)
@@ -127,6 +128,7 @@ class ChatService:
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat response using Server-Sent Events (SSE) with RAG.
+        Uses native async streaming.
         """
         if not store_name:
             raise ValueError("store_name is required. RAG Service requires File Search for all chat operations.")
@@ -149,54 +151,30 @@ class ChatService:
         )
         
         # Add File Search tool
-        if metadata_filter:
-            file_search_config = types.FileSearch(
-                fileSearchStoreNames=[store_name],
-                metadataFilter=metadata_filter
-            )
-        else:
-            file_search_config = types.FileSearch(
-                fileSearchStoreNames=[store_name]
-            )
+        file_search_config = types.FileSearch(
+            fileSearchStoreNames=[store_name],
+            metadataFilter=metadata_filter
+        )
         
         config.tools = [
             types.Tool(fileSearch=file_search_config)
         ]
         
-        chunk_queue: queue.Queue = queue.Queue()
-        _SENTINEL = object()
-
-        def _stream_in_thread():
-            try:
-                stream = gemini_client.client.models.generate_content_stream(
-                    model=settings.GEMINI_MODEL,
-                    contents=full_prompt,
-                    config=config,
-                )
-                for chunk in stream:
-                    chunk_queue.put(chunk)
-            except Exception as exc:
-                chunk_queue.put(exc)
-            finally:
-                chunk_queue.put(_SENTINEL)
-
-        stream_thread = asyncio.get_event_loop().run_in_executor(None, _stream_in_thread)
-        
         all_chunks = []
         
-        while True:
-            item = await asyncio.to_thread(chunk_queue.get)
-            if item is _SENTINEL:
-                break
-            if isinstance(item, Exception):
-                raise item
-            chunk = item
+        # Native async Gemini streaming
+        stream = await gemini_client.client.aio.models.generate_content_stream(
+            model=settings.GEMINI_MODEL,
+            contents=full_prompt,
+            config=config,
+        )
+
+        async for chunk in stream:
             all_chunks.append(chunk)
             if hasattr(chunk, "text") and chunk.text:
                 yield json.dumps({"chunk": chunk.text, "done": False})
         
-        await stream_thread
-        
+        # Collect sources and usage from final aggregated state or chunks
         all_sources = []
         token_usage = {}
         
@@ -217,7 +195,7 @@ class ChatService:
                 seen.add(key)
                 unique_sources.append(source)
         
-        unique_sources = await enrich_sources_with_urls(unique_sources, self._file_repo)
+        unique_sources = await enrich_sources_with_urls(unique_sources, self.file_repo)
         
         processing_time_ms = int((time.time() - start_time) * 1000)
         
@@ -228,4 +206,13 @@ class ChatService:
             "processing_time_ms": processing_time_ms,
         })
 
-chat_service = ChatService()
+_chat_service_instance: Optional[ChatService] = None
+
+def get_chat_service() -> ChatService:
+    """Get singleton instance of ChatService."""
+    global _chat_service_instance
+    if _chat_service_instance is None:
+        _chat_service_instance = ChatService()
+    return _chat_service_instance
+
+chat_service = get_chat_service()

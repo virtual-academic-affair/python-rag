@@ -27,7 +27,7 @@ class GeminiClient:
     
     @property
     def client(self) -> genai.Client:
-        """Get the Gemini client instance."""
+        """Get the Gemini client instance for synchronous operations."""
         if self._client is None:
             raise RuntimeError("Gemini client not initialized")
         return self._client

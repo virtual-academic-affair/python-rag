@@ -18,6 +18,7 @@ from app.services.rag.metadata_service import MetadataService
 from app.core.config import Settings
 from app.core.database import Database
 from app.core.exceptions import ConflictException
+from datetime import datetime
 import logging
 
 logging.basicConfig(
@@ -37,11 +38,11 @@ SYSTEM_METADATA_TYPES = [
         "display_name": "Năm học",
         "description": "Năm học áp dụng (VD: 2023-2024, 2024-2025). Dùng 'all' cho tất cả năm học.",
         "allowed_values": [
-            AllowedValue(value="2022-2023", display_name="2022-2023", is_active=False),
-            AllowedValue(value="2023-2024", display_name="2023-2024", is_active=True),
-            AllowedValue(value="2024-2025", display_name="2024-2025", is_active=True),
-            AllowedValue(value="2025-2026", display_name="2025-2026", is_active=True),
-            AllowedValue(value="all", display_name="Tất cả năm học", is_active=True, color="#3498DB"),
+            AllowedValue(value="2022-2023", display_name="2022-2023", is_active=False, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="2023-2024", display_name="2023-2024", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="2024-2025", display_name="2024-2025", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="2025-2026", display_name="2025-2026", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="all", display_name="Tất cả năm học", is_active=True, color="#3498DB", visible_roles=["admin", "lecture", "student"]),
         ],
         "is_system": True,
     },
@@ -50,31 +51,40 @@ SYSTEM_METADATA_TYPES = [
         "display_name": "Khóa",
         "description": "Khóa sinh viên (VD: K18, K19, K20). Dùng 'all' cho tất cả khóa.",
         "allowed_values": [
-            AllowedValue(value="K18", display_name="Khóa 18", is_active=False),
-            AllowedValue(value="K19", display_name="Khóa 19", is_active=True),
-            AllowedValue(value="K20", display_name="Khóa 20", is_active=True),
-            AllowedValue(value="K21", display_name="Khóa 21", is_active=True),
-            AllowedValue(value="K22", display_name="Khóa 22", is_active=True),
-            AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB"),
+            AllowedValue(value="K18", display_name="Khóa 18", is_active=False, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="K19", display_name="Khóa 19", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="K20", display_name="Khóa 20", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="K21", display_name="Khóa 21", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="K22", display_name="Khóa 22", is_active=True, visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB", visible_roles=["admin", "lecture", "student"]),
         ],
         "is_system": True,
     },
     {
         "key": "access_scope",
         "display_name": "Phạm vi truy cập",
-        "description": "Quyền truy cập tài liệu (công khai cho tất cả, hoặc nội bộ cho staff/admin).",
+        "description": "Quyền truy cập tài liệu: admin (chỉ admin), lecture (giảng viên), student (sinh viên/công khai).",
         "allowed_values": [
             AllowedValue(
-                value="cong_khai",
-                display_name="Công khai",
+                value="admin",
+                display_name="Admin",
                 is_active=True,
-                color="#27AE60"
+                color="#E74C3C",
+                visible_roles=["admin"],          # Only admins see this option
             ),
             AllowedValue(
-                value="noi_bo",
-                display_name="Nội bộ (Staff/Admin)",
+                value="lecture",
+                display_name="Lecture",
                 is_active=True,
-                color="#E74C3C"
+                color="#F39C12",
+                visible_roles=["admin", "lecture"],  # Admins and lecturers see this
+            ),
+            AllowedValue(
+                value="student",
+                display_name="Student",
+                is_active=True,
+                color="#27AE60",
+                visible_roles=["admin", "lecture", "student"],
             ),
         ],
         "is_system": True,
@@ -98,12 +108,29 @@ async def seed_system_metadata():
     for meta_def in SYSTEM_METADATA_TYPES:
         key = meta_def["key"]
         try:
-            await metadata_service.create_metadata_type(**meta_def)
-            logger.info(f"✅ Created system metadata: {key}")
-            created_count += 1
-        except ConflictException:
-            logger.info(f"⏭️  Skipped (already exists): {key}")
-            skipped_count += 1
+            # Check if exists
+            all_types = await metadata_service.list_all_metadata_types()
+            existing = next((t for t in all_types if t.key == key), None)
+            
+            if existing:
+                logger.info(f"🔄 Updating existing system metadata: {key}")
+                # We use a custom update logic or just overwrite the fields
+                await Database.get_db()["metadata_types"].update_one(
+                    {"key": key},
+                    {"$set": {
+                        "display_name": meta_def["display_name"],
+                        "description": meta_def["description"],
+                        "allowed_values": [v.__dict__ if hasattr(v, "__dict__") else v for v in meta_def["allowed_values"]],
+                        "is_system": True,
+                        "updated_at": datetime.now()
+                    }}
+                )
+                logger.info(f"✅ Updated system metadata: {key}")
+                created_count += 1
+            else:
+                await metadata_service.create_metadata_type(**meta_def)
+                logger.info(f"✅ Created system metadata: {key}")
+                created_count += 1
         except Exception as e:
             logger.error(f"❌ Failed to create {key}: {e}", exc_info=True)
     

@@ -8,8 +8,9 @@ Logic:
 - has AllowedValue(value="all") → auto add OR key="all"
 - Keys joined with AND
 - Enforce access_scope by role:
-    * student → override access_scope="cong_khai"
-    * staff/admin → no access_scope filter
+    * student → access_scope="student"
+    * lecture → access_scope="lecture" or "student"
+    * admin → no access_scope filter
 
 Uses AllowedValue.value (NOT display_name) for filter string.
 """
@@ -99,14 +100,14 @@ class FilterBuilder:
             skip_validation: If True, skip validation (useful when metadata already validated at upload)
         
         Returns:
-            Gemini filter string (e.g., 'access_scope="cong_khai" AND (academic_year="2024-2025" OR academic_year="all")')
+            Gemini filter string (e.g., 'access_scope="student" AND (academic_year="2024-2025" OR academic_year="all")')
         
         Raises:
             ValueError: If metadata validation fails (when skip_validation=False)
         
         Note:
-            For student role, access_scope is enforced to "cong_khai" regardless of input.
-            For staff/admin, access_scope filter is removed (can see all documents).
+            For student role, access_scope is enforced to "student" regardless of input.
+            For admin, access_scope filter is removed (can see all documents).
         """
         # Load metadata types cache
         await self._load_metadata_types_cache()
@@ -117,11 +118,15 @@ class FilterBuilder:
         # Enforce access_scope by role BEFORE validation
         # This prevents validation error when student doesn't provide access_scope
         if user_role == "student":
-            # Student can only see public documents
-            filter_metadata["access_scope"] = "cong_khai"
-            logger.debug(f"Role={user_role}: enforcing access_scope=cong_khai")
-        elif user_role in ["staff", "admin"]:
-            # Staff/admin can see all - remove access_scope filter
+            # Student can only see student documents
+            filter_metadata["access_scope"] = "student"
+            logger.debug(f"Role={user_role}: enforcing access_scope=student")
+        elif user_role == "lecture":
+            # Lecture can see lecture and student documents
+            filter_metadata["access_scope"] = ["lecture", "student"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'student']")
+        elif user_role == "admin":
+            # Admin can see all - remove access_scope filter
             filter_metadata.pop("access_scope", None)
             logger.debug(f"Role={user_role}: no access_scope filter")
         
@@ -164,6 +169,37 @@ class FilterBuilder:
         return filter_string
 
 
+    def quick_convert(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Convert metadata filter from JSON key-value format to Gemini FileSearch format.
+        Simple conversion without DB validation or role-based enforcement.
+        Internal helper for cases where metadata is already trusted/validated.
+
+        Input format (JSON):
+            {"department": "Đào tạo", "category": "policy"}
+
+        Output format (Gemini):
+            'department="Đào tạo" AND category="policy"'
+        """
+        if not metadata or not isinstance(metadata, dict):
+            return None
+
+        filter_parts = []
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            if isinstance(value, str):
+                filter_parts.append(f'{key}="{value}"')
+            elif isinstance(value, (int, float)):
+                filter_parts.append(f'{key}={value}')
+            elif isinstance(value, list):
+                list_parts = [f'{key}="{v}"' for v in value if isinstance(v, str)]
+                if list_parts:
+                    filter_parts.append(f"({' OR '.join(list_parts)})")
+
+        return " AND ".join(filter_parts) if filter_parts else None
+
+
 # ====================================
 # SINGLETON INSTANCE
 # ====================================
@@ -180,7 +216,7 @@ def get_filter_builder() -> FilterBuilder:
 
 
 # ====================================
-# CONVENIENCE FUNCTION
+# CONVENIENCE FUNCTIONS
 # ====================================
 
 async def build_metadata_filter(
@@ -189,15 +225,7 @@ async def build_metadata_filter(
     skip_validation: bool = False
 ) -> str:
     """
-    Convenience function to build Gemini filter string.
-    
-    Args:
-        metadata: Metadata dict
-        user_role: User role (student, staff, admin)
-        skip_validation: If True, skip validation (default False)
-    
-    Returns:
-        Gemini filter string
+    Convenience function to build Gemini filter string with full validation and role enforcement.
     """
     builder = get_filter_builder()
     return await builder.build_filter(metadata, user_role, skip_validation)
@@ -205,36 +233,6 @@ async def build_metadata_filter(
 
 def convert_metadata_filter_to_gemini_format(metadata_filter: Optional[Dict[str, Any]]) -> Optional[str]:
     """
-    Convert metadata filter from JSON key-value format to Gemini FileSearch format.
-    Simple conversion without DB validation — use build_metadata_filter() for
-    role-based, validated filter building.
-
-    Input format (JSON):
-        {"department": "Đào tạo", "category": "policy"}
-
-    Output format (Gemini):
-        'department="Đào tạo" AND category="policy"'
-
-    Args:
-        metadata_filter: Dictionary of metadata key-value pairs
-
-    Returns:
-        Gemini-compatible metadata filter string, or None if no filter
+    Convenience function for quick conversion without validation.
     """
-    if not metadata_filter or not isinstance(metadata_filter, dict):
-        return None
-
-    filter_parts = []
-    for key, value in metadata_filter.items():
-        if value is None:
-            continue
-        if isinstance(value, str):
-            filter_parts.append(f'{key}="{value}"')
-        elif isinstance(value, (int, float)):
-            filter_parts.append(f'{key}={value}')
-        elif isinstance(value, list):
-            list_parts = [f'{key}="{v}"' for v in value if isinstance(v, str)]
-            if list_parts:
-                filter_parts.append(f"({' OR '.join(list_parts)})")
-
-    return " AND ".join(filter_parts) if filter_parts else None
+    return get_filter_builder().quick_convert(metadata_filter)
