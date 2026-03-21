@@ -14,6 +14,7 @@ from app.core.exceptions import (
 )
 from app.models.database import MetadataTypeDocument, AllowedValue
 from app.repositories.metadata_repository import MetadataRepository
+from app.services.rag.utils.file_utils import to_snake, normalize_to_snake
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,9 @@ class MetadataService:
         Returns:
             MetadataTypeDocument: Created metadata type
         """
+        # Normalize key
+        key = to_snake(key)
+        
         # Check if key already exists
         existing = await self.metadata_repo.find_by_key(key)
         if existing:
@@ -75,6 +79,8 @@ class MetadataService:
         allowed_values_dict = None
         if allowed_values is not None:
             for av in allowed_values:
+                # Normalize value
+                av.value = to_snake(av.value)
                 # CRITICAL: visible_roles is mandatory and cannot be empty
                 if not av.visible_roles:
                     raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{av.value}'")
@@ -131,6 +137,10 @@ class MetadataService:
         allowed_value: AllowedValue
     ) -> MetadataTypeDocument:
         """Add a new allowed value to a metadata type."""
+        # Normalize key and value
+        key = to_snake(key)
+        allowed_value.value = to_snake(allowed_value.value)
+
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
@@ -162,6 +172,10 @@ class MetadataService:
         visible_roles: Optional[list[str]] = None,
     ) -> MetadataTypeDocument:
         """Update properties of an existing allowed value."""
+        # Normalize key and value_key
+        key = to_snake(key)
+        value_key = to_snake(value_key)
+        
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
@@ -204,6 +218,9 @@ class MetadataService:
             ForbiddenException: If is_system=True
             ConflictException: If total_files > 0
         """
+        # Normalize key
+        key = to_snake(key)
+        
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
@@ -230,6 +247,10 @@ class MetadataService:
             NotFoundException: If metadata type not found
             ConflictException: If value total_files > 0 or value not found
         """
+        # Normalize key and value
+        key = to_snake(key)
+        value = to_snake(value)
+        
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
@@ -332,6 +353,10 @@ class MetadataService:
         metadata_types_map = {mt.key: mt for mt in all_metadata_types}
         
         for key, value in metadata.items():
+            # Normalize key and value
+            key = to_snake(key)
+            value = normalize_to_snake(value)
+            
             # Check if key is registered
             if key not in metadata_types_map:
                 errors.append(f"Unknown metadata key: '{key}'")

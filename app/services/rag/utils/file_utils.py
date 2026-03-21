@@ -5,7 +5,7 @@ Validation, type detection, and file handling helpers.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from slugify import slugify
 from datetime import datetime, timezone
 import re
@@ -212,6 +212,18 @@ def get_file_extension(filename: str) -> str:
     """
     return os.path.splitext(filename)[1].lower()
 
+def get_download_url(storage_path: str) -> Optional[str]:
+    """
+    Generate direct download URL for a file.
+    Returns None if R2_PUBLIC_DOMAIN is not configured.
+    """
+    if not settings.R2_PUBLIC_DOMAIN or not storage_path:
+        return None
+    
+    base_url = settings.R2_PUBLIC_DOMAIN.rstrip('/')
+    path = storage_path.lstrip('/')
+    return f"{base_url}/{path}"
+
 def cleanup_temp_file(file_path: str) -> None:
     try:
         if file_path and os.path.exists(file_path):
@@ -222,13 +234,28 @@ def cleanup_temp_file(file_path: str) -> None:
 def to_snake(name: str) -> str:
     """Convert camelCase string to snake_case."""
     name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-0])([A-Z])', r'\1_\2', name).lower()
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+
+def normalize_to_snake(value: Any) -> Any:
+    """
+    Recursively normalize strings and list of strings to snake_case.
+    Also handles dictionaries by normalizing both keys and values.
+    """
+    if isinstance(value, str):
+        return to_snake(value)
+    if isinstance(value, list):
+        return [normalize_to_snake(v) for v in value]
+    if isinstance(value, dict):
+        return {to_snake(k): normalize_to_snake(v) for k, v in value.items()}
+    return value
 
 def convert_custom_metadata_to_snake(custom_metadata: dict) -> dict:
-    """Convert all keys in a dictionary from camelCase to snake_case."""
+    """
+    Convert all keys and string values in a dictionary from camelCase to snake_case.
+    """
     if not custom_metadata:
         return {}
-    return {to_snake(k): v for k, v in custom_metadata.items()}
+    return normalize_to_snake(custom_metadata)
 
 def convert_metadata_for_gemini(custom_metadata: dict) -> list[dict]:
     if not custom_metadata:

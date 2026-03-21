@@ -345,6 +345,7 @@ class FileUploadResponse(BaseSchema):
     gemini_document_name: Optional[str] = None
     custom_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
+    file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     message: Optional[str] = None
 
 
@@ -360,6 +361,7 @@ class FileDetailResponse(BaseSchema):
     status: str
     gemini_document_name: Optional[str] = None
     custom_metadata: Dict[str, Any] = Field(default_factory=dict)
+    file_url: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -379,6 +381,7 @@ class BatchFileUploadResult(BaseSchema):
     file_id: Optional[str] = None
     store_id: Optional[str] = None
     display_name: Optional[str] = None
+    file_url: Optional[str] = None
     error: Optional[str] = None
 
 

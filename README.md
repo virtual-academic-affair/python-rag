@@ -15,6 +15,8 @@ Service nhận email từ RabbitMQ, tự động phân loại và xử lý:
 
 Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiếm, chat RAG).
 
+- **Case Normalization**: Tự động chuẩn hóa metadata keys và values về `snake_case` (Chấp nhận cả camelCase và snake_case đầu vào).
+
 ---
 
 ## Tech Stack
@@ -103,11 +105,14 @@ python-rag/
 │       ├── db_utils.py                 # MongoDB helper
 │       └── pagination.py               # Paginated response helper
 ├── scripts/
-│   ├── gen_proto.py                    # Generate protobuf stubs
-│   ├── init_db.py                      # Khởi tạo index MongoDB
-│   ├── seed_metadata.py                # Seed 3 metadata types hệ thống
-│   ├── test_all_apis.sh                # Script test nhanh API
-│   └── uploads/                        # Dữ liệu upload mẫu
+│   ├── test/                       # Modular test scripts
+│   │   ├── common.sh               # Shared helpers
+│   │   ├── ...                     # Individual test modules
+│   │   └── run_all.sh              # Master test script
+│   ├── gen_proto.py                # Generate protobuf stubs
+│   ├── init_db.py                  # Khởi tạo index MongoDB
+│   ├── seed_metadata.py            # Seed 3 metadata types hệ thống
+│   └── uploads/                    # Dữ liệu upload mẫu
 ├── docs/
 │   ├── AI_Service.postman_collection.json
 │   ├── api.txt
@@ -340,6 +345,7 @@ ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html
 python scripts/gen_proto.py
 python scripts/init_db.py
 python scripts/seed_metadata.py
+bash scripts/test/run_all.sh      # Chạy bộ test suite
 ```
 
 ---

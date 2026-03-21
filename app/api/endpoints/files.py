@@ -24,7 +24,11 @@ from app.models.schemas import (
     SyncResponse,
 )
 from app.services.rag.file_service import get_file_service
-from app.services.rag.utils.file_utils import convert_custom_metadata_to_snake, convert_custom_metadata_to_camel
+from app.services.rag.utils.file_utils import (
+    convert_custom_metadata_to_snake,
+    convert_custom_metadata_to_camel,
+    get_download_url,
+)
 
 from app.core.exceptions import (
     NotFoundException,
@@ -122,6 +126,7 @@ async def upload_file(
             status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
+            file_url=get_download_url(file_doc.storage_path),
             message=message,
         )
         
@@ -234,6 +239,7 @@ async def list_files(
                     storage_path=f.storage_path,
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
                     custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
+                    file_url=get_download_url(f.storage_path),
                     created_at=f.created_at.isoformat() if f.created_at else "",
                     updated_at=f.updated_at.isoformat() if f.updated_at else "",
                 )
@@ -352,6 +358,7 @@ async def batch_upload_files(
                     file_id=str(file_doc.id),
                     display_name=file_doc.display_name,
                     gemini_document_name=file_doc.gemini_document_name,
+                    file_url=get_download_url(file_doc.storage_path),
                     message="Uploaded successfully",
                 ))
                 successful += 1
@@ -442,6 +449,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            file_url=get_download_url(file_doc.storage_path),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
