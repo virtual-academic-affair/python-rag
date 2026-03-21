@@ -39,7 +39,27 @@ MỤC LỤC
  9. Email Draft Flow (Internal)
 10. RabbitMQ Message Format
 
-TỔNG: 30 ENDPOINTS
+TỔNG: 31 ENDPOINTS
+
+════════════════════════════════════════════════════════════════════════════════
+HƯỚNG DẪN TEST (TESTING GUIDE)
+════════════════════════════════════════════════════════════════════════════════
+
+Cấu trúc scripts/test/ (Modular Test Suite):
+  - common.sh          : Helpers & Cấu hình dùng chung.
+  - test_health.sh     : Test Health Check.
+  - test_classification.sh: Test Email Classification.
+  - test_stores.sh     : Test Store Management.
+  - test_metadata.sh   : Test Metadata Types.
+  - test_files.sh      : Test File Management.
+  - test_chat.sh       : Test Chat & Streaming.
+  - run_all.sh         : Master script chạy toàn bộ.
+
+CÁCH CHẠY TEST:
+  1. Chạy tất cả: bash scripts/test/run_all.sh
+  2. Chạy lẻ   : bash scripts/test/test_stores.sh
+  3. Tùy biến : AI_SERVICE_URL=http://... TOKEN=... bash scripts/test/run_all.sh
+
 
 ════════════════════════════════════════════════════════════════════════════════
                            1. HEALTH CHECK
@@ -416,6 +436,11 @@ LUỒNG XỬ LÝ (WORKFLOW):
 Metadata Type là định nghĩa các trường metadata có thể gắn vào file khi upload.
 Được dùng để filter documents trong RAG (Gemini File Search filter string).
 
+GHI CHÚ VỀ CHUẨN HÓA (CASE NORMALIZATION):
+  - Hệ thống tự động chuẩn hóa metadata keys và string values về snake_case trong DB.
+  - API hỗ trợ nhận cả camelCase và snake_case cho key và value (input flexibility).
+  - Kết quả trả về từ API sẽ duy trì camelCase cho keys để đồng bộ project.
+
 ────────────────────────────────────────────────────────────────────────────────
 4.1. POST /api/metadata - Tạo Metadata Type
 ────────────────────────────────────────────────────────────────────────────────
@@ -694,6 +719,7 @@ RESPONSE 201 Created:
     "status": "active",
     "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
     "customMetadata": {"access_scope": "student", "academic_year": "2024-2025"},
+    "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
     "createdAt": "2026-03-11T10:30:00.000000",
     "message": "File uploaded successfully"
   }
@@ -728,6 +754,7 @@ QUERY PARAMETERS:
   - storeId: string (optional) - filter by store
   - fileStatus: string (optional) - active|processing|failed
   - metadataFilter: string (optional, JSON format) - e.g. {"academicYear": "2024-2025"}
+    - Hỗ trợ cả camelCase và snake_case cho keys và values.
     - Hỗ trợ giá trị "all" để lấy tất cả (ví dụ: file có academicYear="all" sẽ luôn xuất hiện khi filter bất kỳ năm học nào)
   - page: int (optional, default: 1)
   - limit: int (optional, default: 50, max: 100)
@@ -746,6 +773,7 @@ RESPONSE 200 OK:
         "storagePath": "xxx/2026/03/document.pdf",
         "status": "active",
         "customMetadata": {"department": "dao_tao"},
+        "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
         "createdAt": "2026-03-11T10:30:00.000000",
         "updatedAt": "2026-03-11T10:30:00.000000"
       }

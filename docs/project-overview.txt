@@ -222,10 +222,18 @@ Giao tiếp với:
   |   +-- AI_Service.postman_collection.json  Postman 31 endpoints
   |
   +-- scripts/
+      |-- test/                  Thư mục chứa các script test modular
+      |   |-- common.sh          Cấu hình và helper dùng chung
+      |   |-- test_health.sh     Test Health Check
+      |   |-- test_classification.sh Test Classification
+      |   |-- test_stores.sh     Test Store Management
+      |   |-- test_metadata.sh   Test Metadata Types
+      |   |-- test_files.sh      Test File Management
+      |   |-- test_chat.sh       Test Chat & Streaming
+      |   +-- run_all.sh         Master script chạy toàn bộ test
       |-- seed_metadata.py       Tạo 3 system metadata (chạy 1 lần)
       |-- init_db.py             Tạo indexes MongoDB (chạy 1 lần)
       |-- drop_database.py       XÓA toàn bộ DB (chỉ dev)
-      |-- test_all_apis.sh       Bash script test 36 API
       +-- uploads/               Files mẫu cho test
 
 
@@ -996,13 +1004,23 @@ scripts/drop_database.py
   KHONG CHAY TREN PRODUCTION.
   CHAY: python scripts/drop_database.py
 
-scripts/test_all_apis.sh
-  Bash script test 36 API endpoints:
-    Health → Classification → Stores → Metadata → Files → Chat
-  Tự động lưu STORE_ID và FILE_ID của test vừa tạo.
-  Hiển thị PASS / FAIL / SKIP cho từng test.
-  CHAY: bash scripts/test_all_apis.sh
-  TUY BIEN BIEN MOI TRUONG: AI_SERVICE_URL, JWT_TOKEN
+scripts/test/ (Modular Test Suite)
+  Thư mục chứa các script test được chia nhỏ theo module nghiệp vụ:
+    - common.sh: Cấu hình chung, helper functions (log_info, check_response) và xử lý màu sắc.
+    - test_health.sh: Kiểm tra sức khỏe của API (/health, root).
+    - test_classification.sh: Kiểm tra luồng phân loại email sang classRegistration, inquiry, task, other.
+    - test_stores.sh: Kiểm tra CRUD store và đồng bộ thống kê từ Gemini.
+    - test_metadata.sh: Kiểm tra CRUD Metadata Type và Allowed Values.
+    - test_files.sh: Kiểm tra upload, download, check-sync và detail file.
+    - test_chat.sh: Kiểm tra Chat Query và Streaming SSE.
+    - run_all.sh: Master script điều phối chạy tất cả các module trên và tổng kết PASS/FAIL.
+
+  CÁCH CHẠY:
+    1. Chạy tất cả: bash scripts/test/run_all.sh
+    2. Chạy lẻ: bash scripts/test/test_stores.sh
+    3. Tùy biến: AI_SERVICE_URL=http://... TOKEN=your_jwt_token bash scripts/test/run_all.sh
+
+
 
 scripts/uploads/
   test_document.txt   — Quy chế đào tạo (upload test)
