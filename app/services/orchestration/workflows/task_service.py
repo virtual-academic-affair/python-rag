@@ -51,9 +51,11 @@ Extraction policy:
    - list -> []
 3) messageId must be copied from provided input messageId if available.
 4) due must be ISO-8601 string in UTC if provided, else null.
-5) assigneeIds MUST include any assignee names/emails explicitly mentioned (e.g., "giao cho", "phân công", "thầy/cô", "anh/chị").
-6) Always output a COMPLETE JSON object with all keys present; do not truncate.
-7) If the email is long, summarize description to <= 240 characters so the JSON fits.
+5) assigneeIds MUST extract search keywords for assignee lookup from explicit assignment phrases (e.g., "giao cho", "phân công", "assign to").
+6) For assigneeIds, keep ONLY core person names or emails. Remove honorifics/titles/pronouns such as "bạn", "anh", "chị", "cô", "thầy", "ông", "bà", "Mr", "Ms", "Dr".
+7) Do NOT rewrite assignee into descriptive forms; only return plain lookup tokens (example: "bạn Tài" -> "Tài", "cô Lan" -> "Lan").
+8) Always output a COMPLETE JSON object with all keys present; do not truncate.
+9) If the email is long, summarize description to <= 240 characters so the JSON fits.
 
 Field rules (for RAG search):
 - name: the task title assigned in the email.
@@ -61,7 +63,7 @@ Field rules (for RAG search):
 - due: the task deadline.
 - priority: the task importance level.
 - assigners: people/teams assigning the task extracted from the email.
-- assigneeIds: assignee names/emails explicitly assigned the task; keep honorifics if present (e.g., "thầy Nguyễn Văn A"). Always return string values for lookup.
+- assigneeIds: assignee lookup keywords only (plain names/emails) explicitly assigned the task. Strip honorifics/titles and keep only the core name token(s) for ID matching.
 - messageId: copy from input messageId.
 
 Normalization rules:
