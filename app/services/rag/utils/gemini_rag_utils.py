@@ -13,7 +13,7 @@ from app.core.exceptions import GeminiException
 logger = logging.getLogger(__name__)
 
 def inject_citations(text: str, response, chunk_map: dict) -> str:
-    """Inject citation markers like [1], [2] at end of grounded sentences."""
+    """Inject citation markers like [^1], [^2] at end of grounded sentences."""
     if not hasattr(response, "candidates") or not response.candidates:
         return text
         
@@ -63,8 +63,8 @@ def inject_citations(text: str, response, chunk_map: dict) -> str:
     inserts = []
     for idx, s_indices in insertion_groups.items():
         sorted_indices = sorted(list(s_indices))
-        # Format as: [1] [2] instead of [1, 2]
-        citation_str = " " + " ".join([f"[{i}]" for i in sorted_indices])
+        # Format as: [^1] [^2] instead of [1] [2]
+        citation_str = " " + " ".join([f"[^{i}]" for i in sorted_indices])
         inserts.append((idx, citation_str))
         
     # Sort descending to insert backwards safely

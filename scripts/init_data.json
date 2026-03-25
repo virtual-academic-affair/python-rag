@@ -9,13 +9,23 @@
       "displayName": "Phòng ban",
       "description": "Phòng ban quản lý tài liệu",
       "allowedValues": [
-        {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "khcn", "displayName": "KHCN", "isActive": true, "color": "#9B59B6", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "ctsv", "displayName": "CTSV", "isActive": true, "color": "#E67E22", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "htqt", "displayName": "HTQT", "isActive": true, "color": "#1ABC9C", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "hanh_chinh", "displayName": "Hành chính", "isActive": true, "color": "#E74C3C", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "tai_chinh", "displayName": "Tài chính", "isActive": true, "color": "#F39C12", "visibleRoles": ["admin", "lecture", "student"]},
-        {"value": "all", "displayName": "Tất cả phòng ban", "isActive": true, "color": "#95A5A6", "visibleRoles": ["admin", "lecture", "student"]}
+        {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB", "visibleRoles": ["lecture", "student"]},
+        {"value": "khcn", "displayName": "KHCN", "isActive": true, "color": "#9B59B6", "visibleRoles": ["lecture", "student"]},
+        {"value": "ctsv", "displayName": "CTSV", "isActive": true, "color": "#E67E22", "visibleRoles": ["lecture", "student"]},
+        {"value": "htqt", "displayName": "HTQT", "isActive": true, "color": "#1ABC9C", "visibleRoles": ["lecture", "student"]},
+        {"value": "hanh_chinh", "displayName": "Hành chính", "isActive": true, "color": "#E74C3C", "visibleRoles": ["lecture", "student"]},
+        {"value": "tai_chinh", "displayName": "Tài chính", "isActive": true, "color": "#F39C12", "visibleRoles": ["lecture", "student"]},
+        {"value": "inactive_val", "displayName": "Giá trị bị tắt", "isActive": false, "color": "#7F8C8D", "visibleRoles": ["lecture", "student"]},
+        {"value": "all", "displayName": "Tất cả phòng ban", "isActive": true, "color": "#95A5A6", "visibleRoles": ["lecture", "student"]}
+      ]
+    },
+    {
+      "key": "inactive_metadata",
+      "displayName": "Metadata bị tắt",
+      "description": "Dùng để test filter isActive",
+      "is_active": false,
+      "allowedValues": [
+        {"value": "v1", "displayName": "Value 1", "isActive": true, "visibleRoles": ["lecture", "student"]}
       ]
     }
   ],

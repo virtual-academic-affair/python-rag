@@ -210,7 +210,8 @@ Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthServ
 |---|---|---|---|---|
 | **Chat (RAG)** | POST | `/api/chat/query` | Public/Implicit | Tùy vào cấu hình auth filter |
 | | POST | `/api/chat/stream` | Public/Implicit | Tùy vào cấu hình auth filter |
-| File Search (GET) | `GET /api/files` | User (Auth) | `student`: student only; `lecture`: lecture+student; `admin`: all. Ngoài ra ẩn các meta fields dựa vào `visibleRoles` (Admin không bypass bộ lọc này) |
+| File Search (GET) | `GET /api/files` | User (Auth) | Liệt danh sách file trong **default store**. Hỗ trợ `keywords` & metadata filter. |
+| File Search Admin | `GET /api/files/admin` | **Admin** | Liệt danh sách file (mặc định lấy tất cả store nếu không truyền `storeId`). |
 | File Search (POST) | `POST /api/files` | Admin | Requires metadata: `access_scope` (admin, lecture, student), ... |
 | | POST | `/api/files/batch` | **Admin** | Batch upload |
 | | DELETE | `/api/files/{fileId}` | **Admin** | Xóa file |
@@ -221,14 +222,15 @@ Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthServ
 | | PATCH | `/api/stores/{storeId}` | **Admin** | Cập nhật store |
 | | DELETE | `/api/stores/{storeId}` | **Admin** | Xóa store |
 | | POST | `/api/stores/{storeId}/sync` | **Admin** | Đồng bộ store |
-| **Metadata** | GET | `/api/metadata` | **User** | Liệt kê metadata types; ẩn các values không có `visibleRoles` phù hợp với User/Admin |
-| | POST | `/api/metadata` | **Admin** | Tạo metadata field type (ví dụ: Năm học, Khóa); `visibleRoles` là bắt buộc cho từng `allowedValue` |
+| **Metadata** | GET | `/api/metadata` | **User** | Liệt kê metadata types; hỗ trợ `isActive` & `keywords` cho key/value. Ẩn values dựa trên `visibleRoles`. |
+| | GET | `/api/metadata/exists` | **Admin** | Kiểm tra metadata key đã tồn tại chưa |
+| | POST | `/api/metadata` | **Admin** | Tạo metadata field type |
 | | GET | `/api/metadata/{key}` | **User** | Chi tiết metadata type |
-| | PATCH | `/api/metadata/{key}` | **Admin** | Cập nhật metadata type (không sửa allowed values) |
-| | POST | `/api/metadata/{key}/values` | **Admin** | Thêm allowed value mới vào metadata type |
-| | PATCH | `/api/metadata/{key}/values/{value}` | **Admin** | Cập nhật allowed value cụ thể |
-| | DELETE | `/api/metadata/{key}` | **Admin** | Xóa metadata type (chỉ khi không có file nào dùng) |
-| | DELETE | `/api/metadata/{key}/values/{value}` | **Admin** | Xóa allowed value (chỉ khi không có file nào dùng) |
+| | PATCH | `/api/metadata/{key}` | **Admin** | Cập nhật metadata type |
+| | POST | `/api/metadata/{key}/values` | **Admin** | Thêm allowed value mới |
+| | PATCH | `/api/metadata/{key}/values/{value}` | **Admin** | Cập nhật allowed value |
+| | DELETE | `/api/metadata/{key}` | **Admin** | Xóa metadata type |
+| | DELETE | `/api/metadata/{key}/values/{value}` | **Admin** | Xóa allowed value |
  
 ---
  

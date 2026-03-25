@@ -81,9 +81,6 @@ class MetadataService:
             for av in allowed_values:
                 # Normalize value
                 av.value = to_snake(av.value)
-                # CRITICAL: visible_roles is mandatory and cannot be empty
-                if not av.visible_roles:
-                    raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{av.value}'")
             allowed_values_dict = [v.to_dict() for v in allowed_values]
         
         # Create metadata type
@@ -145,9 +142,6 @@ class MetadataService:
         if not existing:
             raise NotFoundException("MetadataType", key)
             
-        if not allowed_value.visible_roles:
-            raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{allowed_value.value}'")
-
         existing_values = existing.get("allowed_values") or []
         
         # Check if value already exists
@@ -200,8 +194,6 @@ class MetadataService:
         if color is not None:
             av["color"] = color
         if visible_roles is not None:
-            if not visible_roles:
-                raise ValidationException(f"visible_roles is mandatory and cannot be empty for value '{value_key}'")
             av["visible_roles"] = visible_roles
 
         await self.metadata_repo.update_by_key(key, {"allowed_values": existing_values})
@@ -287,25 +279,54 @@ class MetadataService:
         metadata_doc = await self.metadata_repo.find_by_key(key)
         return _to_metadata_model(metadata_doc)
     
-    async def list_all_metadata_types(self, active_only: bool = False) -> List[MetadataTypeDocument]:
+    async def check_metadata_exists(self, key: str) -> bool:
+        """
+        Check if a metadata key already exists.
+        
+        Args:
+            key: Metadata key to check
+            
+        Returns:
+            bool: True if key exists, False otherwise
+        """
+        key = to_snake(key)
+        doc = await self.metadata_repo.find_by_key(key)
+        return doc is not None
+    
+    async def list_all_metadata_types(
+        self, 
+        is_active: Optional[bool] = None,
+        keywords: Optional[str] = None
+    ) -> List[MetadataTypeDocument]:
         """
         List all metadata types (no pagination) - Phase 4 with active filter.
         
         Args:
-            active_only: If True, only return is_active=True metadata types
+            is_active: If True, only return is_active=True. If False, only is_active=False. If None, return all.
+            keywords: Optional search keywords for display_name of key and value
         
         Returns:
-            list: All metadata types (filtered by is_active if requested)
+            list: All metadata types (filtered by is_active/keywords if requested)
         """
-        filter_query = {"is_active": True} if active_only else {}
-        types = await self.metadata_repo.find_many(filter_query, 0, 1000, sort=[("created_at", -1)])
+        filter_query = {}
+        if is_active is not None:
+            filter_query["is_active"] = is_active
+            
+        if keywords:
+            filter_query["$or"] = [
+                {"display_name": {"$regex": keywords, "$options": "i"}},
+                {"allowed_values.display_name": {"$regex": keywords, "$options": "i"}}
+            ]
+            
+        types = await self.metadata_repo.find_many(filter_query, 0, 1000, sort=[("is_system", -1), ("created_at", -1)])
         return [_to_metadata_model(t) for t in types]
     
     async def list_metadata_types(
         self,
         skip: int = 0,
         limit: int = 100,
-        active_only: bool = False,
+        is_active: Optional[bool] = None,
+        keywords: Optional[str] = None,
     ) -> tuple[List[MetadataTypeDocument], int]:
         """
         List metadata types with pagination - Phase 4 with active filter.
@@ -313,13 +334,23 @@ class MetadataService:
         Args:
             skip: Number of records to skip
             limit: Maximum records to return
-            active_only: If True, only return is_active=True metadata types
+            is_active: If True, only return is_active=True. If False, only is_active=False. If None, return all.
+            keywords: Optional search keywords for display_name of key and value
             
         Returns:
             tuple: (metadata_types, total_count)
         """
-        filter_query = {"is_active": True} if active_only else {}
-        types = await self.metadata_repo.find_many(filter_query, skip, limit, sort=[("created_at", -1)])
+        filter_query = {}
+        if is_active is not None:
+            filter_query["is_active"] = is_active
+            
+        if keywords:
+            filter_query["$or"] = [
+                {"display_name": {"$regex": keywords, "$options": "i"}},
+                {"allowed_values.display_name": {"$regex": keywords, "$options": "i"}}
+            ]
+            
+        types = await self.metadata_repo.find_many(filter_query, skip, limit, sort=[("is_system", -1), ("created_at", -1)])
         total = await self.metadata_repo.count(filter_query)
         
         result = [_to_metadata_model(t) for t in types]
@@ -349,7 +380,7 @@ class MetadataService:
         errors = []
 
         # Get all registered metadata types
-        all_metadata_types = await self.list_all_metadata_types(active_only=False)
+        all_metadata_types = await self.list_all_metadata_types(is_active=None)
         metadata_types_map = {mt.key: mt for mt in all_metadata_types}
         
         for key, value in metadata.items():
@@ -432,7 +463,7 @@ class MetadataService:
             custom_metadata = {}
 
         # 1. Get all system metadata types
-        all_types = await self.list_all_metadata_types(active_only=True)
+        all_types = await self.list_all_metadata_types(is_active=True)
         system_types = [mt for mt in all_types if mt.is_system]
         
         # 2. Separate standard system keys from the academic/cohort pair
@@ -496,7 +527,7 @@ class MetadataService:
                 if roles is None:
                     # Value not found in allowed_values, keep it
                     filtered_cm[k] = v
-                elif user_role in roles:
+                elif user_role == "admin" or user_role in roles:
                     filtered_cm[k] = v
             f["custom_metadata"] = filtered_cm
         

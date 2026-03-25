@@ -122,8 +122,9 @@ class AllowedValue:
     color: Optional[str] = None         # Hex color for this value (e.g., '#E74C3C')
     total_files: int = 0                # Total active files associated with this value
     visible_roles: List[str] = field(default_factory=list)
-    # Roles that can see this value: ["admin", "lecture", "student"]
-    # Empty list = NOT visible to anyone (strictly enforced)
+    # Roles that can see this value: ["lecture", "student"]
+    # Empty list = Only visible to Admin (others are hidden)
+    # Admin can ALWAYS see all values regardless of this list.
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for MongoDB storage."""

@@ -304,7 +304,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] }\n  ]\n}",
+              "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -326,7 +326,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"admin\", \"displayName\": \"Admin\", \"isActive\": true, \"color\": \"#E67E22\", \"visibleRoles\": [\"admin\"] },\n    { \"value\": \"student\", \"displayName\": \"Student\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"admin\", \"lecture\", \"student\"] }\n  ]\n}",
+              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"admin\", \"displayName\": \"Admin\", \"isActive\": true, \"color\": \"#E67E22\", \"visibleRoles\": [] },\n    { \"value\": \"student\", \"displayName\": \"Student\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -346,14 +346,15 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{base_url}}/api/metadata",
+              "raw": "{{base_url}}/api/metadata?isActive=true&keywords=đào tạo",
               "host": ["{{base_url}}"],
               "path": ["api", "metadata"],
               "query": [
-                { "key": "activeOnly", "value": "true", "disabled": true }
+                { "key": "isActive", "value": "true", "disabled": true, "description": "Filter by is_active status" },
+                { "key": "keywords", "value": "đào tạo", "disabled": true, "description": "Search by display_name of key or value" }
               ]
             },
-            "description": "List all metadata type definitions. Enable is_active=true to filter active only."
+            "description": "List all metadata type definitions. Support isActive and keywords filtering."
           },
           "response": []
         },
@@ -405,7 +406,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"admin\", \"lecture\", \"student\"]\n}",
+              "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"lecture\", \"student\"]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -533,12 +534,36 @@
               "query": [
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "50" },
-                { "key": "storeId", "value": "{{store_id}}", "disabled": true },
                 { "key": "fileStatus", "value": "active", "disabled": true, "description": "active|processing|failed" },
-                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true, "description": "JSON filter for metadata. 'all' value logic is supported." }
+                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true, "description": "JSON filter for metadata. 'all' value logic is supported." },
+                { "key": "keywords", "value": "quy chế", "disabled": true, "description": "Search by partial display name." }
               ]
             },
-            "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes, meaning users (including admin) only see fields meant for their role."
+            "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes. Users only see fields meant for their role, while ADMIN bypasses this filtering and see all fields."
+          },
+          "response": []
+        },
+        {
+          "name": "List Files (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/files/admin?storeId={{store_id}}&fileStatus=active&keywords=quy chế&page=1&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "admin"],
+              "query": [
+                { "key": "storeId", "value": "{{store_id}}", "disabled": true, "description": "Filter by store ID. If missing, lists all stores." },
+                { "key": "fileStatus", "value": "active", "disabled": true },
+                { "key": "keywords", "value": "quy chế", "disabled": true },
+                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "description": "Admin-only file listing. Allows filtering by storeId or listing across all stores. Requires admin role."
           },
           "response": []
         },
@@ -554,7 +579,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files", "{{file_id}}"]
             },
-            "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles."
+            "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles (Admin bypass)."
           },
           "response": []
         },

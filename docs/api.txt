@@ -459,14 +459,14 @@ REQUEST EXAMPLE:
         "displayName": "Đào tạo",
         "isActive": true,
         "color": "#3498DB",
-        "visibleRoles": ["admin", "lecture", "student"]
+        "visibleRoles": ["lecture", "student"]
       },
       {
         "value": "khcn",
         "displayName": "KHCN",
         "isActive": true,
         "color": "#2ECC71",
-        "visibleRoles": ["admin", "lecture", "student"]
+        "visibleRoles": ["lecture", "student"]
       },
       {
         "value": "all",
@@ -499,7 +499,7 @@ RESPONSE 201 Created:
         "displayName": "Đào tạo",
         "isActive": true,
         "color": "#3498DB",
-        "visibleRoles": ["admin", "lecture", "student"],
+        "visibleRoles": ["lecture", "student"],
         "totalFiles": 10
       }
     ],
@@ -524,10 +524,12 @@ LUỒNG XỬ LÝ (WORKFLOW):
 
 MÔ TẢ:
   Liệt kê tất cả metadata type definitions.
+  Kết quả được sắp xếp ưu tiên Metadata Hệ thống (`isSystem=true`) lên đầu, sau đó theo thời gian tạo.
   Authentication: Required (any valid user)
 
 QUERY PARAMETERS:
-  - activeOnly: bool (optional) - Lọc theo trạng thái active
+  - isActive: bool (optional) - Lọc theo trạng thái is_active của metadata type.
+  - keywords: string (optional) - Tìm kiếm theo display_name của cả key và value.
 
 RESPONSE 200 OK:
   {
@@ -544,8 +546,36 @@ RESPONSE 200 OK:
  
 LUỒNG XỬ LÝ (WORKFLOW):
   1. Guard: require_auth (bất kỳ user nào đã login).
-  2. Nếu activeOnly=true, lọc các bản ghi có is_active=true.
-  3. Lọc lấy toàn bộ metadata types từ MongoDB.
+  2. Nếu user không phải Admin: ép buộc isActive=true. Chỉ lấy Metadata Key đang hoạt động.
+  3. Lọc Allowed Values: Nếu user không phải Admin, chỉ lấy các giá trị có isActive=true.
+  4. Nếu user là Admin: cho phép dùng query isActive (true/false/không truyền).
+  5. Nếu có keywords, tìm kiếm case-insensitive trong display_name của MetadataType và AllowedValue.
+  4. Lọc lấy toàn bộ metadata types từ MongoDB.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4.3. GET /api/metadata/exists - Kiểm tra metadata key tồn tại
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Kiểm tra xem một metadata key đã tồn tại trong hệ thống hay chưa.
+
+🔒 XÁC THỰC:
+   Header: Authorization: Bearer <jwt_token> (Role: admin)
+
+QUERY PARAMETERS:
+  - key: string (required) - Key cần kiểm tra.
+
+RESPONSE 200 OK:
+  {
+    "exists": true
+  }
+
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Normalize key sang snake_case.
+  3. Tìm kiếm trong MongoDB xem có metadata type nào trùng key hay chưa.
+  4. Trả về true nếu tìm thấy, false nếu không.
 
 ────────────────────────────────────────────────────────────────────────────────
 4.3. GET /api/metadata/{key} - Lấy Metadata Type theo key
@@ -597,7 +627,7 @@ REQUEST EXAMPLE:
     "displayName": "CTSV",                 // required
     "isActive": true,                      // required/default true
     "color": "#E74C3C",                    // optional
-    "visibleRoles": ["admin", "student"]   // required, min_length 1
+    "visibleRoles": ["student"]   // optional, list of 'lecture' or 'student'. Empty = Admin only.
   }
 
 RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
@@ -620,7 +650,7 @@ REQUEST EXAMPLE:
     "displayName": "Công tác Sinh viên",   // optional
     "isActive": false,                     // optional
     "color": "#000000",                    // optional
-    "visibleRoles": ["admin"]              // optional
+    "visibleRoles": []              // optional, empty = Admin only
   }
 
 RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
@@ -751,13 +781,15 @@ ROLLBACK:
 ────────────────────────────────────────────────────────────────────────────────
 
 QUERY PARAMETERS:
-  - storeId: string (optional) - filter by store
-  - fileStatus: string (optional) - active|processing|failed
-  - metadataFilter: string (optional, JSON format) - e.g. {"academicYear": "2024-2025"}
+  - fileStatus     : (optional, str) Filter by file status (active, processing, failed...)
+  - metadataFilter : (optional, json) {"academicYear": "2024-2025", ...}
     - Hỗ trợ cả camelCase và snake_case cho keys và values.
     - Hỗ trợ giá trị "all" để lấy tất cả (ví dụ: file có academicYear="all" sẽ luôn xuất hiện khi filter bất kỳ năm học nào)
-  - page: int (optional, default: 1)
+  - keywords       : (optional, str) Search by partial display name
+  - page           : (optional, int, default 1)
   - limit: int (optional, default: 50, max: 100)
+
+LƯU Ý: Endpoint này luôn lấy danh sách file từ store mặc định (default store).
 
 RESPONSE 200 OK:
   {
@@ -783,10 +815,29 @@ RESPONSE 200 OK:
  
 LUỒNG XỬ LÝ (WORKFLOW):
   1. Guard: require_auth.
-  2. Parse query filters: storeId, fileStatus, metadataFilter.
-  3. Lọc MongoDB: Hỗ trợ query theo mảng hoặc giá trị đơn qua $in.
-  4. Trả về danh sách file kèm metadata dạng camelCase.
-  5. Đã tích hợp filter `visibleRoles`: mọi user (kể cả admin) khi lấy file list/detail chỉ nhận được những metadata field phù hợp với ROLE của mình (key sẽ bị xóa nếu user không thuộc `visibleRoles` của allowedValues).
+  2. Lấy storeId mặc định qua resolve_store(None).
+  3. Parse query filters: fileStatus, metadataFilter, keywords.
+  4. Lọc MongoDB: Hỗ trợ query theo mảng hoặc giá trị đơn qua $in.
+  5. Trả về danh sách file kèm metadata dạng camelCase.
+  6. Đã tích hợp filter `visibleRoles`: mọi user khi lấy file list/detail chỉ nhận được những metadata field phù hợp với ROLE của mình (key sẽ bị xóa nếu user không thuộc `visibleRoles` của allowedValues). **ADMIN có quyền xem tất cả metadata bất kể cấu hình này.**
+
+
+────────────────────────────────────────────────────────────────────────────────
+5.3. GET /api/files/admin - Liệt kê Files (Admin)
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Admin có thể liệt kê file từ bất kỳ store nào hoặc xem tất cả file từ mọi store.
+
+QUERY PARAMETERS:
+  - storeId        : (optional, str) Filter theo store (ví dụ: fileSearchStores/xxx)
+  - fileStatus     : (optional, str) active|processing|failed
+  - metadataFilter : (optional, json) {"academicYear": "2024-2025", ...}
+  - keywords       : (optional, str) Search theo display_name
+  - page, limit    : Pagination
+
+RESPONSE 200 OK:
+  Giống GET /api/files nhưng không lọc theo default store nếu storeId=None.
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -800,7 +851,7 @@ RESPONSE 404 Not Found:
 LUỒNG XỬ LÝ (WORKFLOW):
   1. Guard: require_auth.
   2. Truy vấn MongoDB theo file_id.
-  3. Áp dụng filter `visibleRoles`: loại bỏ các key trong `customMetadata` nếu role của user không nằm trong `visibleRoles` của giá trị đó.
+  3. Áp dụng filter `visibleRoles`: loại bỏ các key trong `customMetadata` nếu role của user không nằm trong `visibleRoles` của giá trị đó. **Admin bypass filter này.**
   4. Trả về chi tiết file kèm metadata đã lược bỏ các field không được phép, hoặc lỗi 404.
 
 ────────────────────────────────────────────────────────────────────────────────

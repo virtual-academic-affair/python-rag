@@ -233,10 +233,9 @@ class AllowedValueSchema(BaseSchema):
     is_active: bool = Field(True, description="Active status (hidden if False)")
     color: Optional[str] = Field(None, description="Hex color code (e.g., #E74C3C)")
     total_files: int = Field(default=0, description="Count of files using this value")
-    visible_roles: List[str] = Field(
-        ...,
-        min_length=1,
-        description="Roles that can see this value: ['admin','lecture','student']. Cannot be empty."
+    visible_roles: List[Literal["lecture", "student"]] = Field(
+        default_factory=list,
+        description="Roles that can see this value: ['lecture', 'student']. Empty list = Only visible to Admin."
     )
 
 
@@ -268,7 +267,10 @@ class AllowedValueCreateRequest(BaseSchema):
     display_name: str = Field(..., description="Display name for UI")
     is_active: bool = Field(True, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
-    visible_roles: List[str] = Field(..., min_length=1, description="Roles that can see this value")
+    visible_roles: List[Literal["lecture", "student"]] = Field(
+        default_factory=list, 
+        description="Roles that can see this value"
+    )
 
 
 class AllowedValueUpdateRequest(BaseSchema):
@@ -276,7 +278,10 @@ class AllowedValueUpdateRequest(BaseSchema):
     display_name: Optional[str] = Field(None, description="Display name for UI")
     is_active: Optional[bool] = Field(None, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
-    visible_roles: Optional[List[str]] = Field(None, min_length=1, description="Roles that can see this value")
+    visible_roles: Optional[List[Literal["lecture", "student"]]] = Field(
+        None, 
+        description="Roles that can see this value"
+    )
 
 
 class MetadataTypeResponse(BaseSchema):
@@ -291,6 +296,11 @@ class MetadataTypeResponse(BaseSchema):
     is_system: bool
     created_at: str
     updated_at: str
+
+
+class MetadataKeyExistsResponse(BaseSchema):
+    """Response for GET /api/metadata/exists."""
+    exists: bool = Field(..., description="True if the metadata key exists")
 
 
 class MetadataTypeListResponse(BaseSchema):
