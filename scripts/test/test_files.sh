@@ -37,19 +37,25 @@ if check_response "$RESPONSE" "201" "Upload File"; then
 fi
 
 # 2. List files with filters
-log_info "GET /api/files — List files"
+log_info "GET /api/files — Default store (should not pass storeId)"
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?limit=5" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "List Files"
+check_response "$RESPONSE" "200" "List Files (Default Store)"
 
 if [ -n "$STORE_ID" ]; then
-    log_info "GET /api/files?storeId=${STORE_ID} — Filter by store"
-    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?storeId=${STORE_ID}" \
+    log_info "GET /api/files/admin?storeId=${STORE_ID} — Admin list by store"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/admin?storeId=${STORE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
-    check_response "$RESPONSE" "200" "List Files by storeId"
+    check_response "$RESPONSE" "200" "Admin List Files by storeId"
 fi
+
+log_info "GET /api/files?keywords=Quy+che — Search by displayName"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?keywords=Quy+che" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "List Files by keywords"
 
 log_info "GET /api/files?fileStatus=active — Filter by status"
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=active" \

@@ -5,7 +5,7 @@ CRUD operations for metadata field definitions with AllowedValue support.
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.models.schemas import (
     CreateMetadataTypeRequest,
@@ -16,6 +16,7 @@ from app.models.schemas import (
     AllowedValueResponse,
     AllowedValueCreateRequest,
     AllowedValueUpdateRequest,
+    MetadataKeyExistsResponse,
 )
 from app.models.database import AllowedValue
 from app.services.rag.metadata_service import get_metadata_service
@@ -64,7 +65,7 @@ def _filter_allowed_values_by_role(
         return None
     visible = [
         av for av in allowed_values_list
-        if user_role in av.visible_roles
+        if user_role == "admin" or (av.is_active and user_role in av.visible_roles)
     ]
     return [
         AllowedValueSchema(
@@ -174,7 +175,8 @@ async def create_metadata_type(request: CreateMetadataTypeRequest, _admin: Dict[
     description="List all metadata type definitions with optional active filter (Phase 4).",
 )
 async def list_metadata_types(
-    active_only: bool = Query(False, alias="activeOnly", description="If true, only return is_active=true types"),
+    is_active: Optional[bool] = Query(None, alias="isActive", description="Filter by is_active status. Non-admin is forced to true."),
+    keywords: Optional[str] = Query(None, description="Search keywords for display_name of key and value"),
     _user: Dict[str, Any] = Depends(require_auth)
 ):
     """
@@ -188,8 +190,13 @@ async def list_metadata_types(
     """
     try:
         user_role: str = _user.get("role", "student")
+        
+        # Enforce is_active=True for non-admin
+        if user_role != "admin":
+            is_active = True
+            
         metadata_svc = get_metadata_service()
-        metadata_types = await metadata_svc.list_all_metadata_types(active_only=active_only)
+        metadata_types = await metadata_svc.list_all_metadata_types(is_active=is_active, keywords=keywords)
         
         type_responses = []
         for mt in metadata_types:
@@ -226,6 +233,24 @@ async def list_metadata_types(
 
 
 @router.get(
+    "/exists",
+    response_model=MetadataKeyExistsResponse,
+    summary="Check if metadata key exists",
+    description="Check if a metadata key already exists in the system. Admin only.",
+)
+async def check_metadata_exists(
+    key: str = Query(..., description="Metadata key to check"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Check if a metadata key already exists.
+    """
+    metadata_svc = get_metadata_service()
+    exists = await metadata_svc.check_metadata_exists(key)
+    return MetadataKeyExistsResponse(exists=exists)
+
+
+@router.get(
     "/{key}",
     response_model=MetadataTypeResponse,
     summary="Get metadata type",
@@ -244,7 +269,7 @@ async def get_metadata_type(
         user_role: str = _user.get("role", "student")
         metadata_svc = get_metadata_service()
         metadata_type = await metadata_svc.get_metadata_type(key)
-        if not metadata_type:
+        if not metadata_type or (user_role != "admin" and not metadata_type.is_active):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Metadata type '{key}' not found",

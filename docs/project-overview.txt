@@ -503,7 +503,13 @@ CẤU TRUC AllowedValue:
   displayName : Hiển thị UI (vd: "Student", "Năm học 2024-2025")
   isActive    : bool — false = ẩn, không nhận khi upload (Soft Delete)
   color        : Hex color (vd: "#3498DB")
-  totalFiles  : int — Biến auto-increment/statistics: Số lượng file mang giá trị này (được quản lý tự động bởi `MetadataRepository.sync_metadata_counters` thông qua query `$inc` để tránh race condition)
+  totalFiles  : int — Số lượng file mang giá trị này
+  visibleRoles : array — ["lecture", "student"] hoặc rỗng. 
+                 Rỗng = Chỉ Admin thấy. Admin luôn thấy tất cả các giá trị.
+
+DUNG SORT:
+  Mặc định trả về kết quả Metadata Type sẽ được ưu tiên `is_system=True` lên đầu, 
+  sau đó mới đến các Metadata Type tùy chỉnh (giảm dần theo thời gian tạo).
 
 CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
   1. Soft Delete: Thực hiện qua thao tác Update (PUT/PATCH), gán `is_active = False` cho MetadataType hoặc cấu hình AllowedValue.
@@ -562,10 +568,9 @@ convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
   Input null / empty → Trả về None (không filter Gemini)
 
 Phan quyen theo role trong Chat API:
-  role="student"  → BAT BUOC thêm access_scope="student" vào filter
-                      (sinh viên chỉ thấy tài liệu student)
+  role="student"  → BAT BUOC thêm access_scope="student" vào filter (nếu có quyền xem)
   role="lecture"  → Thêm access_scope=["lecture", "student"] vào filter
-  role="admin"    → Xóa access_scope khỏi filter (quyền quản trị cao nhất)
+  role="admin"    → Admin luôn bypass filter visibleRoles và có thể xem toàn bộ metadata.
 
 
 ================================================================================
@@ -644,6 +649,7 @@ POST /api/chat/query — Chat thường (blocking)
   Request body:
     {
       "question": "Điều kiện tốt nghiệp là gì?",
+      "keywords": "quy chế",          ← optional, search by display name
       "user_context": {
         "user_id": "sv001",
         "name": "Nguyễn Văn A",
@@ -697,15 +703,19 @@ CƠ CHẾ AUTH:
    Lỗi kết nối gRPC:
      401 — Token không tồn tại / sai format
      401 — gRPC trả về lỗi hoặc token không hợp lệ  
+     401 — gRPC trả về lỗi hoặc token không hợp lệ
      403 — Token hợp lệ nhưng role != admin (cho require_admin)
      503 — Không thể kết nối nest-api gRPC
 
 PHÂN QUYỀN CÁC ENDPOINT:
-  require_admin: POST/DELETE /api/stores, POST/DELETE /api/files,
-                 DELETE /api/files/..., POST/PATCH/DELETE /api/metadata
-  require_auth:  GET /api/files/{fileId}/download
-  Public:        GET /api/metadata, GET /api/metadata/{key},
-                 /api/chat, /health, /process
+   require_admin: POST/DELETE /api/stores, POST/DELETE /api/files,
+                  GET /api/files/admin, DELETE /api/files/..., 
+                  POST/PATCH/DELETE /api/metadata, GET /api/metadata/exists
+   require_auth:  - GET /api/files: List files in default store (keywords/metadata search supported).
+   - GET /api/files/admin: Admin list files across all stores with optional filter.
+   - GET /api/files/{fileId}: Metadata & details (Auth required).
+   Public:        GET /api/metadata (hỗ trợ isActive/keywords), GET /api/metadata/{key},
+                  /api/chat, /health, /process
 
 
 ================================================================================
@@ -915,7 +925,8 @@ DEBUG=true → response kèm thêm stack trace và request path
 
   METADATA TYPES (8 endpoints)
     POST   /api/metadata                        Tạo metadata type mới
-    GET    /api/metadata                        Liệt kê (? is_active)
+    GET    /api/metadata                        Liệt kê (? isActive, keywords)
+    GET    /api/metadata/exists                 Kiểm tra key tồn tại (Admin only)
     GET    /api/metadata/{key}                  Chi tiết theo key
     PATCH  /api/metadata/{key}                  Cập nhật core metadata (không sửa allowed values)
     POST   /api/metadata/{key}/values           Thêm một allowed value mới

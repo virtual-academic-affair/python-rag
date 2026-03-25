@@ -479,6 +479,7 @@ class FileService:
         store_id: Optional[str] = None,
         status: Optional[FileStatus] = None,
         custom_metadata_filter: Optional[Dict[str, Any]] = None,
+        keywords: Optional[str] = None,
         user_role: str = "student",
         skip: int = 0,
         limit: int = 50,
@@ -489,6 +490,10 @@ class FileService:
             filters["store_id"] = store_id
         if status:
             filters["status"] = status.value
+            
+        # Add keywords filter (partial match on display_name)
+        if keywords:
+            filters["display_name"] = {"$regex": keywords, "$options": "i"}
             
         # Add metadata filters with "all" support
         if custom_metadata_filter:

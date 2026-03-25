@@ -38,11 +38,11 @@ SYSTEM_METADATA_TYPES = [
         "display_name": "Năm học",
         "description": "Năm học áp dụng (VD: 2023-2024, 2024-2025). Dùng 'all' cho tất cả năm học.",
         "allowed_values": [
-            AllowedValue(value="2022-2023", display_name="2022-2023", is_active=False, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="2023-2024", display_name="2023-2024", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="2024-2025", display_name="2024-2025", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="2025-2026", display_name="2025-2026", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="all", display_name="Tất cả năm học", is_active=True, color="#3498DB", visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="2022-2023", display_name="2022-2023", is_active=False, visible_roles=["lecture", "student"]),
+            AllowedValue(value="2023-2024", display_name="2023-2024", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="2024-2025", display_name="2024-2025", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="2025-2026", display_name="2025-2026", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="all", display_name="Tất cả năm học", is_active=True, color="#3498DB", visible_roles=["lecture", "student"]),
         ],
         "is_system": True,
     },
@@ -51,12 +51,12 @@ SYSTEM_METADATA_TYPES = [
         "display_name": "Khóa",
         "description": "Khóa sinh viên (VD: K18, K19, K20). Dùng 'all' cho tất cả khóa.",
         "allowed_values": [
-            AllowedValue(value="K18", display_name="Khóa 18", is_active=False, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="K19", display_name="Khóa 19", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="K20", display_name="Khóa 20", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="K21", display_name="Khóa 21", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="K22", display_name="Khóa 22", is_active=True, visible_roles=["admin", "lecture", "student"]),
-            AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB", visible_roles=["admin", "lecture", "student"]),
+            AllowedValue(value="K18", display_name="Khóa 18", is_active=False, visible_roles=["lecture", "student"]),
+            AllowedValue(value="K19", display_name="Khóa 19", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="K20", display_name="Khóa 20", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="K21", display_name="Khóa 21", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="K22", display_name="Khóa 22", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB", visible_roles=["lecture", "student"]),
         ],
         "is_system": True,
     },
@@ -70,21 +70,21 @@ SYSTEM_METADATA_TYPES = [
                 display_name="Admin",
                 is_active=True,
                 color="#E74C3C",
-                visible_roles=["admin"],          # Only admins see this option
+                visible_roles=[],          # Only admins see this option
             ),
             AllowedValue(
                 value="lecture",
                 display_name="Lecture",
                 is_active=True,
                 color="#F39C12",
-                visible_roles=["admin", "lecture"],  # Admins and lecturers see this
+                visible_roles=["lecture"],  # Admins and lecturers see this
             ),
             AllowedValue(
                 value="student",
                 display_name="Student",
                 is_active=True,
                 color="#27AE60",
-                visible_roles=["admin", "lecture", "student"],
+                visible_roles=["lecture", "student"], # Admins, lecturers, and students see this
             ),
         ],
         "is_system": True,

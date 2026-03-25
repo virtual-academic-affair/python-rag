@@ -12,9 +12,13 @@ API_URL="${BASE_URL}/api"
 OUTPUT_DIR="scripts/test_results"
 mkdir -p "$OUTPUT_DIR"
 
-# JWT Token (admin role)
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYmx1ZWxvb3AudXNAZ21haWwuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzcxOTEzOTgzLCJleHAiOjM3NzcxOTEzOTgzLCJhdWQiOiJ2YWEtYXVkIiwiaXNzIjoidmFhLWlzcyJ9.RtRCZsru6KuCkHUt06cr0v31z9SG0lWWdOORTo47-j4"
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+# JWT Tokens
+ADMIN_TOKEN=""
+# Student token 
+STUDENT_TOKEN=""
+
+AUTH_HEADER="Authorization: Bearer ${ADMIN_TOKEN}"
+STUDENT_AUTH_HEADER="Authorization: Bearer ${STUDENT_TOKEN}"
 
 # Colors
 RED='\033[0;31m'
