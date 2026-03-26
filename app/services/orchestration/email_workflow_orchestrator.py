@@ -151,6 +151,7 @@ class EmailWorkflowOrchestrator:
                     answer=draft_result["answer"],
                     question=draft_result.get("question"),
                     types=draft_result.get("types", []),
+                    filters=draft_result.get("filters"),
                     sources=draft_result["sources"],
                     message_id=message_id,
                 ),

@@ -326,7 +326,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"admin\", \"displayName\": \"Admin\", \"isActive\": true, \"color\": \"#E67E22\", \"visibleRoles\": [] },\n    { \"value\": \"student\", \"displayName\": \"Student\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
+              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"both\", \"displayName\": \"Public (Student & Lecture)\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -355,6 +355,25 @@
               ]
             },
             "description": "List all metadata type definitions. Support isActive and keywords filtering."
+          },
+          "response": []
+        },
+        {
+          "name": "Check metadata key exists",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/metadata/exists?key=department",
+              "host": ["{{base_url}}"],
+              "path": ["api", "metadata", "exists"],
+              "query": [
+                { "key": "key", "value": "department", "description": "Metadata key to check" }
+              ]
+            },
+            "description": "Check if a metadata key already exists in the system. Requires admin role."
           },
           "response": []
         },
@@ -392,7 +411,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}"]
             },
-            "description": "Update metadata type. Cannot change key or is_system.\n\nUse standalone endpoints to update allowedValues."
+            "description": "Update metadata type. Cannot change key or is_system. For system metadata, cannot update isActive.\n\nUse standalone endpoints to update allowedValues."
           },
           "response": []
         },
@@ -414,7 +433,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}", "values"]
             },
-            "description": "Add a new allowed value to a metadata type."
+            "description": "Add a new allowed value to a metadata type. For system metadata 'access_scope', adding values is forbidden."
           },
           "response": []
         },
@@ -436,7 +455,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}", "values", "htqt"]
             },
-            "description": "Update an existing allowed value in a metadata type."
+            "description": "Update an existing allowed value in a metadata type. For system metadata, 'access_scope' blocks isActive updates, and 'academic_year'/'cohort' block isActive updates for value 'all'."
           },
           "response": []
         },
@@ -468,7 +487,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "metadata", "{{metadata_key}}", "values", "unused_value"]
             },
-            "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
+            "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- System metadata 'access_scope' values and 'academic_year'/'cohort' 'all' values cannot be deleted.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
           },
           "response": []
         }
@@ -490,7 +509,7 @@
                 { "key": "file", "type": "file", "src": [], "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML - max 20MB)" },
                 { "key": "storeId", "value": "{{store_id}}", "type": "text", "description": "Optional - uses default store if empty" },
                 { "key": "displayName", "value": "Quy che dao tao 2026", "type": "text", "description": "Optional display name" },
-                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope AND at least one of academicYear/cohort" },
+                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope (private, both, lecture, student) AND at least one of academicYear/cohort" },
                 { "key": "enableChunking", "value": "false", "type": "text", "disabled": true }
               ]
             },
@@ -499,7 +518,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "files"]
             },
-            "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- access_scope: mandatory\n- academic_year OR cohort: at least one required\n\nReturns status='active' and gemini_document_name when complete.\n\nAfter upload, {{file_id}} is automatically updated."
+            "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- accessScope: mandatory\n- academicYear OR cohort: at least one required\n\nReturns status='active' and geminiDocumentName when complete.\n\nAfter upload, {{fileId}} is automatically updated."
           },
           "event": [
             {
@@ -612,7 +631,7 @@
                 { "key": "files", "type": "file", "src": [], "description": "Multiple files" },
                 { "key": "storeId", "value": "{{store_id}}", "type": "text" },
                 { "key": "displayNames", "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]", "type": "text", "description": "JSON array - use null for auto name" },
-                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope required + academicYear or cohort" }
+                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope (private, both, lecture, student) required + academicYear or cohort" }
               ]
             },
             "url": {
@@ -690,6 +709,28 @@
             "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+R2 present): re-upload from R2 to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
           },
           "response": []
+        },
+        {
+          "name": "Update file display name (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Tên hiển thị mới của file\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}",
+              "host": ["{{base_url}}"],
+              "path": [ "api", "files", "{{file_id}}" ]
+            },
+            "description": "Update the display name of a file in the MongoDB. Does not update Gemini index directly."
+          },
+          "response": []
         }
       ]
     },
@@ -713,7 +754,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "chat", "query"]
             },
-            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to 'student'.\nFor lecture/admin role, access_scope filter is applied hierarchically.\n"
+            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student', 'both'].\nFor lecture role, access_scope is enforced to ['lecture', 'both'].\nFor admin role, no access_scope filter is applied.\n"
           },
           "response": []
         },

@@ -11,8 +11,9 @@ from google.genai import types
 
 from app.core.config import settings
 from app.core.prompts import EMAIL_DRAFT_REPLY_PROMPT
-from app.models.schemas import InquiryIntent, InquiryTypesResult
+from app.models.schemas import InquiryIntent, InquiryTypesResult, InquiryFilters
 from app.repositories.file_repository import FileRepository
+from app.services.rag.utils.file_utils import remove_accents
 from app.services.rag.gemini_client import gemini_client
 from app.services.rag.utils.gemini_rag_utils import (
     extract_sources,
@@ -187,6 +188,122 @@ class EmailDraftService:
             logger.error(f"Failed to extract inquiry types: {e}")
             return []
 
+    async def extract_inquiry_filters(self, subject: str, body: str) -> Optional[InquiryFilters]:
+        """
+        Extract academicYear and cohort filters using robust rule-based pattern matching.
+        Fetches allowed values from DB, then uses regex to find them in the email text.
+        Supports accented and accent-less Vietnamese.
+        """
+        import re
+        from app.services.rag.metadata_service import get_metadata_service
+        metadata_service = get_metadata_service()
+        
+        subject = subject or ""
+        body = body or ""
+        
+        extracted_filters = {}
+        
+        for key in ["academic_year", "cohort"]:
+            try:
+                meta_type = await metadata_service.get_metadata_type(key)
+            except Exception as e:
+                logger.warning("Failed to fetch metadata type '%s': %s", key, e)
+                continue
+            if not meta_type or not meta_type.is_active:
+                continue
+                
+            allowed_values = meta_type.get_allowed_values() or []
+            
+            # Check subject first (higher priority), then body
+            for text in [subject, body]:
+                if not text:
+                    continue
+                text_no_accents = remove_accents(text)
+                
+                matched_value = None
+                for av in allowed_values:
+                    if not av.is_active or av.value == "all":
+                        continue
+                    
+                    patterns = self._build_filter_patterns(key, av)
+                    
+                    for p in patterns:
+                        if not p:
+                            continue
+                        # Try accented match first
+                        if re.search(p, text, re.IGNORECASE):
+                            matched_value = av.value
+                            break
+                        # Then try accent-less match
+                        p_no_accents = remove_accents(p)
+                        if re.search(p_no_accents, text_no_accents, re.IGNORECASE):
+                            matched_value = av.value
+                            break
+                    if matched_value:
+                        break
+                
+                if matched_value:
+                    extracted_filters[key] = matched_value
+                    break  # Found in subject or body, stop for this key
+                    
+        if not extracted_filters:
+            return None
+        return InquiryFilters(**extracted_filters)
+
+    @staticmethod
+    def _build_filter_patterns(key: str, av) -> list[str]:
+        """
+        Build a list of regex patterns for a given metadata key and allowed value.
+        Returns patterns ordered from most specific to least specific.
+        """
+        import re as _re
+        patterns = []
+        
+        if key == "academic_year":
+            # value is like "2024-2025"
+            if '-' not in av.value:
+                # Fallback: just match the raw value
+                return [_re.escape(av.value)]
+            
+            y1, y2 = av.value.split('-', 1)
+            s1, s2 = y1[-2:], y2[-2:]
+            sep = r"[\s\-\/]+"
+            
+            # Prefixed patterns (most specific — require a Vietnamese keyword before the year)
+            # Added "năm\s*" and "nam\s*" to handle "năm 2024-2025"
+            pre = r"(năm\s*học|nh|niên\s*khóa|niên\s*khoá|nk|nam\s*hoc|nien\s*khoa|năm|nam)\s*"
+            patterns.extend([
+                rf"{pre}{y1}{sep}{y2}",          # năm học 2024-2025
+                rf"{pre}{s1}{sep}{s2}",          # NH 24-25  (safe: requires prefix)
+                rf"{pre}{y1}{sep}{s2}",          # năm học 2024-25
+                rf"{pre}{y1}\b",                 # năm học 2024 (just first year)
+            ])
+            
+            # Full year without prefix (still safe: 4 digit + separator + 4 digit is unambiguous)
+            patterns.append(rf"\b{y1}{sep}{y2}\b")
+            
+        elif key == "cohort":
+            # value is like "K20"
+            m = _re.search(r"K?(\d+)", av.value, _re.IGNORECASE)
+            if m:
+                d = m.group(1)
+                # With prefix (safe)
+                pre = r"(khóa|khoá|khoa)\s*"
+                patterns.extend([
+                    rf"{pre}K?{d}\b",          # Khóa 20, Khóa K20
+                    rf"\bK\.?\s*{d}\b",        # K20, K.20, K 20
+                ])
+                # Support full year for 2-digit cohort (e.g., "khóa 2022" for K22)
+                if len(d) == 2:
+                    patterns.append(rf"{pre}20{d}\b")
+            
+        # Fallback: exact value and display_name (with word boundaries to avoid partial matches like "Khóa 20" matching "Khóa 2022")
+        patterns.append(rf"\b{_re.escape(av.value)}\b")
+        if av.display_name:
+            patterns.append(rf"\b{_re.escape(av.display_name)}\b")
+        
+        return patterns
+
     async def draft_inquiry_email_reply(
         self,
         subject: str,
@@ -196,6 +313,7 @@ class EmailDraftService:
         metadata_filter: Optional[Dict[str, Any]] = None,
         extracted_question: Optional[str] = None,
         inquiry_types: Optional[List[str]] = None,
+        inquiry_filters: Optional[InquiryFilters] = None,
     ) -> Dict[str, Any]:
         """
         Draft an email reply for inquiry-classified emails using RAG.
@@ -237,6 +355,8 @@ class EmailDraftService:
             result["question"] = extracted_question
         if inquiry_types is not None:
             result["types"] = inquiry_types
+        if inquiry_filters is not None:
+            result["filters"] = inquiry_filters
 
         return result
 
@@ -260,3 +380,7 @@ async def extract_inquiry_intent(*args, **kwargs):
 async def extract_inquiry_types(*args, **kwargs):
     """Legacy wrapper for the new service method."""
     return await get_email_draft_service().extract_inquiry_types(*args, **kwargs)
+
+async def extract_inquiry_filters(*args, **kwargs):
+    """Legacy wrapper for the new service method."""
+    return await get_email_draft_service().extract_inquiry_filters(*args, **kwargs)

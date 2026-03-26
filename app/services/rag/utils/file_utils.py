@@ -9,6 +9,7 @@ from typing import Optional, Any
 from slugify import slugify
 from datetime import datetime, timezone
 import re
+import unicodedata
 import uuid
 try:
     import filetype
@@ -274,3 +275,18 @@ def convert_custom_metadata_to_camel(custom_metadata: dict) -> dict:
     if not custom_metadata:
         return {}
     return {to_camel(k): v for k, v in custom_metadata.items()}
+
+def remove_accents(input_str: str) -> str:
+    """
+    Remove Vietnamese accents from a string.
+    Example: 'năm học' -> 'nam hoc'
+    """
+    if not input_str:
+        return ""
+    # Normalize to NFD (Decomposition)
+    s = unicodedata.normalize('NFD', input_str)
+    # Filter out non-spacing marks (accents)
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    # Replace special characters like đ/Đ
+    s = s.replace('đ', 'd').replace('Đ', 'D')
+    return unicodedata.normalize('NFC', s)

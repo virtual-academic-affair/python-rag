@@ -15,7 +15,7 @@ from app.models.schemas import (
 )
 from app.services.rag.chat_service import chat_service
 from app.services.rag.utils.store_utils import resolve_store
-from app.services.rag.utils.filter_builder import convert_metadata_filter_to_gemini_format
+from app.services.rag.utils.filter_builder import build_metadata_filter
 from app.services.rag.utils.file_utils import convert_custom_metadata_to_snake
 
 
@@ -48,11 +48,15 @@ async def chat_query(request: ChatQueryRequest):
         store_id, store_name = await resolve_store(request.store_id)
         
         # Convert metadata filter keys from camelCase to snake_case
-        if request.metadata_filter:
-            request.metadata_filter = convert_custom_metadata_to_snake(request.metadata_filter)
+        meta_dict = request.metadata_filter or {}
+        if meta_dict:
+            meta_dict = convert_custom_metadata_to_snake(meta_dict)
             
-        # Convert metadata filter from dict to Gemini format
-        metadata_filter = convert_metadata_filter_to_gemini_format(request.metadata_filter)
+        # Build metadata filter with role enforcement and validation
+        metadata_filter = await build_metadata_filter(
+            metadata=meta_dict,
+            user_role=request.user_context.role
+        )
         
         # Generate response using Gemini service
         result = await chat_service.generate_chat_response(
@@ -102,11 +106,15 @@ async def chat_stream(request: ChatStreamRequest):
         store_id, store_name = await resolve_store(request.store_id)
         
         # Convert metadata filter keys from camelCase to snake_case
-        if request.metadata_filter:
-            request.metadata_filter = convert_custom_metadata_to_snake(request.metadata_filter)
+        meta_dict = request.metadata_filter or {}
+        if meta_dict:
+            meta_dict = convert_custom_metadata_to_snake(meta_dict)
             
-        # Convert metadata filter from dict to Gemini format
-        metadata_filter = convert_metadata_filter_to_gemini_format(request.metadata_filter)
+        # Build metadata filter with role enforcement and validation
+        metadata_filter = await build_metadata_filter(
+            metadata=meta_dict,
+            user_role=request.user_context.role
+        )
         
         async def event_generator():
             """Generator for SSE events."""

@@ -2,7 +2,12 @@
 import logging
 from typing import Dict, Any, Optional
 
-from app.services.rag.email_draft_service import draft_inquiry_email_reply, extract_inquiry_intent, extract_inquiry_types
+from app.services.rag.email_draft_service import (
+    draft_inquiry_email_reply,
+    extract_inquiry_intent,
+    extract_inquiry_types,
+    extract_inquiry_filters
+)
 from app.services.integrations.grpc_client import get_grpc_inquiry_client
 
 logger = logging.getLogger(__name__)
@@ -26,12 +31,35 @@ class InquiryService:
         if inquiry_types:
             logger.info("Extracted inquiry types: %r", inquiry_types)
     
+        # 1c. Extract inquiry filters (Rule-based)
+        inquiry_filters = None
+        metadata_filter = None
+        try:
+            inquiry_filters = await extract_inquiry_filters(title, content)
+            if inquiry_filters:
+                # IMPORTANT: use by_alias=False to get snake_case keys for Gemini filter
+                raw_filters = inquiry_filters.model_dump(exclude_none=True, by_alias=False)
+                logger.info("Extracted inquiry filters: %r", raw_filters)
+                
+                # Expand each filter value to include "all" so documents tagged
+                # with "all" are always included in RAG results.
+                # e.g. {"academic_year": "2024-2025"} → {"academic_year": ["2024-2025", "all"]}
+                metadata_filter = {}
+                for k, v in raw_filters.items():
+                    if v:  # có value
+                        metadata_filter[k] = [v, "all"]
+                logger.info("Expanded inquiry filter for RAG: %r", metadata_filter)
+        except Exception as e:
+            logger.warning("Failed to extract inquiry filters: %s", e)
+    
         # 2. Generate email draft via RAG
         draft_result = await draft_inquiry_email_reply(
             subject=title,
             body=content,
             extracted_question=extracted_question,
             inquiry_types=inquiry_types,
+            metadata_filter=metadata_filter,
+            inquiry_filters=inquiry_filters,
         )
         logger.info(
             "Inquiry draft generated: answer_len=%d sources=%d",

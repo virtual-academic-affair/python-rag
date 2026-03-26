@@ -163,6 +163,10 @@ RESPONSE 200 OK (label = inquiry):
       "answer": "Kính gửi...",
       "question": "Câu hỏi của bạn",
       "types": ["graduation"],
+      "filters": {
+        "academicYear": "2024-2025",
+        "cohort": "k20"
+      },
       "sources": [
         {
           "citationId": 1,
@@ -186,7 +190,11 @@ WORKFLOW:
   1. Nhận request với internal + title + content
   2. LLM (Gemini) phân loại → classRegistration / task / inquiry / other
   3. classRegistration: Extract thêm chi tiết đăng ký môn học
-  4. inquiry: Gọi RAG service để draft email reply (dùng default store)
+  4. inquiry: 
+     a. Trích xuất metadata (Rule-based: Regex) cho `academicYear` và `cohort`.
+     b. Tự động hỗ trợ Tiếng Việt không dấu và các ký tự viết tắt (NH, NK, K).
+     c. Gọi RAG service để draft email reply (dùng default store).
+     d. **OR all logic**: Tự động mở rộng filter sang giá trị "all" nếu trích xuất được giá trị cụ thể.
   5. Trả về response tương ứng với label
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -262,9 +270,9 @@ RESPONSE 409 Conflict:
   { "detail": "Store name 'Văn bản Đào tạo 2026' already exists" }
 
 WORKFLOW:
-  1. Validate display_name
+  1. Validate displayName
   2. Check duplicate trong MongoDB
-  3. Generate store_name từ display_name + random suffix
+  3. Generate store_name từ displayName + random suffix
   4. Gọi Gemini API tạo file search store
   5. Nếu set_as_default=true: unset các store khác, set store này là default.
   6. Lưu thông tin vào MongoDB (collection file_search_stores).
@@ -314,7 +322,7 @@ LUỒNG XỬ LÝ (WORKFLOW):
 
 
 ────────────────────────────────────────────────────────────────────────────────
-3.4. GET /api/stores/{store_id} - Lấy chi tiết Store
+3.4. GET /api/stores/{storeId} - Lấy chi tiết Store
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -327,15 +335,15 @@ RESPONSE 404 Not Found:
  
 LUỒNG XỬ LÝ (WORKFLOW):
   1. Guard: require_auth.
-  2. Truy vấn MongoDB theo store_id.
+  2. Truy vấn MongoDB theo storeId.
   3. Trả về chi tiết store hoặc lỗi 404.
 
 ────────────────────────────────────────────────────────────────────────────────
-3.5. PATCH /api/stores/{store_id} - Cập nhật Store
+3.5. PATCH /api/stores/{storeId} - Cập nhật Store
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Cập nhật display_name hoặc set làm default store.
+  Cập nhật displayName hoặc set làm default store.
 
 REQUEST EXAMPLE:
   {
@@ -355,7 +363,7 @@ LUỒNG XỬ LÝ (WORKFLOW):
   4. Trả về dữ liệu sau khi update.
 
 ────────────────────────────────────────────────────────────────────────────────
-3.6. DELETE /api/stores/{store_id} - Xóa Store
+3.6. DELETE /api/stores/{storeId} - Xóa Store
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -402,7 +410,7 @@ LUỒNG XỬ LÝ (WORKFLOW):
 
 
 ────────────────────────────────────────────────────────────────────────────────
-3.9. POST /api/stores/{store_id}/sync - Đồng bộ thống kê Store
+3.9. POST /api/stores/{storeId}/sync - Đồng bộ thống kê Store
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -528,8 +536,8 @@ MÔ TẢ:
   Authentication: Required (any valid user)
 
 QUERY PARAMETERS:
-  - isActive: bool (optional) - Lọc theo trạng thái is_active của metadata type.
-  - keywords: string (optional) - Tìm kiếm theo display_name của cả key và value.
+  - isActive: bool (optional) - Lọc theo trạng thái isActive của metadata type.
+  - keywords: string (optional) - Tìm kiếm theo displayName của cả key và value.
 
 RESPONSE 200 OK:
   {
@@ -549,7 +557,7 @@ LUỒNG XỬ LÝ (WORKFLOW):
   2. Nếu user không phải Admin: ép buộc isActive=true. Chỉ lấy Metadata Key đang hoạt động.
   3. Lọc Allowed Values: Nếu user không phải Admin, chỉ lấy các giá trị có isActive=true.
   4. Nếu user là Admin: cho phép dùng query isActive (true/false/không truyền).
-  5. Nếu có keywords, tìm kiếm case-insensitive trong display_name của MetadataType và AllowedValue.
+  5. Nếu có keywords, tìm kiếm case-insensitive trong displayName của MetadataType và AllowedValue.
   4. Lọc lấy toàn bộ metadata types từ MongoDB.
 
 
@@ -578,10 +586,11 @@ LUỒNG XỬ LÝ (WORKFLOW):
   4. Trả về true nếu tìm thấy, false nếu không.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.3. GET /api/metadata/{key} - Lấy Metadata Type theo key
+4.4. GET /api/metadata/{key} - Lấy Metadata Type theo key
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
+  Lấy thông tin chi tiết của một metadata type theo key.
   Authentication: Required (any valid user)
 
 RESPONSE 200 OK: (MetadataTypeResponse)
@@ -594,11 +603,12 @@ LUỒNG XỬ LÝ (WORKFLOW):
   2. Tìm metadata type trong MongoDB theo key.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.4. PATCH /api/metadata/{key} - Cập nhật Metadata Type
+4.5. PATCH /api/metadata/{key} - Cập nhật Metadata Type
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
-  Cập nhật metadata type. Không thể thay đổi key, is_system, hoặc allowed_values bằng API này (sử dụng APIs riêng cho values).
+  Cập nhật metadata type. Không thể thay đổi key, isSystem, hoặc allowed_values bằng API này (sử dụng APIs riêng cho values).
+  LƯU Ý: Đối với System Metadata (`isSystem=true`), KHÔNG thể cập nhật trạng thái `isActive`.
 
 REQUEST EXAMPLE:
   {
@@ -615,11 +625,12 @@ LUỒNG XỬ LÝ (WORKFLOW):
   3. Cập nhật các trường thông tin chung vào MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.5. POST /api/metadata/{key}/values - Thêm Metadata Value
+4.6. POST /api/metadata/{key}/values - Thêm Metadata Value
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
   Thêm một allowed_value mới vào metadata type có sẵn.
+  LƯU Ý: Đối với System Metadata (`isSystem=true`), cấu hình `accessScope` KHÔNG được phép thêm giá trị mới.
 
 REQUEST EXAMPLE:
   {
@@ -639,11 +650,14 @@ LUỒNG XỬ LÝ (WORKFLOW):
   3. Push giá trị mới vào mảng allowedValues.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.6. PATCH /api/metadata/{key}/values/{value} - Cập nhật Metadata Value
+4.7. PATCH /api/metadata/{key}/values/{value} - Cập nhật Metadata Value
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
   Cập nhật một allowed_value trong metadata type (màu, tên hiển thị, trạng thái, role hiển thị). Value (khóa) không thể đổi.
+  LƯU Ý (System Metadata):
+  - `accessScope`: KHÔNG thể cập nhật `isActive`.
+  - `academicYear` / `cohort`: KHÔNG thể cập nhật `isActive` cho giá trị `all`.
 
 REQUEST EXAMPLE:
   {
@@ -657,13 +671,13 @@ RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
 RESPONSE 404 Not Found: Nếu value không tồn tại.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.7. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
+4.8. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
   Hard delete: xóa hoàn toàn metadata type khỏi hệ thống.
   CHỈ cho phép xóa nếu số lượng file đang dùng tag này (totalFiles) bằng 0.
-  Không thể xóa nếu is_system=true.
+  Không thể xóa nếu isSystem=true.
 
 RESPONSE 204 No Content:
   (Thành công, không có body)
@@ -671,7 +685,7 @@ RESPONSE 409 Conflict:
   { "detail": "Cannot delete metadata type 'department' because it is in use by 5 files." }
 
 RESPONSE 403 Forbidden:
-    { "detail": "Cannot delete system metadata type: 'access_scope'. 'access_scope' is protected." }
+    { "detail": "Cannot delete system metadata type: 'accessScope'. 'accessScope' is protected." }
 
 RESPONSE 404 Not Found:
   { "detail": "Metadata type 'department' not found" }
@@ -683,12 +697,15 @@ LUỒNG XỬ LÝ (WORKFLOW):
   4. Hard delete bản ghi khỏi MongoDB.
 
 ────────────────────────────────────────────────────────────────────────────────
-4.8. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
+4.9. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
   Xóa cứng một giá trị khỏi danh sách allowed_values.
   Chỉ có thể xóa nếu totalFiles của giá trị này bằng 0.
+  LƯU Ý (System Metadata):
+  - `accessScope`: Cấm xóa bất kỳ giá trị nào.
+  - `academicYear` / `cohort`: Cấm xóa giá trị `all`.
   Nếu giá trị đang được sử dụng bởi file nào đó, trả về 409 Conflict.
 
 RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
@@ -716,8 +733,8 @@ LUỒNG XỬ LÝ (WORKFLOW):
 Files được lưu trong R2 (binary) và indexed trong Gemini File Search.
 🔒 XÁC THỰC:
    - GET /api/files                  → Authentication: Required (any valid user)
-   - GET /api/files/{file_id}        → Authentication: Required (any valid user)
-   - GET /api/files/{file_id}/download → Authentication: Required (any valid user)
+   - GET /api/files/{fileId}        → Authentication: Required (any valid user)
+   - GET /api/files/{fileId}/download → Authentication: Required (any valid user)
    - GET /api/files/check-sync       → Yêu cầu role admin
    - Các API khác (Upload, Batch, Sync, Delete) → Yêu cầu role admin
 ────────────────────────────────────────────────────────────────────────────────
@@ -729,7 +746,7 @@ MÔ TẢ:
 
 YÊU CẦU METADATA (BẮT BUỘC):
   - access_scope: phải có
-  - academic_year HOẶC cohort: phải có ít nhất một trong hai
+  - academicYear HOẶC cohort: phải có ít nhất một trong hai
 
 REQUEST (multipart/form-data):
   - file: <binary>                                                        // required
@@ -748,7 +765,7 @@ RESPONSE 201 Created:
     "mimeType": "application/pdf",
     "status": "active",
     "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
-    "customMetadata": {"access_scope": "student", "academic_year": "2024-2025"},
+    "customMetadata": {"accessScope": "student", "academicYear": "2024-2025"},
     "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
     "createdAt": "2026-03-11T10:30:00.000000",
     "message": "File uploaded successfully"
@@ -759,7 +776,7 @@ RESPONSE 400 Bad Request:
   { "detail": "File size exceeds maximum of 20 MB" }
   { "detail": "Invalid custom_metadata JSON format" }
   { "detail": "Metadata 'access_scope' is required." }
-  { "detail": "Must include at least one of 'academic_year' or 'cohort'." }
+  { "detail": "Must include at least one of 'academicYear' or 'cohort'." }
 
 RESPONSE 409 Conflict:
   { "detail": "A file with this name already exists in the store" }
@@ -767,7 +784,7 @@ RESPONSE 409 Conflict:
 WORKFLOW:
   1. Validate file type và size
   2. Resolve store (param → default store → error)
-  3. Validate metadata: access_scope bắt buộc, phải có academic_year hoặc cohort
+  3. Validate metadata: accessScope bắt buộc, phải có academicYear hoặc cohort
   4. Validate từng metadata value với registered metadata types
   5. Lưu temporary file
   6. Upload lên R2
@@ -833,7 +850,7 @@ QUERY PARAMETERS:
   - storeId        : (optional, str) Filter theo store (ví dụ: fileSearchStores/xxx)
   - fileStatus     : (optional, str) active|processing|failed
   - metadataFilter : (optional, json) {"academicYear": "2024-2025", ...}
-  - keywords       : (optional, str) Search theo display_name
+  - keywords       : (optional, str) Search theo displayName
   - page, limit    : Pagination
 
 RESPONSE 200 OK:
@@ -841,7 +858,24 @@ RESPONSE 200 OK:
 
 
 ────────────────────────────────────────────────────────────────────────────────
-5.4. GET /api/files/{file_id} - Lấy chi tiết File
+5.3. GET /api/files/admin - Liệt kê Files (Admin)
+-----------------------------------------------
+**Description:** Admin list files across all stores or filtered by storeId.
+**Method:** GET
+**Authentication:** Required (Admin)
+
+**Query Parameters:** (Tương tự `GET /api/files`)
+- `storeId` (optional): Filter theo store. Nếu không truyền, admin sẽ thấy file của MỌI store.
+- `fileStatus` (optional): Tình trạng file.
+- `metadataFilter` (optional): JSON string.
+- `keywords` (optional): Tìm trong displayName.
+- `page`, `limit`
+
+**Response:**
+  Giống GET /api/files nhưng không lọc theo default store nếu storeId=None.
+-----------------------------------------------
+
+5.4. GET /api/files/{fileId} - Lấy chi tiết File
 ────────────────────────────────────────────────────────────────────────────────
 
 RESPONSE 200 OK: (FileDetailResponse)
@@ -850,12 +884,12 @@ RESPONSE 404 Not Found:
   { "detail": "File 67a5... not found" }
 LUỒNG XỬ LÝ (WORKFLOW):
   1. Guard: require_auth.
-  2. Truy vấn MongoDB theo file_id.
+  2. Truy vấn MongoDB theo fileId.
   3. Áp dụng filter `visibleRoles`: loại bỏ các key trong `customMetadata` nếu role của user không nằm trong `visibleRoles` của giá trị đó. **Admin bypass filter này.**
   4. Trả về chi tiết file kèm metadata đã lược bỏ các field không được phép, hoặc lỗi 404.
 
 ────────────────────────────────────────────────────────────────────────────────
-5.5. GET /api/files/{file_id}/download - Download File
+5.5. GET /api/files/{fileId}/download - Download File
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -875,7 +909,7 @@ LUỒNG XỬ LÝ (WORKFLOW):
   3. Stream dữ liệu từ Cloudflare R2 về cho client.
 
 ────────────────────────────────────────────────────────────────────────────────
-5.6. DELETE /api/files/{file_id} - Xóa File
+5.6. DELETE /api/files/{fileId} - Xóa File
 ────────────────────────────────────────────────────────────────────────────────
 
 MÔ TẢ:
@@ -893,6 +927,27 @@ LUỒNG XỬ LÝ (WORKFLOW):
   4. Xóa file trên Cloudflare R2.
   5. Xóa bản ghi trong MongoDB.
   6. Cập nhật lại total_files trong Metadata Type.
+
+────────────────────────────────────────────────────────────────────────────────
+5.7. PATCH /api/files/{fileId} - Cập nhật thông tin File
+────────────────────────────────────────────────────────────────────────────────
+
+MÔ TẢ:
+  Cập nhật thông tin cơ bản của file (hiện tại hỗ trợ displayName) trong Database. Không cập nhật/đồng bộ tên hiển thị sang Gemini File Search.
+
+REQUEST EXAMPLE:
+  {
+    "displayName": "Tên Hiển Thị Mới Của File" 
+  }
+
+RESPONSE 200 OK: (FileDetailResponse đã cập nhật)
+
+RESPONSE 404 Not Found: Nếu file không tồn tại.
+
+LUỒNG XỬ LÝ (WORKFLOW):
+  1. Guard: require_admin.
+  2. Tìm kiếm file theo ID trong MongoDB.
+  3. Cập nhật displayName cho bản ghi file trong DB và trả về dict.
 
 ────────────────────────────────────────────────────────────────────────────────
 5.8. POST /api/files/batch - Batch Upload Files
@@ -1102,7 +1157,7 @@ RESPONSE 400 Bad Request:
   { "detail": "No store available. Please create a store first." }
 
 WORKFLOW:
-  1. Resolve store (request.store_id → default store → error)
+  1. Resolve store (request.storeId → default store → error)
   2. Convert metadataFilter dict → Gemini filter string
   3. Enforce accessScope theo userContext.role:
      - student: Only "student" scope
@@ -1140,7 +1195,7 @@ Content-Type: text/event-stream
   }
 
 LUỒNG XỬ LÝ (WORKFLOW):
-  1. Resolve store_id.
+  1. Resolve storeId.
   2. Convert metadataFilter sang định dạng Gemini.
   3. Gọi Gemini stream_chat_response (RAG enabled).
   4. Stream các text chunks về cho client qua SSE.
@@ -1205,7 +1260,7 @@ Các endpoint FILES, CHAT, EMAIL DRAFT đều hỗ trợ auto store resolution:
 
   Cách thiết lập default store:
     - Khi tạo store: POST /api/stores với "setAsDefault": true
-    - Cập nhật sau: PATCH /api/stores/{store_id} với "isDefault": true
+    - Cập nhật sau: PATCH /api/stores/{storeId} với "isDefault": true
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -1315,7 +1370,7 @@ METADATA FILTER FORMAT (dùng trong Chat và File Search):
   JSON format (request):
     {
       "department": "dao_tao",
-      "access_scope": "admin" | "lecture" | "student" (Required)
+      "access_scope": "private" | "both" | "lecture" | "student" (Required)
     }
 
   Gemini filter string (sau khi convert):
@@ -1330,5 +1385,6 @@ METADATA FILTER FORMAT (dùng trong Chat và File Search):
     Gemini:  '(department="dao_tao" OR department="all")'
 
 Role-based accessScope (trong /api/chat/query):
-  - role="student": accessScope="student" (override, bắt buộc)
-  - role="lecture" hoặc "admin": không thêm filter accessScope
+  - role="student": accessScope trong ["student", "both"]
+  - role="lecture": accessScope trong ["lecture", "both"]
+  - role="admin": thấy tất cả (bao gồm "private")

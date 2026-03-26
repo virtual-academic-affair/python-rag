@@ -450,6 +450,20 @@ class FileService:
         logger.info(f"File {file_id} deleted")
         return True
         
+    async def update_file_display_name(self, file_id: str, new_display_name: str) -> Optional[FileDocument]:
+        """Update the display name of a file."""
+        file_doc_dict = await self.file_repo.find_by_id(file_id)
+        if not file_doc_dict:
+            raise NotFoundException("File", file_id)
+            
+        update_data = {"display_name": new_display_name}
+        update_success = await self.file_repo.update_by_id(file_id, update_data)
+        
+        if update_success:
+            file_doc_dict["display_name"] = new_display_name
+            return _to_file_model(file_doc_dict)
+        return None
+        
     async def _apply_role_filters_and_metadata_masking(self, files: List[Dict[str, Any]], user_role: str) -> List[Dict[str, Any]]:
         """
         Centrally handles both access permission filtering (access_scope)
@@ -458,11 +472,11 @@ class FileService:
         if not files or not user_role:
             return files
             
-        # 1. Filter by access_scope (Student can only see student-scoped files)
+        # 1. Filter by access_scope (DB and memory checks)
         if user_role == "student":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") == "student"]
+            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["student", "both"]]
         elif user_role == "lecture":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["lecture", "student"]]
+            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["lecture", "both"]]
         # Admin sees all, no filter needed
             
         # 2. Mask custom_metadata based on visible_roles via MetadataService
@@ -504,9 +518,9 @@ class FileService:
         
         # Database-level filtering for access_scope
         if user_role == "student":
-            filters["custom_metadata.access_scope"] = "student"
+            filters["custom_metadata.access_scope"] = {"$in": ["student", "both"]}
         elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = {"$in": ["lecture", "student"]}
+            filters["custom_metadata.access_scope"] = {"$in": ["lecture", "both"]}
         # admin sees all - no filter
             
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])

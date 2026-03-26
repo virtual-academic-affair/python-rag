@@ -195,12 +195,19 @@ class InquiryTypesResult(BaseSchema):
     inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.")
 
 
+class InquiryFilters(BaseSchema):
+    """Extracted filters for metadata-based RAG searching in inquiry flow."""
+    academic_year: Optional[str] = Field(None, description="Academic year (e.g. 2024-2025)")
+    cohort: Optional[str] = Field(None, description="Cohort (e.g. K65)")
+
+
 class InquiryPayload(BaseSchema):
     """Structured payload for inquiry emails (email draft response)."""
 
     answer: str = Field(..., description="Generated reply email body")
     question: Optional[str] = Field(default=None, description="Extracted question/intent from the sender")
     types: List[str] = Field(default_factory=list, description="Categorized inquiry types")
+    filters: Optional[InquiryFilters] = Field(default=None, description="Extracted filters used for RAG")
     sources: List[SourceCitation] = Field(default_factory=list, description="RAG source citations")
     message_id: Optional[int] = Field(default=None, description="Original email message ID")
 
@@ -357,6 +364,11 @@ class FileUploadResponse(BaseSchema):
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     message: Optional[str] = None
+
+
+class UpdateFileRequest(BaseSchema):
+    """Request body for PATCH /api/files/{file_id}."""
+    display_name: str = Field(..., min_length=1, max_length=512, description="New display name for the file")
 
 
 class FileDetailResponse(BaseSchema):

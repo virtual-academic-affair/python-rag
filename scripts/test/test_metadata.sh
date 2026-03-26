@@ -111,6 +111,25 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata/${METADATA_K
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Add Metadata Value"
 
+log_info "GET /api/metadata/exists?key=${METADATA_KEY} — Kiem tra ton tai"
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/exists?key=${METADATA_KEY}" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Check Metadata Exists"
+
+log_info "PATCH /api/metadata/${METADATA_KEY}/values/${VAL_KEY} — Cap nhat gia tri"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/metadata/${METADATA_KEY}/values/${VAL_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
+    -d "{ \"displayName\": \"Updated Val\", \"isActive\": false }" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Update Metadata Value"
+
+log_info "DELETE /api/metadata/${METADATA_KEY}/values/${VAL_KEY} — Xoa gia tri"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/${METADATA_KEY}/values/${VAL_KEY}" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Delete Metadata Value"
+
 # 6. Delete metadata (cleanup)
 log_info "DELETE /api/metadata/${METADATA_KEY} — Hard Delete"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/metadata/${METADATA_KEY}" \

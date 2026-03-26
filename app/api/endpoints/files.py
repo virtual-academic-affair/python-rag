@@ -22,6 +22,7 @@ from app.models.schemas import (
     BulkDeleteResponse,
     SyncCheckResponse,
     SyncResponse,
+    UpdateFileRequest,
 )
 from app.services.rag.file_service import get_file_service
 from app.services.rag.utils.file_utils import (
@@ -171,10 +172,9 @@ async def upload_file(
     "",
     response_model=FileListResponse,
     summary="List files",
-    description="List files with optional filters and pagination.",
+    description="List files in the default store with optional filters and pagination.",
 )
 async def list_files(
-    store_id: Optional[str] = Query(None, alias="storeId", description="Filter by store ID"),
     file_status: Optional[str] = Query(None, alias="fileStatus", description="Filter by status"),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="JSON filter for metadata"),
     keywords: Optional[str] = Query(None, description="Search by display name"),
@@ -183,7 +183,7 @@ async def list_files(
     _user: Dict[str, Any] = Depends(require_auth),
 ):
     """
-    List files with pagination and filters.
+    List files in the default store with pagination and filters.
     
     **Metadata Filter example:**
     `?metadataFilter={"academicYear":"2024-2025"}`
@@ -217,9 +217,12 @@ async def list_files(
                     detail="Invalid metadataFilter JSON format",
                 )
         
+        
+        resolved_store_id, _ = await resolve_store(None)
+        
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
-            store_id=store_id,
+            store_id=resolved_store_id,
             status=status_enum,
             custom_metadata_filter=custom_metadata_filter,
             keywords=keywords,
@@ -254,6 +257,93 @@ async def list_files(
 
     except Exception as e:
         logger.error(f"Error listing files: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list files: {str(e)}",
+        )
+
+
+@router.get(
+    "/admin",
+    response_model=FileListResponse,
+    summary="List files (Admin)",
+    description="Admin file listing across all stores or filtered by storeId.",
+)
+async def list_files_admin(
+    store_id: Optional[str] = Query(None, alias="storeId", description="Filter by store ID. If empty, lists across all stores."),
+    file_status: Optional[str] = Query(None, alias="fileStatus", description="Filter by status"),
+    metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="JSON filter for metadata"),
+    keywords: Optional[str] = Query(None, description="Search by display name"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Admin endpoint to list files with pagination and filters.
+    """
+    try:
+        file_svc = get_file_service()
+        
+        # Parse status
+        status_enum = None
+        if file_status:
+            try:
+                status_enum = FileStatus(file_status.lower())
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status: {file_status}",
+                )
+        
+        # Parse metadata filter
+        custom_metadata_filter = None
+        if metadata_filter:
+            try:
+                custom_metadata_filter = json.loads(metadata_filter)
+                custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid metadataFilter JSON format",
+                )
+        
+        skip = (page - 1) * limit
+        files, total = await file_svc.list_files(
+            store_id=store_id,
+            status=status_enum,
+            custom_metadata_filter=custom_metadata_filter,
+            keywords=keywords,
+            user_role="admin",
+            skip=skip,
+            limit=limit,
+        )
+
+        return FileListResponse(
+            files=[
+                FileDetailResponse(
+                    file_id=str(f.id),
+                    store_id=f.store_id,
+                    original_filename=f.original_filename,
+                    display_name=f.display_name,
+                    gemini_document_name=f.gemini_document_name,
+                    file_size=f.file_size,
+                    mime_type=f.mime_type,
+                    storage_path=f.storage_path,
+                    status=f.status.value if hasattr(f.status, "value") else str(f.status),
+                    custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
+                    file_url=get_download_url(f.storage_path),
+                    created_at=f.created_at.isoformat() if f.created_at else "",
+                    updated_at=f.updated_at.isoformat() if f.updated_at else "",
+                )
+                for f in files
+            ],
+            total=total,
+            page=page,
+            limit=limit,
+        )
+
+    except Exception as e:
+        logger.error(f"Error listing files (admin): {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list files: {str(e)}",
@@ -458,6 +548,44 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     except HTTPException:
         raise
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch(
+    "/{file_id}",
+    response_model=FileDetailResponse,
+    summary="Update file display name",
+)
+async def update_file(
+    file_id: str, 
+    request: UpdateFileRequest,
+    _admin: Dict[str, Any] = Depends(require_admin)
+):
+    try:
+        file_svc = get_file_service()
+        file_doc = await file_svc.update_file_display_name(file_id, request.display_name)
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        return FileDetailResponse(
+            file_id=str(file_doc.id),
+            store_id=file_doc.store_id,
+            original_filename=file_doc.original_filename,
+            display_name=file_doc.display_name,
+            gemini_document_name=file_doc.gemini_document_name,
+            file_size=file_doc.file_size,
+            mime_type=file_doc.mime_type,
+            storage_path=file_doc.storage_path,
+            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            file_url=get_download_url(file_doc.storage_path),
+            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
+            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

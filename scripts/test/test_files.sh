@@ -96,6 +96,40 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     else
         log_error "Download File — Expected 200, got $HTTP_CODE"
     fi
+    
+    log_info "PATCH /api/files/${FILE_ID} — Cap nhat display_name"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
+        -H "Content-Type: application/json" \
+        -H "${AUTH_HEADER}" \
+        -d "{ \"displayName\": \"Updated File Name ${TIMESTAMP}\" }" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Update File Display Name"
+    
+    log_info "POST /api/files — Upload temp file de xoa"
+    TEMP_FILE="${UPLOADS_DIR}/temp_doc_delete_${TIMESTAMP}.txt"
+    echo "Content to delete" > "$TEMP_FILE"
+    
+    TEMP_UPLOAD_ARGS=(-F "file=@${TEMP_FILE}" -F "displayName=Temp File ${TIMESTAMP}")
+    if [ -n "$STORE_ID" ]; then
+        TEMP_UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
+    fi
+    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}')
+    
+    TEMP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
+        -H "${AUTH_HEADER}" \
+        "${TEMP_UPLOAD_ARGS[@]}" 2>/dev/null || echo -e "\n000")
+        
+    if check_response "$TEMP_RESPONSE" "201" "Upload Temp File"; then
+        TEMP_BODY=$(echo "$TEMP_RESPONSE" | sed '$d')
+        TEMP_FILE_ID=$(echo "$TEMP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
+        
+        log_info "DELETE /api/files/${TEMP_FILE_ID} — Xoa file don le"
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/${TEMP_FILE_ID}" \
+            -H "${AUTH_HEADER}" \
+            2>/dev/null || echo -e "\n000")
+        check_response "$RESPONSE" "204" "Delete File by ID"
+    fi
+    rm -f "$TEMP_FILE"
 fi
 
 # 5. Batch Upload
