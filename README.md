@@ -9,7 +9,9 @@
 Service nhận email từ RabbitMQ, tự động phân loại và xử lý:
 
 - **classRegistration** → trích xuất thông tin đăng ký học phần
-- **inquiry** → soạn email trả lời tự động bằng RAG (truy vấn từ kho tài liệu học thuật/quy chế)
+- **inquiry** → soạn email trả lời tự động bằng RAG (truy vấn từ kho tài liệu học thuật/quy chế). 
+  - **Rule-based Extraction**: Tự động nhận diện `academicYear`/`cohort` (hỗ trợ Tiếng Việt không dấu & viết tắt NH, NK, K).
+  - **OR all logic**: Tự động mở rộng tìm kiếm cho cả tài liệu chung (`all`).
 - **task** → ghi nhận nhiệm vụ hành chính, gọi gRPC TaskService
 - **other** → các email không thuộc danh mục trên
 
@@ -212,8 +214,9 @@ Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthServ
 | | POST | `/api/chat/stream` | Public/Implicit | Tùy vào cấu hình auth filter |
 | File Search (GET) | `GET /api/files` | User (Auth) | Liệt danh sách file trong **default store**. Hỗ trợ `keywords` & metadata filter. |
 | File Search Admin | `GET /api/files/admin` | **Admin** | Liệt danh sách file (mặc định lấy tất cả store nếu không truyền `storeId`). |
-| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `access_scope` (admin, lecture, student), ... |
+| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `accessScope` (private, both, lecture, student), ... |
 | | POST | `/api/files/batch` | **Admin** | Batch upload |
+| | PATCH | `/api/files/{fileId}` | **Admin** | Cập nhật thông tin file (displayName) |
 | | DELETE | `/api/files/{fileId}` | **Admin** | Xóa file |
 | | DELETE | `/api/files/all` | **Admin** | Xóa tất cả file |
 | **Stores** | GET | `/api/stores` | **Admin** | Liệt kê store |
@@ -251,7 +254,8 @@ EmailWorkflowOrchestrator.process_request()
      ├─[classRegistration]─▶ ClassRegistrationService → trích xuất JSON + gRPC
      │
      ├─[inquiry]───────────▶ InquiryService.process()
-     │                              ├── draft_inquiry_email_reply() (RAG)
+     │                              ├── Trích xuất metadata (Rule-based Regex)
+     │                              ├── draft_inquiry_email_reply() (RAG + OR all logic)
      │                              └── GrpcClient.create_inquiry()
      │
      ├─[task]──────────────▶ TaskService → extract payload + GrpcClient.create_task()

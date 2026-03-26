@@ -118,6 +118,8 @@ class MetadataService:
         if description is not None:
             updates["description"] = description
         if is_active is not None:
+            if existing.get("is_system", False):
+                raise ForbiddenException(f"Cannot update 'is_active' for system metadata type '{key}'")
             updates["is_active"] = is_active
 
         if not updates:
@@ -141,6 +143,9 @@ class MetadataService:
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
+            
+        if existing.get("is_system", False) and key == "access_scope":
+            raise ForbiddenException(f"Cannot add values to system metadata type '{key}'")
             
         existing_values = existing.get("allowed_values") or []
         
@@ -190,6 +195,11 @@ class MetadataService:
         if display_name is not None:
             av["display_name"] = display_name
         if is_active is not None:
+            if existing.get("is_system", False):
+                if key == "access_scope":
+                    raise ForbiddenException(f"Cannot update 'is_active' for values in system metadata type '{key}'")
+                if key in ["academic_year", "cohort"] and value_key == "all":
+                    raise ForbiddenException(f"Cannot update 'is_active' for value 'all' in system metadata type '{key}'")
             av["is_active"] = is_active
         if color is not None:
             av["color"] = color
@@ -246,6 +256,12 @@ class MetadataService:
         existing = await self.metadata_repo.find_by_key(key)
         if not existing:
             raise NotFoundException("MetadataType", key)
+            
+        if existing.get("is_system", False):
+            if key == "access_scope":
+                raise ForbiddenException(f"Cannot delete values from system metadata type '{key}'")
+            if key in ["academic_year", "cohort"] and value == "all":
+                raise ForbiddenException(f"Cannot delete value 'all' from system metadata type '{key}'")
             
         allowed_values = existing.get("allowed_values") or []
         target_value = next((v for v in allowed_values if v["value"] == value), None)

@@ -112,32 +112,25 @@ class FilterBuilder:
         # Load metadata types cache
         await self._load_metadata_types_cache()
         
-        # Copy metadata to avoid mutation
+        # Validate user-provided metadata BEFORE injecting access_scope
+        if not skip_validation and metadata:
+            is_valid, errors = await self.metadata_service.validate_metadata(metadata)
+            if not is_valid:
+                raise ValueError(f"Invalid metadata: {', '.join(errors)}")
+
         filter_metadata = dict(metadata)
         
-        # Enforce access_scope by role BEFORE validation
-        # This prevents validation error when student doesn't provide access_scope
+        # Enforce access_scope by role AFTER validation
+        # This allows injecting a list without triggering strict string validation
         if user_role == "student":
-            # Student can only see student documents
-            filter_metadata["access_scope"] = "student"
-            logger.debug(f"Role={user_role}: enforcing access_scope=student")
+            filter_metadata["access_scope"] = ["student", "both"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['student', 'both']")
         elif user_role == "lecture":
-            # Lecture can see lecture and student documents
-            filter_metadata["access_scope"] = ["lecture", "student"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'student']")
+            filter_metadata["access_scope"] = ["lecture", "both"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'both']")
         elif user_role == "admin":
-            # Admin can see all - remove access_scope filter
             filter_metadata.pop("access_scope", None)
             logger.debug(f"Role={user_role}: no access_scope filter")
-        
-        # Validate metadata if requested (after role enforcement)
-        if not skip_validation:
-            # For staff/admin, access_scope is not in filter_metadata so validation might fail
-            # Only validate if we have access_scope in metadata (for student) or if it's not required by role
-            if user_role != "staff" and user_role != "admin":
-                is_valid, errors = await self.metadata_service.validate_metadata(filter_metadata)
-                if not is_valid:
-                    raise ValueError(f"Invalid metadata: {', '.join(errors)}")
         
         # Build filter parts for each key
         filter_parts = []
@@ -184,6 +177,7 @@ class FilterBuilder:
         if not metadata or not isinstance(metadata, dict):
             return None
 
+        logger.debug(f"quick_convert input: {metadata}")
         filter_parts = []
         for key, value in metadata.items():
             if value is None:
@@ -197,7 +191,10 @@ class FilterBuilder:
                 if list_parts:
                     filter_parts.append(f"({' OR '.join(list_parts)})")
 
-        return " AND ".join(filter_parts) if filter_parts else None
+        filter_string = " AND ".join(filter_parts) if filter_parts else None
+        if filter_string:
+            logger.info(f"quick_convert result: {filter_string}")
+        return filter_string
 
 
 # ====================================

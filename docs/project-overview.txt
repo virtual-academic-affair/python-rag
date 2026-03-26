@@ -403,11 +403,11 @@ File: app/services/rag/email_draft_service.py
 Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inquiry.
 
   draft_inquiry_email_reply(subject, body, extracted_question, inquiry_types,
-                            sender_name, sender_email, additional_context, store_id, metadata_filter) → dict
+                            sender_name, sender_email, additional_context, storeId, metadata_filter) → dict
 
   Quy trinh:
-  1. resolve_store(store_id)
-     → store_id có trong request? dùng ngay
+  1. resolve_store(storeId)
+     → storeId có trong request? dùng ngay
      → không? lấy default store từ DB (is_default=True)
      → không có default? log/raise error.
 
@@ -423,6 +423,9 @@ Pure function — KHONG phải HTTP endpoint, gọi nội bộ khi label = inqui
   5. Trả về:
      {
        "answer": "Kính gửi em Nguyễn Văn A...",
+       "question": "Câu hỏi trích xuất...",
+       "types": ["graduation"],
+       "filters": {"academicYear": "2024-2025", "cohort": "k20"},
        "sources": [{"title":"...", "text":"...", "url":"..."}],
      }
 
@@ -445,10 +448,10 @@ File: app/services/rag/file_service.py
     Kiểm tra file trùng tên trong cùng store (ConflictException)
 
   STEP 2: Validate metadata (BẮT BUỘC)
-    access_scope BẮT BUỘC phải có (admin, lecture, student)
-    Phải có ít nhất academic_year HOẶC cohort (ValidationException nếu thiếu)
-    Từng key phải là metadata type đã đăng ký và is_active=True
-    Từng value phải nằm trong allowed_values và AllowedValue.is_active=True
+    accessScope BẮT BUỘC phải có (private, both, lecture, student)
+    Phải có ít nhất academicYear HOẶC cohort (ValidationException nếu thiếu)
+    Từng key phải là metadata type đã đăng ký và isActive=True
+    Từng value phải nằm trong allowed_values và AllowedValue.isActive=True
 
   STEP 3: Tạo record MongoDB
     status = UPLOADING
@@ -477,7 +480,7 @@ File: app/services/rag/file_service.py
     - Xóa toàn lô / Batch delete (`DELETE /api/files/all?storeId=...`) cũng lặp qua và áp dụng rollback số lượng `totalFiles` (các record metadata), cũng như xóa triệt để tại (DB + R2 + Gemini).
 
   Retry file failed:
-    POST /api/files/{file_id}/retry
+    POST /api/files/{fileId}/retry
     → File phải ở status FAILED và còn trong R2
     → Gọi lại Gemini upload → status → ACTIVE
 
@@ -508,21 +511,25 @@ CẤU TRUC AllowedValue:
                  Rỗng = Chỉ Admin thấy. Admin luôn thấy tất cả các giá trị.
 
 DUNG SORT:
-  Mặc định trả về kết quả Metadata Type sẽ được ưu tiên `is_system=True` lên đầu, 
+  Mặc định trả về kết quả Metadata Type sẽ được ưu tiên `isSystem=True` lên đầu, 
   sau đó mới đến các Metadata Type tùy chỉnh (giảm dần theo thời gian tạo).
 
-CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
-  1. Soft Delete: Thực hiện qua thao tác Update (PUT/PATCH), gán `is_active = False` cho MetadataType hoặc cấu hình AllowedValue.
+CHIẾN LƯỢC XÓA VÀ CẬP NHẬT (UPDATE/DELETE STRATEGIES):
+  1. Soft Delete: Thực hiện qua thao tác Update (PUT/PATCH), gán `isActive = False` cho MetadataType hoặc cấu hình AllowedValue.
      Lịch sử và file vẫn giữ tag mà không phá vỡ logic, nhưng UI ngừng đề xuất khi upload file mới.
+     - LƯU Ý BẢO VỆ SYSTEM METADATA: 
+       + `accessScope`: Bị CẤM thêm value, cập nhật `isActive` cho value, hoặc xóa value.
+       + `academicYear` & `cohort`: Bị CẤM cập nhật `isActive` hoặc xóa đối với value `all`.
+       + Bị CẤM update `isActive` cho bản thân các System Metadata Type.
   2. Hard Delete: 
      - `DELETE /api/metadata/{key}` hoặc `DELETE /api/metadata/{key}/values/{value}`
      - API Explicit Hard Delete có cơ chế bảo vệ: CHỈ cho phép xóa khi `total_files == 0`.
      - Nếu `total_files > 0`, trả về 409 Conflict.
-     - System metadata (`is_system = True`) sẽ bị cấm xóa.
+     - System metadata (`isSystem = True`) và các value được bảo vệ sẽ bị cấm xóa.
 
-3 SYSTEM METADATA (seed bởi scripts/seed_metadata.py, is_system=True):
+3 SYSTEM METADATA (seed bởi scripts/seed_metadata.py, isSystem=True):
 
-  academic_year (Năm học):
+  academicYear (Năm học):
     Chứa entry value="all" trong allowed_values.
     Giá trị: 2020-2021, 2021-2022, 2022-2023, 2023-2024, 2024-2025, 2025-2026, all
 
@@ -530,15 +537,15 @@ CHIẾN LƯỢC XÓA (DELETE STRATEGIES):
     Chứa entry value="all" trong allowed_values.
     Giá trị: K62, K63, K64, K65, K66, K67, K68, all
 
-  access_scope (Phạm vi truy cập):
+  accessScope (Phạm vi truy cập):
     has_all_value = False
-    Giá trị: admin (Admin), lecture (Lecture), student (Student)
+    Giá trị: private (Admin Only), both (Student & Lecture), lecture (Lecture Only), student (Student Only)
 
 QUY TAC VALIDATE khi upload file:
-  1. access_scope BAT BUOC phải có
-  2. Phải có ít nhất academic_year HOAC cohort
-  3. Mỗi key phải là metadata type đã đăng ký và is_active=True
-  4. Mỗi value phải nằm trong allowed_values và AllowedValue.is_active=True
+  1. accessScope BAT BUOC phải có
+  2. Phải có ít nhất academicYear HOAC cohort
+  3. Mỗi key phải là metadata type đã đăng ký và isActive=True
+  4. Mỗi value phải nằm trong allowed_values và AllowedValue.isActive=True
 
   Vi dụ customMetadata hợp lệ:
     {"academicYear":"2024-2025","cohort":"K65","accessScope":"student"}
@@ -553,23 +560,24 @@ File: app/services/rag/utils/filter_builder.py
 convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
 
   Vi dụ đơn giản:
-    Input:  {"academic_year": "2024-2025", "department": "dao_tao"}
-    Output: 'academic_year="2024-2025" AND department="dao_tao"'
+    Input:  {"academicYear": "2024-2025", "department": "dao_tao"}
+    Output: 'academicYear="2024-2025" AND department="dao_tao"'
 
   Vi dụ list (OR condition):
     Input:  {"cohort": ["K65", "K66"]}
     Output: '(cohort="K65" OR cohort="K66")'
 
-  Vi dụ support_all_value=True (academic_year):
-    Input:  {"academic_year": "2024-2025"}
-    Output: '(academic_year="2024-2025" OR academic_year="all")'
+  Vi dụ support_all_value=True (academicYear):
+    Input:  {"academicYear": "2024-2025"}
+    Output: '(academicYear="2024-2025" OR academicYear="all")'
     → has_all_value=True khi allowed_values chứa entry với value="all"
 
   Input null / empty → Trả về None (không filter Gemini)
 
 Phan quyen theo role trong Chat API:
-  role="student"  → BAT BUOC thêm access_scope="student" vào filter (nếu có quyền xem)
-  role="lecture"  → Thêm access_scope=["lecture", "student"] vào filter
+  role="student"  → Thêm filter accessScope IN ["student", "both"]
+  role="lecture"  → Thêm filter accessScope IN ["lecture", "both"]
+  role="admin"    → Không giới hạn accessScope (có thể xem tất cả gồm "private")
   role="admin"    → Admin luôn bypass filter visibleRoles và có thể xem toàn bộ metadata.
 
 
@@ -620,15 +628,15 @@ THUOC TINH STORE:
   isDefault   : bool — chỉ 1 store là default tại một thời điểm
 
 CAC THAO TAC:
-  create_store(display_name, set_as_default)
+  create_store(displayName, set_as_default)
     → Gọi Gemini API tạo store → lưu MongoDB
   list_stores(is_default, page, limit) → query MongoDB
-  get_store(store_id) → find MongoDB by ObjectId
-  update_store(store_id, display_name, is_default)
-  delete_store(store_id, force)
+  get_store(storeId) → find MongoDB by ObjectId
+  update_store(storeId, displayName, is_default)
+  delete_store(storeId, force)
     force=False: Từ chối nếu store còn files
     force=True:  Xóa store và toàn bộ files
-  sync_store_stats(store_id)
+  sync_store_stats(storeId)
     → Gọi Gemini API lấy activeDocumentsCount + sizeBytes
   delete_all_stores() → xóa toàn bộ (NGUY HIEM)
   list_gemini_stores() → list trực tiếp từ Gemini (debug)
@@ -657,9 +665,9 @@ POST /api/chat/query — Chat thường (blocking)
         "role": "student"           ← ảnh hưởng phân quyền filter
       },
       "chat_history": [...],        ← tối đa 5-10 lượt gần nhất
-      "store_id": "67a5...",        ← optional, dùng default nếu bỏ qua
+      "storeId": "67a5...",        ← optional, dùng default nếu bỏ qua
       "metadata_filter": {          ← optional
-        "academic_year": "2024-2025"
+        "academicYear": "2024-2025"
       }
     }
 
@@ -725,9 +733,9 @@ PHÂN QUYỀN CÁC ENDPOINT:
 Database name: cấu hình qua MONGODB_DB_NAME (default: "ai_service")
 
 Collection: file_search_stores
-  _id           ObjectId  → store_id trong API
+  _id           ObjectId  → storeId trong API
   store_name    string    → "fileSearchStores/van-ban-dao-tao-abc123" (unique)
-  display_name  string    → "Văn bản Đào tạo 2026"
+  displayName  string    → "Văn bản Đào tạo 2026"
   file_count    int       → Số file active (sync từ Gemini)
   total_size    int       → Tổng bytes (sync từ Gemini)
   is_default    bool      → Chỉ 1 store là default tại một thời điểm
@@ -735,35 +743,35 @@ Collection: file_search_stores
   updated_at    datetime
 
 Collection: file_documents
-  _id                  ObjectId  → file_id trong API
-  store_id             string    → ObjectId (FK → file_search_stores)
-  display_name         string    → "Quy chế đào tạo 2026"
+  _id                  ObjectId  → fileId trong API
+  storeId             string    → ObjectId (FK → file_search_stores)
+  displayName         string    → "Quy chế đào tạo 2026"
   original_filename    string    → "document.pdf"
   storage_path         string    → "van-ban-dao-tao/2026/03/document.pdf"
   storage_bucket       string    → "rag-files"
   file_size            int       → bytes
   mime_type            string    → "application/pdf"
   gemini_document_name string?   → "fileSearchStores/xxx/documents/yyy"
-  custom_metadata      object    → {"academic_year":"2024-2025","access_scope":"student"}
+  customMetadata      object    → {"academicYear":"2024-2025","accessScope":"student"}
   status               string    → UPLOADING | PROCESSING | ACTIVE | FAILED
   created_at           datetime
   updated_at           datetime
 
 Collection: metadata_types
   _id               ObjectId
-  key               string UNIQUE  → "academic_year"
-  display_name      string         → "Năm học"
+  key               string UNIQUE  → "academicYear"
+  displayName      string         → "Năm học"
   description       string
-  allowed_values    array?         → [{value, display_name, is_active, color}] | null
+  allowed_values    array?         → [{value, displayName, isActive, color}] | null
   support_all_value bool           → true = filter thêm OR key="all"
-  is_active         bool           → false = ẩn / không validate
-  is_system         bool           → true = không cho xóa
+  isActive         bool           → false = ẩn / không validate
+  isSystem         bool           → true = không cho xóa
   created_at        datetime
   updated_at        datetime
 
 Indexes (tạo bởi scripts/init_db.py):
   file_search_stores: unique(store_name), index(is_default)
-  file_documents: index(store_id), index(status), unique(store_id + original_filename)
+  file_documents: index(storeId), index(status), unique(storeId + original_filename)
   metadata_types: unique(key)
 
 
@@ -802,9 +810,9 @@ StoreRepository: collection "file_search_stores"
   find_by_store_name(store_name) → dict | None
 
 FileRepository: collection "file_documents"
-  find_by_store_id(store_id, status, page, limit) → list
-  find_by_filename_in_store(store_id, filename) → dict | None
-  count_by_store(store_id) → int
+  find_by_storeId(storeId, status, page, limit) → list
+  find_by_filename_in_store(storeId, filename) → dict | None
+  count_by_store(storeId) → int
 
 MetadataRepository: collection "metadata_types"
   find_by_key(key: str) → dict | None
@@ -917,11 +925,11 @@ DEBUG=true → response kèm thêm stack trace và request path
   STORE MANAGEMENT (9 endpoints)
     POST   /api/stores                     Tạo store mới
     GET    /api/stores                     Liệt kê (? is_default, page, limit)
-    GET    /api/stores/{store_id}          Chi tiết store
-    PATCH  /api/stores/{store_id}          Cập nhật display_name hoặc is_default
-    DELETE /api/stores/{store_id}          Xóa store (? force=false/true)
+    GET    /api/stores/{storeId}          Chi tiết store
+    PATCH  /api/stores/{storeId}          Cập nhật displayName hoặc is_default
+    DELETE /api/stores/{storeId}          Xóa store (? force=false/true)
     DELETE /api/stores/all                 Xóa TAT CA stores
-    POST   /api/stores/{store_id}/sync     Sync file_count + total_size từ Gemini
+    POST   /api/stores/{storeId}/sync     Sync file_count + total_size từ Gemini
 
   METADATA TYPES (8 endpoints)
     POST   /api/metadata                        Tạo metadata type mới
@@ -938,9 +946,10 @@ DEBUG=true → response kèm thêm stack trace và request path
     POST   /api/files                           Upload file (luôn đồng bộ)
     GET    /api/files                           Liệt kê file (filter: storeId, fileStatus, metadataFilter). Áp dụng filter visibleRoles.
     GET    /api/files/check-sync                Kiểm tra đồng bộ DB/R2/Gemini
-    GET    /api/files/{file_id}                 Chi tiết file. Áp dụng filter visibleRoles.
-    GET    /api/files/{file_id}/download        Download file từ R2
-    DELETE /api/files/{file_id}                 Xóa file (Hard Delete R2 + Gemini + MongoDB)
+    GET    /api/files/{fileId}                 Chi tiết file. Áp dụng filter visibleRoles.
+    GET    /api/files/{fileId}/download        Download file từ R2
+    PATCH  /api/files/{fileId}                 Cập nhật thông tin file (displayName)
+    DELETE /api/files/{fileId}                 Xóa file (Hard Delete R2 + Gemini + MongoDB)
     DELETE /api/files/all                       Xóa tất cả file trong 1 store (Hard Delete)
     POST   /api/files/batch                     Batch upload nhiều file
     POST   /api/files/sync                      Đồng bộ files giữa DB/R2/Gemini

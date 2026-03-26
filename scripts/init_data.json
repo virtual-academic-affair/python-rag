@@ -44,7 +44,7 @@
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
         "accessScope": "student",
-        "academicYear": "2024-2025",
+        "academicYear": "2025-2026",
         "department": "dao_tao"
       }
     },
@@ -53,7 +53,7 @@
       "displayName": "Quy định học bổng sinh viên",
       "metadata": {
         "accessScope": "student",
-        "academicYear": "2024-2025",
+        "academicYear": "2023-2024",
         "department": "ctsv"
       }
     },
@@ -61,8 +61,8 @@
       "filename": "test 4.pdf",
       "displayName": "Thông tin hợp tác quốc tế",
       "metadata": {
-        "accessScope": "admin",
-        "academicYear": "2024-2025",
+        "accessScope": "private",
+        "cohort": "K22",
         "department": "htqt"
       }
     },

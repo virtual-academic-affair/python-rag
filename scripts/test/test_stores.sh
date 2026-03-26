@@ -63,6 +63,26 @@ else
     log_skip "Get/Update/Sync Store — bo qua (STORE_ID chua duoc set)"
 fi
 
+# Create secondary store to test DELETE
+log_info "POST /api/stores — Tao store phu de xoa (require_admin)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
+    -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
+    -d "{
+        \"displayName\": \"Temp Store to Delete ${TIMESTAMP}\",
+        \"setAsDefault\": false
+    }" 2>/dev/null || echo -e "\n000")
+if check_response "$RESPONSE" "201" "Create Temp Store"; then
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    TEMP_STORE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('storeId',''))" 2>/dev/null || echo "")
+    log_info "  -> temp_store_id = $TEMP_STORE_ID"
+    
+    log_info "DELETE /api/stores/${TEMP_STORE_ID} — Xoa store"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/stores/${TEMP_STORE_ID}" \
+        -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "204" "Delete Store"
+fi
+
 # Unauthorized test
 log_info "POST /api/stores — khong co token (expect 401)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
