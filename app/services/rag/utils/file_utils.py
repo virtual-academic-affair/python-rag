@@ -4,6 +4,7 @@ Validation, type detection, and file handling helpers.
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import Optional, Any
 from slugify import slugify
@@ -21,6 +22,8 @@ from enum import Enum
 from dataclasses import dataclass, field
 from app.core.config import settings
 from app.core.exceptions import FileSizeException, FileTypeException
+
+logger = logging.getLogger(__name__)
 
 class UploadStep(Enum):
     """Steps in the upload process for tracking rollback."""
@@ -61,6 +64,15 @@ class GeminiFile:
 
 
 
+# ====================================
+# CONSTANTS
+# ====================================
+# Extensions explicitly supported by Google Gemini File Search
+GEMINI_SUPPORTED_EXTENSIONS = {
+    '.pdf', '.docx', '.doc', '.txt', '.md', '.html', 
+    '.xlsx', '.xls', '.pptx', '.csv', '.rtf'
+}
+
 def validate_file_size(file_size_bytes: int) -> None:
     """
     Validate file size against maximum allowed.
@@ -90,40 +102,54 @@ def validate_file_extension(filename: str) -> None:
     """
     ext = os.path.splitext(filename)[1].lower()
     
-    if ext not in settings.allowed_extensions_list:
-        raise FileTypeException(ext, settings.allowed_extensions_list)
+    if ext not in GEMINI_SUPPORTED_EXTENSIONS:
+        raise FileTypeException(ext, list(GEMINI_SUPPORTED_EXTENSIONS))
 
 
 def detect_mime_type(file_path: str) -> str:
     """
-    Detect MIME type of a file.
-    
-    Args:
-        file_path: Path to file
-        
-    Returns:
-        MIME type string
+    Detect MIME type of a file with prioritization for office documents.
     """
-    # Try using filetype library
-    if HAS_FILETYPE:
-        try:
-            kind = filetype.guess(file_path)
-            if kind is not None:
-                return kind.mime
-        except Exception:
-            pass
-    
-    # Fallback to extension-based detection
     ext = os.path.splitext(file_path)[1].lower()
+    
+    # 1. High-priority extension mapping (very reliable for specific types)
     mime_types = {
         '.pdf': 'application/pdf',
         '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         '.doc': 'application/msword',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.xls': 'application/vnd.ms-excel',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.csv': 'text/csv',
+        '.rtf': 'text/rtf',
         '.txt': 'text/plain',
         '.md': 'text/markdown',
         '.html': 'text/html',
     }
-    return mime_types.get(ext, 'application/octet-stream')
+    
+    # If it's one of our primary supported formats, trust the extension first 
+    # to avoid .docx being detected as generic application/zip in production.
+    if ext in mime_types:
+        detected_mime = mime_types[ext]
+        logger.info(f"MIME detected (extension-based): {ext} -> {detected_mime}")
+        return detected_mime
+
+    # 2. Try using filetype library for others
+    if HAS_FILETYPE:
+        try:
+            kind = filetype.guess(file_path)
+            if kind is not None:
+                # If kind is zip but it's an office doc (handled above), 
+                # we've already returned. For others, we trust kind.
+                logger.info(f"MIME detected (filetype): {kind.mime}")
+                return kind.mime
+        except Exception as e:
+            logger.warning(f"Filetype guess failed: {e}")
+    
+    # 3. Final default
+    final_mime = mime_types.get(ext, 'application/octet-stream')
+    logger.info(f"MIME detected (fallback): {ext} -> {final_mime}")
+    return final_mime
 
 
 def generate_file_id() -> str:

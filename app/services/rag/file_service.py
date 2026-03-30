@@ -112,7 +112,6 @@ class FileService:
         store_name: str,
         display_name: Optional[str] = None,
         custom_metadata: Optional[dict] = None,
-        enable_chunking: Optional[bool] = None,
         max_retries: int = 3,
     ) -> FileDocument:
         """
@@ -135,7 +134,6 @@ class FileService:
                 display_name=display_name or original_filename,
                 mime_type=file_info["mime_type"],
                 file_size=file_info["file_size"],
-                enable_chunking=enable_chunking,
                 max_retries=max_retries
             )
         except Exception as e:
@@ -196,7 +194,6 @@ class FileService:
         display_name: str,
         mime_type: str,
         file_size: int,
-        enable_chunking: Optional[bool],
         max_retries: int
     ) -> FileDocument:
         """Execute the atomic steps of uploading with a retry loop."""
@@ -238,7 +235,7 @@ class FileService:
                 if not state.has_step(UploadStep.GEMINI_UPLOADED):
                     logger.info(f"[{state.file_id}] Processing Gemini upload")
                     gemini_file = await self._upload_to_gemini(
-                        file_path, display_name, store_name, state.custom_metadata, enable_chunking
+                        file_path, display_name, store_name, state.custom_metadata
                     )
                     state.gemini_document_name = gemini_file.name
                     state.mark_step(UploadStep.GEMINI_UPLOADED)
@@ -339,7 +336,6 @@ class FileService:
         display_name: str,
         store_name: str,
         custom_metadata: Optional[dict] = None,
-        enable_chunking: Optional[bool] = None,
     ) -> GeminiFile:
         """Upload file directly to Gemini File Search store."""
         try:
@@ -349,15 +345,6 @@ class FileService:
             # Add custom metadata
             if custom_metadata:
                 config["custom_metadata"] = convert_metadata_for_gemini(custom_metadata)
-            
-            # Add chunking config if enabled
-            if enable_chunking or (enable_chunking is None and settings.CHUNKING_ENABLED):
-                config["chunking_config"] = {
-                    "white_space_config": {
-                        "max_tokens_per_chunk": settings.CHUNKING_MAX_TOKENS_PER_CHUNK,
-                        "max_overlap_tokens": settings.CHUNKING_MAX_OVERLAP_TOKENS,
-                    }
-                }
             
             # Upload file directly to store
             logger.info(f"Uploading to Gemini store {store_name}: {display_name}")
@@ -474,9 +461,9 @@ class FileService:
             
         # 1. Filter by access_scope (DB and memory checks)
         if user_role == "student":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["student", "both"]]
+            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["student", "public"]]
         elif user_role == "lecture":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["lecture", "both"]]
+            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["lecture", "public"]]
         # Admin sees all, no filter needed
             
         # 2. Mask custom_metadata based on visible_roles via MetadataService
@@ -514,13 +501,20 @@ class FileService:
             for k, v in custom_metadata_filter.items():
                 if k == "access_scope":
                     continue # Handled by role logic
-                filters[f"custom_metadata.{k}"] = {"$in": [v, "all"]}
+                
+                # Support array of values (OR logic for same key)
+                if isinstance(v, list):
+                    filter_values = v + ["all"]
+                else:
+                    filter_values = [v, "all"]
+                    
+                filters[f"custom_metadata.{k}"] = {"$in": filter_values}
         
         # Database-level filtering for access_scope
         if user_role == "student":
-            filters["custom_metadata.access_scope"] = {"$in": ["student", "both"]}
+            filters["custom_metadata.access_scope"] = {"$in": ["student", "public"]}
         elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = {"$in": ["lecture", "both"]}
+            filters["custom_metadata.access_scope"] = {"$in": ["lecture", "public"]}
         # admin sees all - no filter
             
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])

@@ -376,19 +376,14 @@ class MetadataService:
         """Get all registered metadata keys."""
         return await self.metadata_repo.get_all_keys()
     
-    async def validate_metadata(self, metadata: dict) -> tuple[bool, list[str]]:
+    async def validate_metadata(self, metadata: dict, allow_arrays: bool = False) -> tuple[bool, list[str]]:
         """
         Validate metadata values against defined types and rules - Phase 4 refactored.
         
-        Changes:
-        - Group validation: academic_year OR cohort required
-        - Required: access_scope (bắt buộc)
-        - Check metadata type is_active=True
-        - Check value exists in allowed_values AND AllowedValue.is_active=True
-        - Use AllowedValue.value (not display_name) for comparison
-        
         Args:
             metadata: Metadata dictionary to validate
+            allow_arrays: If True, allows values to be a list of strings (OR logic for query).
+                         Default is False (for upload/creation, strictly one value per key).
             
         Returns:
             tuple: (is_valid, error_messages)
@@ -402,7 +397,6 @@ class MetadataService:
         for key, value in metadata.items():
             # Normalize key and value
             key = to_snake(key)
-            value = normalize_to_snake(value)
             
             # Check if key is registered
             if key not in metadata_types_map:
@@ -421,22 +415,45 @@ class MetadataService:
             
             # If allowed_values is None, any value is accepted (free text)
             if allowed_values_list is None:
+                if isinstance(value, list):
+                    if not allow_arrays:
+                        errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed during upload).")
+                else:
+                    if allow_arrays:
+                        errors.append(f"Metadata '{key}' must be an array of values for filtering (e.g. [\"{value}\"]).")
                 continue
             
             # Check if value is in allowed_values and is active
             active_allowed_values = [av for av in allowed_values_list if av.is_active]
             active_values = [av.value for av in active_allowed_values]
             
-            # Handle single value vs list
+            # Case 1: Value is a list (allowed only when allow_arrays=True)
             if isinstance(value, list):
-                errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed).")
-                continue
-            
-            if value not in active_values:
-                errors.append(
-                    f"Invalid value '{value}' for metadata '{key}'. "
-                    f"Allowed active values: {active_values}"
-                )
+                if not allow_arrays:
+                    errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed during upload).")
+                    continue
+                
+                # Normalize each value in the list
+                normalized_values = [normalize_to_snake(v) for v in value]
+                for v in normalized_values:
+                    if v not in active_values:
+                        errors.append(
+                            f"Invalid value '{v}' in list for metadata '{key}'. "
+                            f"Allowed active values: {active_values}"
+                        )
+            # Case 2: Value is a single string/number
+            else:
+                if allow_arrays:
+                    errors.append(f"Metadata '{key}' must be an array of values for filtering (e.g. [\"{value}\"]).")
+                    continue
+                
+                # Normalize value
+                val = normalize_to_snake(value)
+                if val not in active_values:
+                    errors.append(
+                        f"Invalid value '{val}' for metadata '{key}'. "
+                        f"Allowed active values: {active_values}"
+                    )
         
         return len(errors) == 0, errors
 

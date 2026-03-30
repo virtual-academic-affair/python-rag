@@ -64,7 +64,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=active" \
 check_response "$RESPONSE" "200" "List Files by status=active"
 
 log_info "GET /api/files?metadataFilter=... — Filter by metadata"
-FILTER_JSON='{"academicYear":"2025-2026"}'
+FILTER_JSON='{"academicYear":["2025-2026", "2024-2025"]}'
 ENCODED_FILTER=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?metadataFilter=${ENCODED_FILTER}" \
     -H "${AUTH_HEADER}" \

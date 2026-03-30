@@ -1,6 +1,6 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         AI SERVICE API DOCUMENTATION                         ║
-║                                  VERSION 3.0.0                               ║
+║                                  VERSION 3.1.0                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 BASE URL: http://localhost:8000
@@ -75,7 +75,7 @@ CÁCH CHẠY TEST:
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "3.0.0",                                                      │
+│     "version": "3.1.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true                                                 │
 │   }                                                                          │
@@ -753,7 +753,6 @@ REQUEST (multipart/form-data):
   - storeId: "67a5f2c8abc123def456789"                                   // optional
   - displayName: "Quy chế đào tạo 2026"                                 // optional
   - customMetadata: '{"accessScope":"student","academicYear":"2024-2025"}' // required
-  - enableChunking: true                                                  // optional
 
 RESPONSE 201 Created:
   {
@@ -772,7 +771,7 @@ RESPONSE 201 Created:
   }
 
 RESPONSE 400 Bad Request:
-  { "detail": "File type not allowed. Allowed: .pdf, .docx, .doc, .txt, .md, .html" }
+  { "detail": "File type not allowed. Allowed: .pdf, .docx, .doc, .txt, .md, .html, .xlsx, .xls, .pptx, .csv, .rtf" }
   { "detail": "File size exceeds maximum of 20 MB" }
   { "detail": "Invalid custom_metadata JSON format" }
   { "detail": "Metadata 'access_scope' is required." }
@@ -798,13 +797,18 @@ ROLLBACK:
 ────────────────────────────────────────────────────────────────────────────────
 
 QUERY PARAMETERS:
-  - fileStatus     : (optional, str) Filter by file status (active, processing, failed...)
-  - metadataFilter : (optional, json) {"academicYear": "2024-2025", ...}
-    - Hỗ trợ cả camelCase và snake_case cho keys và values.
-    - Hỗ trợ giá trị "all" để lấy tất cả (ví dụ: file có academicYear="all" sẽ luôn xuất hiện khi filter bất kỳ năm học nào)
-  - keywords       : (optional, str) Search by partial display name
-  - page           : (optional, int, default 1)
-  - limit: int (optional, default: 50, max: 100)
+  - page           : (optional, int, default: 1)
+  - limit          : (optional, int, default: 50)
+  - fileStatus     : (optional, str) Filter by file status (active, processing, failed)
+  - keywords       : (optional, str) Search by display_name (partial match)
+  - metadataFilter : (optional, str/JSON) JSON filter string. 
+    + **Multiple Values (OR - BẮT BUỘC)**: `{"cohort": ["K65", "K66"]}`, `{"academicYear": ["2024-2025"]}`
+    + **Lưu ý**: Endpoint filter BẮT BUỘC phải truyền mảng (list) cho các value, nếu truyền Single Value (ví dụ: `{"cohort": "K65"}`) sẽ báo lỗi HTTP 400.
+    + **Multiple Keys (AND)**: `{"cohort": ["K65"], "academicYear": ["2024-2025"]}`
+    + **'all' value logic**: Tự động hỗ trợ giá trị "all" nếu được định nghĩa trong Metadata Type.
+
+REQUEST EXAMPLE (Auth Required):
+  GET /api/files?page=1&limit=20&metadataFilter={"cohort":["K65","K66"]}
 
 LƯU Ý: Endpoint này luôn lấy danh sách file từ store mặc định (default store).
 
@@ -961,7 +965,6 @@ REQUEST (multipart/form-data):
   - storeId: "67a5f2c8abc123def456789"                           // optional
   - displayNames: '["Tên 1", null, "Tên 3"]'                    // optional, JSON array
   - metadataList: '[{"department":"dt"}, {}, {"cat":"policy"}]'  // optional, JSON array
-  - enableChunking: true                                         // optional
 
 RESPONSE 201 Created:
   {
@@ -1367,24 +1370,28 @@ python-rag consumer (RabbitMQ queue):
 
 METADATA FILTER FORMAT (dùng trong Chat và File Search):
 
-  JSON format (request):
+  JSON format (request bắt buộc sử dụng mảng cho value):
     {
-      "department": "dao_tao",
-      "access_scope": "private" | "both" | "lecture" | "student" (Required)
+      "department": ["dao_tao"],
+      "access_scope": ["student"]
     }
 
   Gemini filter string (sau khi convert):
     'department="dao_tao" AND accessScope="student"'
 
-  List values (OR điều kiện):
+  List values (OR điều kiện - cùng key):
     Request: { "cohort": ["K20", "K21"] }
-    Gemini:  '(cohort="K20" OR cohort="K21")'
+    Gemini/MongoDB:  '(cohort="K20" OR cohort="K21")'
+    
+  Multiple keys (AND điều kiện - khác key):
+    Request: { "academicYear": ["2024"], "department": ["dao_tao"] }
+    Gemini/MongoDB: 'academicYear="2024" AND department="dao_tao"'
 
   hasAllValue=true (metadata type có AllowedValue với value="all"):
-    Request: { "department": "dao_tao" }
+    Request: { "department": ["dao_tao"] }
     Gemini:  '(department="dao_tao" OR department="all")'
 
 Role-based accessScope (trong /api/chat/query):
-  - role="student": accessScope trong ["student", "both"]
-  - role="lecture": accessScope trong ["lecture", "both"]
+  - role="student": accessScope trong ["student", "public"]
+  - role="lecture": accessScope trong ["lecture", "public"]
   - role="admin": thấy tất cả (bao gồm "private")

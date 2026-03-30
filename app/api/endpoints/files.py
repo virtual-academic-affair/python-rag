@@ -59,7 +59,6 @@ async def upload_file(
     display_name: Optional[str] = Form(None, alias="displayName", description="Display name for the file"),
     store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
     custom_metadata: Optional[str] = Form(None, alias="customMetadata", description="JSON string of custom metadata"),
-    enable_chunking: Optional[bool] = Form(None, alias="enableChunking", description="Enable custom chunking"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -111,7 +110,6 @@ async def upload_file(
             store_name=store_name,
             display_name=display_name,
             custom_metadata=metadata_dict,
-            enable_chunking=enable_chunking,
         )
 
         message = "File uploaded successfully"
@@ -211,6 +209,16 @@ async def list_files(
                 custom_metadata_filter = json.loads(metadata_filter)
                 # Convert camelCase keys to snake_case for DB query
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
+                
+                # Validate metadata filter (allow arrays)
+                from app.services.rag.metadata_service import get_metadata_service
+                metadata_svc = get_metadata_service()
+                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter, allow_arrays=True)
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid metadataFilter: {', '.join(errors)}",
+                    )
             except json.JSONDecodeError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -301,6 +309,16 @@ async def list_files_admin(
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
+                
+                # Validate metadata filter (allow arrays)
+                from app.services.rag.metadata_service import get_metadata_service
+                metadata_svc = get_metadata_service()
+                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter, allow_arrays=True)
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid metadataFilter: {', '.join(errors)}",
+                    )
             except json.JSONDecodeError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -384,7 +402,6 @@ async def batch_upload_files(
     store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
     display_names: Optional[str] = Form(None, alias="displayNames", description="JSON array of display names (one per file, use null for auto)"),
     metadata_list: Optional[str] = Form(None, alias="metadataList", description="JSON array of metadata objects (one per file, use null or {} for no metadata)"),
-    enable_chunking: Optional[bool] = Form(None, alias="enableChunking", description="Enable custom chunking for all files"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -441,7 +458,6 @@ async def batch_upload_files(
                     store_name=store_name,
                     display_name=display_name,
                     custom_metadata=metadata_dict,
-                    enable_chunking=enable_chunking,
                 )
                 
                 results.append(BatchFileUploadResult(

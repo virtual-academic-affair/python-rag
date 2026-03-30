@@ -49,13 +49,13 @@ SYSTEM_METADATA_TYPES = [
     {
         "key": "cohort",
         "display_name": "Khóa",
-        "description": "Khóa sinh viên (VD: K18, K19, K20). Dùng 'all' cho tất cả khóa.",
+        "description": "Khóa sinh viên (VD: k18, k19, k20). Dùng 'all' cho tất cả khóa.",
         "allowed_values": [
-            AllowedValue(value="K18", display_name="Khóa 18", is_active=False, visible_roles=["lecture", "student"]),
-            AllowedValue(value="K19", display_name="Khóa 19", is_active=True, visible_roles=["lecture", "student"]),
-            AllowedValue(value="K20", display_name="Khóa 20", is_active=True, visible_roles=["lecture", "student"]),
-            AllowedValue(value="K21", display_name="Khóa 21", is_active=True, visible_roles=["lecture", "student"]),
-            AllowedValue(value="K22", display_name="Khóa 22", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="k18", display_name="Khóa 18", is_active=False, visible_roles=["lecture", "student"]),
+            AllowedValue(value="k19", display_name="Khóa 19", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="k20", display_name="Khóa 20", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="k21", display_name="Khóa 21", is_active=True, visible_roles=["lecture", "student"]),
+            AllowedValue(value="k22", display_name="Khóa 22", is_active=True, visible_roles=["lecture", "student"]),
             AllowedValue(value="all", display_name="Tất cả khóa", is_active=True, color="#3498DB", visible_roles=["lecture", "student"]),
         ],
         "is_system": True,
@@ -63,7 +63,7 @@ SYSTEM_METADATA_TYPES = [
     {
         "key": "access_scope",
         "display_name": "Phạm vi truy cập",
-        "description": "Quyền truy cập tài liệu: private (chỉ admin), both (giảng viên & sinh viên), lecture (giảng viên), student (sinh viên).",
+        "description": "Quyền truy cập tài liệu: private (chỉ admin), public (giảng viên & sinh viên), lecture (giảng viên), student (sinh viên).",
         "allowed_values": [
             AllowedValue(
                 value="private",
@@ -73,7 +73,7 @@ SYSTEM_METADATA_TYPES = [
                 visible_roles=[],          # Only admins see this option
             ),
             AllowedValue(
-                value="both",
+                value="public",
                 display_name="Public (Student & Lecture)",
                 is_active=True,
                 color="#3498DB",
@@ -121,13 +121,24 @@ async def seed_system_metadata():
             
             if existing:
                 logger.info(f"🔄 Updating existing system metadata: {key}")
+                
+                # Apply snake_case to allowed values before updating
+                update_values = []
+                for v in meta_def.get("allowed_values", []):
+                    # v could be an AllowedValue object or a dict
+                    val_dict = v.to_dict() if hasattr(v, "to_dict") else dict(v)
+                    # ensure value is snake_cased just like in MetadataService
+                    from app.services.rag.utils.file_utils import to_snake
+                    val_dict["value"] = to_snake(val_dict["value"])
+                    update_values.append(val_dict)
+
                 # We use a custom update logic or just overwrite the fields
                 await Database.get_db()["metadata_types"].update_one(
                     {"key": key},
                     {"$set": {
                         "display_name": meta_def["display_name"],
                         "description": meta_def["description"],
-                        "allowed_values": [v.__dict__ if hasattr(v, "__dict__") else v for v in meta_def["allowed_values"]],
+                        "allowed_values": update_values,
                         "is_system": True,
                         "updated_at": datetime.now()
                     }}
