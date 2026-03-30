@@ -5,10 +5,20 @@ Handles file uploads, downloads, deletions, and integrations with Cloudflare R2 
 
 import asyncio
 import logging
+import mimetypes
 import os
 import tempfile
 import time
 from typing import Optional, BinaryIO, List, Tuple, Dict, Any
+
+# Ensure essential Office mime types are registered globally for Google GenAI SDK
+# (Production environments like Docker/Alpine often lack these in /etc/mime.types)
+mimetypes.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
+mimetypes.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
+mimetypes.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
+mimetypes.add_type('application/msword', '.doc')
+mimetypes.add_type('application/vnd.ms-excel', '.xls')
+mimetypes.add_type('application/pdf', '.pdf')
 
 from app.core.config import settings
 from app.core.exceptions import (
