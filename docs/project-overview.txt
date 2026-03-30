@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW
-Version 3.0.0 | March 2026
+Version 3.1.0 | March 2026
 ================================================================================
 
 MUC LUC
@@ -48,7 +48,7 @@ AI Service là một FastAPI microservice kết hợp hai chức năng lớn:
   B) RAG DOCUMENT SERVICE
      Quản lý kho tài liệu (Gemini File Search + R2) và cung cấp
      chat hỏi đáp dựa trên nội dung tài liệu thực. Bao gồm:
-       - Upload / quản lý file (PDF, DOCX, DOC, TXT, MD, HTML)
+       - Upload / quản lý file (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF)
        - Quản lý Store (Gemini File Search Store)
        - Quản lý Metadata Type (định nghĩa các trường tag)
        - Chat API: hỏi đáp (query) và streaming (SSE)
@@ -61,8 +61,14 @@ Giao tiếp với:
   - NestJS Backend  → gửi email qua RabbitMQ, nhận kết quả classification
   - Gemini API      → phân loại email + RAG File Search + soạn email
   - MongoDB Atlas   → lưu metadata store / file / metadata_types
-  - R2           → lưu file binary (PDF, DOCX...)
+  - R2              → lưu file binary (PDF, DOCX...)
   - RabbitMQ        → nhận email từ queue email_ingest_queue
+
+Phiên bản: 3.1.0 (March 2026)
+Mục tiêu: Microservice hợp nhất phân loại email và RAG tìm kiếm tài liệu.
+Tiếp cận: FastAPI + Google Gemini (google-genai SDK 1.56.0) + MongoDB + R2 Storage.
+Hỗ trợ: CamelCase API (Pydantic Aliases) & Snake_case Database Mapping.
+Tính năng: Array Metadata Filtering (OR-logic) & Role-based Access Control (public scope).
 
 
 ================================================================================
@@ -444,11 +450,11 @@ File: app/services/rag/file_service.py
 
   STEP 1: Validation
     validate_file_size()       ← max 20MB (MAX_FILE_SIZE_MB)
-    validate_file_extension()  ← pdf, docx, doc, txt, md, html
+    validate_file_extension()  ← pdf, docx, doc, txt, md, html, xlsx, xls, pptx, csv, rtf
     Kiểm tra file trùng tên trong cùng store (ConflictException)
 
   STEP 2: Validate metadata (BẮT BUỘC)
-    accessScope BẮT BUỘC phải có (private, both, lecture, student)
+    accessScope BẮT BUỘC phải có (private, public, lecture, student)
     Phải có ít nhất academicYear HOẶC cohort (ValidationException nếu thiếu)
     Từng key phải là metadata type đã đăng ký và isActive=True
     Từng value phải nằm trong allowed_values và AllowedValue.isActive=True
@@ -539,7 +545,7 @@ CHIẾN LƯỢC XÓA VÀ CẬP NHẬT (UPDATE/DELETE STRATEGIES):
 
   accessScope (Phạm vi truy cập):
     has_all_value = False
-    Giá trị: private (Admin Only), both (Student & Lecture), lecture (Lecture Only), student (Student Only)
+    Giá trị: private (Admin Only), public (Student & Lecture), lecture (Lecture Only), student (Student Only)
 
 QUY TAC VALIDATE khi upload file:
   1. accessScope BAT BUOC phải có
@@ -560,23 +566,28 @@ File: app/services/rag/utils/filter_builder.py
 convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
 
   Vi dụ đơn giản:
-    Input:  {"academicYear": "2024-2025", "department": "dao_tao"}
+    Tất cả request filter (khi GET files hoặc Search) BẮT BUỘC phải truyền value dưới định dạng list (mảng).
+    Input:  {"academicYear": ["2024-2025"], "department": ["dao_tao"]}
     Output: 'academicYear="2024-2025" AND department="dao_tao"'
 
-  Vi dụ list (OR condition):
+  Vi dụ list (OR condition - cùng key):
     Input:  {"cohort": ["K65", "K66"]}
     Output: '(cohort="K65" OR cohort="K66")'
 
+  Vi dụ multiple keys (AND condition - khác key):
+    Input:  {"academicYear": ["2024"], "cohort": ["K65"]}
+    Output: 'academicYear="2024" AND cohort="K65"'
+
   Vi dụ support_all_value=True (academicYear):
-    Input:  {"academicYear": "2024-2025"}
+    Input:  {"academicYear": ["2024-2025"]}
     Output: '(academicYear="2024-2025" OR academicYear="all")'
     → has_all_value=True khi allowed_values chứa entry với value="all"
 
   Input null / empty → Trả về None (không filter Gemini)
 
 Phan quyen theo role trong Chat API:
-  role="student"  → Thêm filter accessScope IN ["student", "both"]
-  role="lecture"  → Thêm filter accessScope IN ["lecture", "both"]
+  role="student"  → Thêm filter accessScope IN ["student", "public"]
+  role="lecture"  → Thêm filter accessScope IN ["lecture", "public"]
   role="admin"    → Không giới hạn accessScope (có thể xem tất cả gồm "private")
   role="admin"    → Admin luôn bypass filter visibleRoles và có thể xem toàn bộ metadata.
 
@@ -999,8 +1010,7 @@ TUY CHON:
   RELOAD               Uvicorn auto-reload       default: true
   HOST                 Bind address              default: 0.0.0.0
   PORT                 Bind port                 default: 8000
-  LLM_THINKING_LEVEL   Thinking level Gemini     default: (không bật)
-  CHUNKING_ENABLED     Bật chunking file        default: false
+  LLM_THINKING_LEVEL   Thinking level Gemini     default: low
 
 
 ================================================================================

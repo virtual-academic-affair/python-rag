@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Classification settings (from python-rag)
     LLM_MODEL: str = "gemini-2.5-flash"
     LLM_TEMPERATURE: float = 0.1
-    LLM_THINKING_LEVEL: str = ""
+    LLM_THINKING_LEVEL: str = "none"
     GENAI_REQUEST_TIMEOUT: int = 60
     GENAI_MAX_OUTPUT_TOKENS_CLASSIFICATION: int = 100
     GENAI_MAX_OUTPUT_TOKENS_EXTRACTION: int = 1200
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     R2_USE_SSL: bool = False
     R2_REGION: str = "us-east-1"
     R2_DISABLED: bool = False
-    R2_BYPASS_ON_INIT_ERROR: bool = True
+    R2_BYPASS_ON_INIT_ERROR: bool = False
     R2_PUBLIC_DOMAIN: Optional[str] = None
 
     # ====================================
@@ -96,19 +96,6 @@ class Settings(BaseSettings):
     # File Upload Configuration
     # ====================================
     MAX_FILE_SIZE_MB: int = 20
-    ALLOWED_EXTENSIONS: str = ".pdf,.docx,.doc,.txt,.md,.html"
-    
-    @property
-    def allowed_extensions_list(self) -> list[str]:
-        """Parse allowed extensions into list."""
-        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
-    
-    # ====================================
-    # Chunking Configuration
-    # ====================================
-    CHUNKING_ENABLED: bool = False
-    CHUNKING_MAX_TOKENS_PER_CHUNK: int = 200
-    CHUNKING_MAX_OVERLAP_TOKENS: int = 20
     
     # ====================================
     # Rate Limiting

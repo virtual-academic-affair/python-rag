@@ -114,7 +114,7 @@ class FilterBuilder:
         
         # Validate user-provided metadata BEFORE injecting access_scope
         if not skip_validation and metadata:
-            is_valid, errors = await self.metadata_service.validate_metadata(metadata)
+            is_valid, errors = await self.metadata_service.validate_metadata(metadata, allow_arrays=True)
             if not is_valid:
                 raise ValueError(f"Invalid metadata: {', '.join(errors)}")
 
@@ -123,11 +123,11 @@ class FilterBuilder:
         # Enforce access_scope by role AFTER validation
         # This allows injecting a list without triggering strict string validation
         if user_role == "student":
-            filter_metadata["access_scope"] = ["student", "both"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['student', 'both']")
+            filter_metadata["access_scope"] = ["student", "public"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['student', 'public']")
         elif user_role == "lecture":
-            filter_metadata["access_scope"] = ["lecture", "both"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'both']")
+            filter_metadata["access_scope"] = ["lecture", "public"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'public']")
         elif user_role == "admin":
             filter_metadata.pop("access_scope", None)
             logger.debug(f"Role={user_role}: no access_scope filter")

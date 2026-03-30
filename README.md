@@ -1,6 +1,6 @@
 # Email AI Service
 
-**Version 3.0.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu dựa trên RAG** cho hệ thống hỗ trợ sinh viên đại học.
+**Version 3.1.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu dựa trên RAG** cho hệ thống hỗ trợ sinh viên đại học.
 
 ---
 
@@ -18,6 +18,7 @@ Service nhận email từ RabbitMQ, tự động phân loại và xử lý:
 Ngoài ra, service cung cấp API quản lý kho tài liệu (upload, tìm kiếm, chat RAG).
 
 - **Case Normalization**: Tự động chuẩn hóa metadata keys và values về `snake_case` (Chấp nhận cả camelCase và snake_case đầu vào).
+- **Advanced Filtering**: Hỗ trợ lọc theo mảng (OR logic) cho các trường metadata.
 
 ---
 
@@ -214,7 +215,7 @@ Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthServ
 | | POST | `/api/chat/stream` | Public/Implicit | Tùy vào cấu hình auth filter |
 | File Search (GET) | `GET /api/files` | User (Auth) | Liệt danh sách file trong **default store**. Hỗ trợ `keywords` & metadata filter. |
 | File Search Admin | `GET /api/files/admin` | **Admin** | Liệt danh sách file (mặc định lấy tất cả store nếu không truyền `storeId`). |
-| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `accessScope` (private, both, lecture, student), ... |
+| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `accessScope` (private, public, lecture, student), ... |
 | | POST | `/api/files/batch` | **Admin** | Batch upload |
 | | PATCH | `/api/files/{fileId}` | **Admin** | Cập nhật thông tin file (displayName) |
 | | DELETE | `/api/files/{fileId}` | **Admin** | Xóa file |
@@ -339,7 +340,7 @@ GRPC_TIMEOUT_SECONDS=3.0
 
 # === Upload ===
 MAX_FILE_SIZE_MB=20
-ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html
+ALLOWED_EXTENSIONS=pdf,docx,doc,txt,md,html,xlsx,xls,pptx,csv,rtf
 ```
 
 ---

@@ -22,7 +22,7 @@ echo "Master Test Started at: $(date)"
 echo "Output: $OUTPUT_FILE"
 
 # Run modules
-source "$(dirname "$0")/test_health.sh" || return 1
+source "$(dirname "$0")/test_health.sh" || exit 1
 source "$(dirname "$0")/test_classification.sh"
 source "$(dirname "$0")/test_stores.sh"
 source "$(dirname "$0")/test_metadata.sh"

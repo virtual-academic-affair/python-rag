@@ -326,7 +326,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"both\", \"displayName\": \"Public (Student & Lecture)\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
+              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"public\", \"displayName\": \"Public (Student & Lecture)\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -506,11 +506,10 @@
             "body": {
               "mode": "formdata",
               "formdata": [
-                { "key": "file", "type": "file", "src": [], "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML - max 20MB)" },
+                { "key": "file", "type": "file", "src": [], "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF - max 20MB)" },
                 { "key": "storeId", "value": "{{store_id}}", "type": "text", "description": "Optional - uses default store if empty" },
                 { "key": "displayName", "value": "Quy che dao tao 2026", "type": "text", "description": "Optional display name" },
-                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope (private, both, lecture, student) AND at least one of academicYear/cohort" },
-                { "key": "enableChunking", "value": "false", "type": "text", "disabled": true }
+                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope (private, public, lecture, student) AND at least one of academicYear/cohort" }
               ]
             },
             "url": {
@@ -554,7 +553,7 @@
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "50" },
                 { "key": "fileStatus", "value": "active", "disabled": true, "description": "active|processing|failed" },
-                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true, "description": "JSON filter for metadata. 'all' value logic is supported." },
+                { "key": "metadataFilter", "value": "{\"academicYear\": [\"2024-2025\", \"2023-2024\"]}", "disabled": true, "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys). 'all' value logic is supported." },
                 { "key": "keywords", "value": "quy chế", "disabled": true, "description": "Search by partial display name." }
               ]
             },
@@ -577,7 +576,7 @@
                 { "key": "storeId", "value": "{{store_id}}", "disabled": true, "description": "Filter by store ID. If missing, lists all stores." },
                 { "key": "fileStatus", "value": "active", "disabled": true },
                 { "key": "keywords", "value": "quy chế", "disabled": true },
-                { "key": "metadataFilter", "value": "{\"academicYear\": \"2024-2025\"}", "disabled": true },
+                { "key": "metadataFilter", "value": "{\"academicYear\": [\"2024-2025\"]}", "disabled": true, "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys)." },
                 { "key": "page", "value": "1" },
                 { "key": "limit", "value": "50" }
               ]
@@ -628,10 +627,10 @@
             "body": {
               "mode": "formdata",
               "formdata": [
-                { "key": "files", "type": "file", "src": [], "description": "Multiple files" },
+                { "key": "files", "type": "file", "src": [], "description": "Multiple files (PDF, DOCX, XLSX, etc.)" },
                 { "key": "storeId", "value": "{{store_id}}", "type": "text" },
                 { "key": "displayNames", "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]", "type": "text", "description": "JSON array - use null for auto name" },
-                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope (private, both, lecture, student) required + academicYear or cohort" }
+                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope (private, public, lecture, student) required + academicYear or cohort" }
               ]
             },
             "url": {
@@ -746,7 +745,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": \"dao_tao\",\n    \"accessScope\": \"student\"\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": [\"dao_tao\"],\n    \"accessScope\": [\"student\"]\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -754,7 +753,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "chat", "query"]
             },
-            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student', 'both'].\nFor lecture role, access_scope is enforced to ['lecture', 'both'].\nFor admin role, no access_scope filter is applied.\n"
+            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student', 'public'].\nFor lecture role, access_scope is enforced to ['lecture', 'public'].\nFor admin role, no access_scope filter is applied.\n"
           },
           "response": []
         },
@@ -810,7 +809,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": \"dao_tao\"\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": [\"dao_tao\"]\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
