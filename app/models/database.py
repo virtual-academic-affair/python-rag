@@ -89,9 +89,9 @@ class FileDocument(BaseModel):
     )
     
     # Custom metadata (flexible dict, converted to Gemini CustomMetadata[] on upload)
-    custom_metadata: Dict[str, Any] = Field(
+    custom_metadata: Dict[str, List[str]] = Field(
         default_factory=dict,
-        description="Custom metadata key-value pairs"
+        description="Custom metadata key-value list pairs"
     )
     
     # Status (maps to Gemini Document State)

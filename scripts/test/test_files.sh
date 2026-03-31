@@ -23,7 +23,7 @@ UPLOAD_ARGS=(-F "file=@${TEST_FILE}" -F "displayName=Test Doc ${TIMESTAMP}")
 if [ -n "$STORE_ID" ]; then
     UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
 fi
-UPLOAD_ARGS+=(-F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}')
+UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]}')
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
@@ -113,7 +113,7 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     if [ -n "$STORE_ID" ]; then
         TEMP_UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
     fi
-    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"}')
+    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]}')
     
     TEMP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
@@ -139,7 +139,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     -F "files=@${TEST_FILE}" \
     -F "files=@${TEST_FILE_2}" \
     -F "displayNames=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
-    -F 'metadataList=[{"department":"dao_tao","accessScope":"student","academicYear":"2025-2026"},{"department":"khcn","accessScope":"student","academicYear":"2025-2026"}]' \
+    -F 'metadataList=[{"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]},{"department":["khcn"],"accessScope":["student"],"academicYear":["2025-2026"]}]' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 

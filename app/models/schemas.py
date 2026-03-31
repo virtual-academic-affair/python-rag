@@ -162,7 +162,7 @@ class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
     name: str = Field(..., description="User name")
     cohort: str = Field(..., description="User cohort/class (e.g., K20)")
-    role: str = Field(default="student", description="User role: student, staff, admin")
+    role: str = Field(default="student", description="User role: student, lecture, admin")
 
 
 class ChatHistoryItem(BaseSchema):
@@ -323,10 +323,8 @@ class MetadataTypeListResponse(BaseSchema):
 class ChatQueryRequest(BaseSchema):
     """Request body for POST /api/chat/query."""
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
-    user_context: UserContext = Field(..., description="User information")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
-    store_id: Optional[str] = Field(None, description="Store ID. If not provided, uses default store.")
-    metadata_filter: Optional[Dict[str, Any]] = Field(None, description="Metadata filter as key-value pairs")
+    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
 
 
 class ChatQueryResponse(BaseSchema):
@@ -340,10 +338,8 @@ class ChatQueryResponse(BaseSchema):
 class ChatStreamRequest(BaseSchema):
     """Request body for POST /api/chat/stream."""
     question: str = Field(..., min_length=1, max_length=2000)
-    user_context: UserContext
     chat_history: List[ChatHistoryItem] = Field(default_factory=list)
-    store_id: Optional[str] = Field(None, description="Store ID. If not provided, uses default store.")
-    metadata_filter: Optional[Dict[str, Any]] = Field(None, description="Metadata filter as key-value pairs")
+    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
 
 
 # ====================================
@@ -360,7 +356,7 @@ class FileUploadResponse(BaseSchema):
     mime_type: str
     status: str
     gemini_document_name: Optional[str] = None
-    custom_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    custom_metadata: Optional[Dict[str, List[str]]] = Field(default_factory=dict)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     message: Optional[str] = None
@@ -382,7 +378,7 @@ class FileDetailResponse(BaseSchema):
     storage_path: str
     status: str
     gemini_document_name: Optional[str] = None
-    custom_metadata: Dict[str, Any] = Field(default_factory=dict)
+    custom_metadata: Dict[str, List[str]] = Field(default_factory=dict)
     file_url: Optional[str] = None
     created_at: str
     updated_at: str

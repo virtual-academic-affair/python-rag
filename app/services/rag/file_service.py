@@ -471,9 +471,9 @@ class FileService:
             
         # 1. Filter by access_scope (DB and memory checks)
         if user_role == "student":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["student", "public"]]
+            files = [f for f in files if "student" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
         elif user_role == "lecture":
-            files = [f for f in files if (f.get("custom_metadata") or {}).get("access_scope") in ["lecture", "public"]]
+            files = [f for f in files if "lecture" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
         # Admin sees all, no filter needed
             
         # 2. Mask custom_metadata based on visible_roles via MetadataService
@@ -522,10 +522,17 @@ class FileService:
         
         # Database-level filtering for access_scope
         if user_role == "student":
-            filters["custom_metadata.access_scope"] = {"$in": ["student", "public"]}
+            filters["custom_metadata.access_scope"] = {"$in": ["student"]}
         elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = {"$in": ["lecture", "public"]}
-        # admin sees all - no filter
+            filters["custom_metadata.access_scope"] = {"$in": ["lecture"]}
+        elif user_role == "admin":
+            if custom_metadata_filter and "access_scope" in custom_metadata_filter:
+                v = custom_metadata_filter["access_scope"]
+                # Admin can pass list or string for access_scope, no "all" fallback implicitly needed for access_scope 
+                if isinstance(v, list):
+                    filters["custom_metadata.access_scope"] = {"$in": v}
+                else:
+                    filters["custom_metadata.access_scope"] = {"$in": [v]}
             
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)

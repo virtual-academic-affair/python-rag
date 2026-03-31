@@ -67,11 +67,11 @@ async def upload_file(
     Waits until both R2 and Gemini processing complete before returning.
 
     **Required metadata:**
-    - `access_scope`: bắt buộc (e.g. `"admin"`, `"lecture"`, hoặc `"student"`)
+    - `access_scope`: bắt buộc (e.g. `["private"]`, `["lecture"]`, hoặc `["student", "lecture"]`)
     - `academic_year` hoặc `cohort`: ít nhất một trong hai
 
     **Custom Metadata example:**
-    `'{"accessScope": "student", "academicYear": "2024-2025", "cohort": "K21"}'`
+    `'{"accessScope": ["student"], "academicYear": ["2024-2025"], "cohort": ["K21"]}'`
     """
     temp_file_path = None
     file_svc = get_file_service()
@@ -213,7 +213,7 @@ async def list_files(
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
-                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter, allow_arrays=True)
+                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter)
                 if not is_valid:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -313,7 +313,7 @@ async def list_files_admin(
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
-                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter, allow_arrays=True)
+                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter)
                 if not is_valid:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,

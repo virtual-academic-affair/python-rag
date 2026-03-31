@@ -34,54 +34,54 @@
       "filename": "test 1.pdf",
       "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
-        "accessScope": "student",
-        "academicYear": "2024-2025",
-        "department": "dao_tao"
+        "accessScope": ["student"],
+        "academicYear": ["2024-2025"],
+        "department": ["dao_tao"]
       }
     },
     {
       "filename": "test 2.pdf",
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
-        "accessScope": "student",
-        "academicYear": "2025-2026",
-        "department": "dao_tao"
+        "accessScope": ["student"],
+        "academicYear": ["2025-2026"],
+        "department": ["dao_tao"]
       }
     },
     {
       "filename": "test 3.pdf",
       "displayName": "Quy định học bổng sinh viên",
       "metadata": {
-        "accessScope": "student",
-        "academicYear": "2023-2024",
-        "department": "ctsv"
+        "accessScope": ["student"],
+        "academicYear": ["2023-2024"],
+        "department": ["ctsv"]
       }
     },
     {
       "filename": "test 4.pdf",
       "displayName": "Thông tin hợp tác quốc tế",
       "metadata": {
-        "accessScope": "private",
-        "cohort": "K22",
-        "department": "htqt"
+        "accessScope": ["private"],
+        "cohort": ["k22"],
+        "department": ["htqt"]
       }
     },
     {
       "filename": "test_document.txt",
       "displayName": "Quy chế nghiên cứu khoa học",
       "metadata": {
-        "accessScope": "student",
-        "academicYear": "all",
-        "department": "khcn"
+        "accessScope": ["student"],
+        "academicYear": ["all"],
+        "department": ["khcn"]
       }
     },
     {
       "filename": "test_document_2.txt",
       "displayName": "Hướng dẫn sinh hoạt công dân",
       "metadata": {
-        "accessScope": "student",
-        "academicYear": "2024-2025",
-        "department": "ctsv"
+        "accessScope": ["student"],
+        "academicYear": ["2024-2025"],
+        "department": ["ctsv"]
       }
     }
   ]

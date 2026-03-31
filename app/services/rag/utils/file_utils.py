@@ -287,7 +287,17 @@ def convert_custom_metadata_to_snake(custom_metadata: dict) -> dict:
 def convert_metadata_for_gemini(custom_metadata: dict) -> list[dict]:
     if not custom_metadata:
         return []
-    return [{'key': k, 'stringValue': v} if isinstance(v, str) else {'key': k, 'numericValue': v} if isinstance(v, (int, float)) else {'key': k, 'stringListValue': {'values': v}} for k, v in custom_metadata.items()]
+    result = []
+    for k, v in custom_metadata.items():
+        if isinstance(v, str):
+            result.append({'key': k, 'stringValue': v})
+        elif isinstance(v, (int, float)):
+            result.append({'key': k, 'numericValue': v})
+        elif isinstance(v, list):
+            # Gemini SDK expects string_list_value directly or mapped correctly based on the version
+            # Using the format {'stringListValue': {'values': [str(x) for x in v]}} which is what the library serializes
+            result.append({'key': k, 'stringListValue': {'values': [str(x) for x in v]}})
+    return result
 
 def to_camel(name: str) -> str:
     """Convert snake_case string to camelCase."""
