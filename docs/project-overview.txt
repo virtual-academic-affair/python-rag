@@ -68,7 +68,7 @@ Phiên bản: 3.1.0 (March 2026)
 Mục tiêu: Microservice hợp nhất phân loại email và RAG tìm kiếm tài liệu.
 Tiếp cận: FastAPI + Google Gemini (google-genai SDK 1.56.0) + MongoDB + R2 Storage.
 Hỗ trợ: CamelCase API (Pydantic Aliases) & Snake_case Database Mapping.
-Tính năng: Array Metadata Filtering (OR-logic) & Role-based Access Control (public scope).
+Tính năng: Array Metadata Filtering (OR-logic) & Role-based Access Control.
 
 
 ================================================================================
@@ -454,7 +454,7 @@ File: app/services/rag/file_service.py
     Kiểm tra file trùng tên trong cùng store (ConflictException)
 
   STEP 2: Validate metadata (BẮT BUỘC)
-    accessScope BẮT BUỘC phải có (private, public, lecture, student)
+    accessScope BẮT BUỘC phải có (private, lecture, student)
     Phải có ít nhất academicYear HOẶC cohort (ValidationException nếu thiếu)
     Từng key phải là metadata type đã đăng ký và isActive=True
     Từng value phải nằm trong allowed_values và AllowedValue.isActive=True
@@ -545,13 +545,14 @@ CHIẾN LƯỢC XÓA VÀ CẬP NHẬT (UPDATE/DELETE STRATEGIES):
 
   accessScope (Phạm vi truy cập):
     has_all_value = False
-    Giá trị: private (Admin Only), public (Student & Lecture), lecture (Lecture Only), student (Student Only)
+    Giá trị: private (Admin Only), lecture (Lecture Only), student (Student Only)
 
 QUY TAC VALIDATE khi upload file:
-  1. accessScope BAT BUOC phải có
-  2. Phải có ít nhất academicYear HOAC cohort
-  3. Mỗi key phải là metadata type đã đăng ký và isActive=True
-  4. Mỗi value phải nằm trong allowed_values và AllowedValue.isActive=True
+  1. accessScope BAT BUOC phải có và là định dạng Array List (chỉ chấp nhận các giá trị: ["private"], ["student"], ["lecture"]).
+  2. Ràng buộc độc quyền: File CHỈ ĐƯỢC MANG 1 tính chất truy cập duy nhất. Nếu chứa `private` thì KHÔNG ĐƯỢC kèm theo `student` hay `lecture`. Ngược lại tính public (`student`/`lecture`) KHÔNG ĐƯỢC CHỨA `private`.
+  3. Phải có ít nhất academicYear HOAC cohort
+  4. Mỗi key phải là metadata type đã đăng ký và isActive=True
+  5. Mỗi value phải nằm trong allowed_values và AllowedValue.isActive=True
 
   Vi dụ customMetadata hợp lệ:
     {"academicYear":"2024-2025","cohort":"K65","accessScope":"student"}
@@ -586,8 +587,8 @@ convert_metadata_filter_to_gemini_format(metadata: dict) → str|None
   Input null / empty → Trả về None (không filter Gemini)
 
 Phan quyen theo role trong Chat API:
-  role="student"  → Thêm filter accessScope IN ["student", "public"]
-  role="lecture"  → Thêm filter accessScope IN ["lecture", "public"]
+  role="student"  → Thêm filter accessScope IN ["student"]
+  role="lecture"  → Thêm filter accessScope IN ["lecture"]
   role="admin"    → Không giới hạn accessScope (có thể xem tất cả gồm "private")
   role="admin"    → Admin luôn bypass filter visibleRoles và có thể xem toàn bộ metadata.
 
@@ -665,26 +666,21 @@ Auto Store Resolution (app/services/rag/utils/store_utils.py):
 File: app/api/endpoints/chat.py
 
 POST /api/chat/query — Chat thường (blocking)
+  Headers:
+    Authorization: Bearer <token>
   Request body:
     {
       "question": "Điều kiện tốt nghiệp là gì?",
-      "keywords": "quy chế",          ← optional, search by display name
-      "user_context": {
-        "user_id": "sv001",
-        "name": "Nguyễn Văn A",
-        "cohort": "K20",
-        "role": "student"           ← ảnh hưởng phân quyền filter
-      },
       "chat_history": [...],        ← tối đa 5-10 lượt gần nhất
-      "storeId": "67a5...",        ← optional, dùng default nếu bỏ qua
       "metadata_filter": {          ← optional
         "academicYear": "2024-2025"
       }
     }
 
   Quy trinh:
-    1. resolve_store(storeId) → (storeId, storeName)
-    2. build_filter(userContext.role, metadataFilter) → filter string
+    1. resolve_store(None) → (storeId, storeName) tự động resolve Default Store
+    2. require_auth() → Lấy `userContext` từ JWT Token
+    3. build_filter(userContext.role, metadataFilter) → filter string
     3. chat_service.generate_chat_response(...)
     4. Trả về: { "answer", "sources", "tokenUsage", "processingTimeMs" }
 
@@ -733,8 +729,9 @@ PHÂN QUYỀN CÁC ENDPOINT:
    require_auth:  - GET /api/files: List files in default store (keywords/metadata search supported).
    - GET /api/files/admin: Admin list files across all stores with optional filter.
    - GET /api/files/{fileId}: Metadata & details (Auth required).
+   - POST /api/chat/query, POST /api/chat/stream
    Public:        GET /api/metadata (hỗ trợ isActive/keywords), GET /api/metadata/{key},
-                  /api/chat, /health, /process
+                  /health, /process
 
 
 ================================================================================

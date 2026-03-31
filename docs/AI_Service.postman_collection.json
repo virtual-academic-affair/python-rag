@@ -1,827 +1,1365 @@
 {
-  "info": {
-    "name": "AI Service API",
-    "description": "Complete API collection for AI Service (python-rag).\n\nIncludes:\n- Health Check\n- Email Classification\n- Store Management\n- Metadata Types\n- File Management\n- Chat (Query + Stream)\n\nBase URL: http://localhost:8000\nSwagger: http://localhost:8000/docs",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.0.0"
-  },
-  "variable": [
-    {
-      "key": "base_url",
-      "value": "http://localhost:8000",
-      "type": "string"
+    "info": {
+        "name": "AI Service API",
+        "description": "Complete API collection for AI Service (python-rag).\n\nIncludes:\n- Health Check\n- Email Classification\n- Store Management\n- Metadata Types\n- File Management\n- Chat (Query + Stream)\n\nBase URL: http://localhost:8000\nSwagger: http://localhost:8000/docs",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+        "version": "1.0.0"
     },
-    {
-      "key": "token",
-      "value": "",
-      "type": "string",
-      "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
-    },
-    {
-      "key": "store_id",
-      "value": "",
-      "type": "string",
-      "description": "MongoDB ObjectId of store (fill after creating a store)"
-    },
-    {
-      "key": "file_id",
-      "value": "",
-      "type": "string",
-      "description": "MongoDB ObjectId of file (fill after uploading a file)"
-    },
-    {
-      "key": "metadata_key",
-      "value": "department",
-      "type": "string"
-    }
-  ],
-  "item": [
-    {
-      "name": "1. Health Check",
-      "item": [
+    "variable": [
         {
-          "name": "Health Check",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/health",
-              "host": ["{{base_url}}"],
-              "path": ["health"]
-            },
-            "description": "Check service health and external connections (Gemini, MongoDB)."
-          },
-          "response": []
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
         },
         {
-          "name": "Root",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/",
-              "host": ["{{base_url}}"],
-              "path": [""]
-            },
-            "description": "Root endpoint - verify service is running."
-          },
-          "response": []
+            "key": "token",
+            "value": "",
+            "type": "string",
+            "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
+        },
+        {
+            "key": "store_id",
+            "value": "",
+            "type": "string",
+            "description": "MongoDB ObjectId of store (fill after creating a store)"
+        },
+        {
+            "key": "file_id",
+            "value": "",
+            "type": "string",
+            "description": "MongoDB ObjectId of file (fill after uploading a file)"
+        },
+        {
+            "key": "metadata_key",
+            "value": "department",
+            "type": "string"
         }
-      ]
-    },
-    {
-      "name": "2. Email Classification",
-      "item": [
+    ],
+    "item": [
         {
-          "name": "Classify email",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Xin đăng ký môn học\",\n  \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01. Em là sinh viên năm 2, mã sinh viên SV001, tên Nguyễn Văn A.\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/process",
-              "host": ["{{base_url}}"],
-              "path": ["process"]
-            },
-            "description": "Manually classify an email. Returns label + extracted payload.\n\nLabels: classRegistration | task | inquiry | other\n\nTry different content to test each label."
-          },
-          "response": []
+            "name": "1. Health Check",
+            "item": [
+                {
+                    "name": "Health Check",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/health",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "health"
+                            ]
+                        },
+                        "description": "Check service health and external connections (Gemini, MongoDB)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Root",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                ""
+                            ]
+                        },
+                        "description": "Root endpoint - verify service is running."
+                    },
+                    "response": []
+                }
+            ]
         },
         {
-          "name": "Test inquiry (email draft)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/process",
-              "host": ["{{base_url}}"],
-              "path": ["process"]
-            },
-            "description": "Test inquiry classification. AI sẽ draft email reply sử dụng RAG (default store)."
-          },
-          "response": []
+            "name": "2. Email Classification",
+            "item": [
+                {
+                    "name": "Classify email",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"title\": \"Xin đăng ký môn học\",\n  \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01. Em là sinh viên năm 2, mã sinh viên SV001, tên Nguyễn Văn A.\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/process",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "process"
+                            ]
+                        },
+                        "description": "Manually classify an email. Returns label + extracted payload.\n\nLabels: classRegistration | task | inquiry | other\n\nTry different content to test each label."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test inquiry (email draft)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/process",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "process"
+                            ]
+                        },
+                        "description": "Test inquiry classification. AI sẽ draft email reply sử dụng RAG (default store)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Test RabbitMQ payload",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"pattern\": \"ingested\",\n  \"data\": {\n    \"messageId\": 123,\n    \"subject\": \"Xin đăng ký môn học\",\n    \"senderEmail\": \"student@example.com\",\n    \"senderName\": \"Nguyễn Văn A\",\n    \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01.\"\n  }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/test/classification/ingested",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "test",
+                                "classification",
+                                "ingested"
+                            ]
+                        },
+                        "description": "Test endpoint: simulate processing one RabbitMQ 'ingested' message directly without actual queue."
+                    },
+                    "response": []
+                }
+            ]
         },
         {
-          "name": "Test RabbitMQ payload",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pattern\": \"ingested\",\n  \"data\": {\n    \"messageId\": 123,\n    \"subject\": \"Xin đăng ký môn học\",\n    \"senderEmail\": \"student@example.com\",\n    \"senderName\": \"Nguyễn Văn A\",\n    \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01.\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/test/classification/ingested",
-              "host": ["{{base_url}}"],
-              "path": ["api", "test", "classification", "ingested"]
-            },
-            "description": "Test endpoint: simulate processing one RabbitMQ 'ingested' message directly without actual queue."
-          },
-          "response": []
+            "name": "3. Store Management",
+            "item": [
+                {
+                    "name": "Create store",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"Văn bản Đào tạo 2026\",\n  \"setAsDefault\": true\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/stores",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores"
+                            ]
+                        },
+                        "description": "Tạo một File Search store mới trên Gemini API và MongoDB.\n\nSau khi tạo, biến {{store_id}} được tự động cập nhật."
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "  var json = pm.response.json();",
+                                    "  if (json.store_id) {",
+                                    "    pm.collectionVariables.set('store_id', json.store_id);",
+                                    "    console.log('store_id cập nhật: ' + json.store_id);",
+                                    "  }",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ],
+                    "response": []
+                },
+                {
+                    "name": "List stores",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/stores?page=1&limit=50",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores"
+                            ],
+                            "query": [
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "50"
+                                },
+                                {
+                                    "key": "isDefault",
+                                    "value": "true",
+                                    "disabled": true
+                                }
+                            ]
+                        },
+                        "description": "List all stores. Enable is_default=true query param to get only the default store."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get store details",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/stores/{{store_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores",
+                                "{{store_id}}"
+                            ]
+                        },
+                        "description": "Get store details by MongoDB ObjectId."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update store",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"Tên store mới\",\n  \"isDefault\": true\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/stores/{{store_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores",
+                                "{{store_id}}"
+                            ]
+                        },
+                        "description": "Update store displayName or set as default. Both fields are optional."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Sync store stats",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/stores/{{store_id}}/sync",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores",
+                                "{{store_id}}",
+                                "sync"
+                            ]
+                        },
+                        "description": "Sync store file_count and total_size from Gemini API to MongoDB."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete store",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/stores/{{store_id}}?force=false",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores",
+                                "{{store_id}}"
+                            ],
+                            "query": [
+                                {
+                                    "key": "force",
+                                    "value": "false",
+                                    "description": "Set true to delete even if store has files"
+                                }
+                            ]
+                        },
+                        "description": "Hard delete store (Gemini + R2 + MongoDB).\n\nforce=false: Rejected if store has files.\nforce=true: Delete store and all its files."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete all stores ⚠️",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/stores/all",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "stores",
+                                "all"
+                            ]
+                        },
+                        "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + R2 + MongoDB). Cannot be undone!"
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "4. Metadata Types",
+            "item": [
+                {
+                    "name": "Create metadata type",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata"
+                            ]
+                        },
+                        "description": "Tạo metadata field type mới. isActive mặc định true, isSystem mặc định false."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create access_scope (system)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata"
+                            ]
+                        },
+                        "description": "Tạo access_scope metadata type. Được seed sẵn trong DB, gọi endpoint này nếu muốn tạo lại."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "List metadata types",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata?isActive=true&keywords=đào tạo",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata"
+                            ],
+                            "query": [
+                                {
+                                    "key": "isActive",
+                                    "value": "true",
+                                    "disabled": true,
+                                    "description": "Filter by is_active status"
+                                },
+                                {
+                                    "key": "keywords",
+                                    "value": "đào tạo",
+                                    "disabled": true,
+                                    "description": "Search by display_name of key or value"
+                                }
+                            ]
+                        },
+                        "description": "List all metadata type definitions. Support isActive and keywords filtering."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Check metadata key exists",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/exists?key=department",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "exists"
+                            ],
+                            "query": [
+                                {
+                                    "key": "key",
+                                    "value": "department",
+                                    "description": "Metadata key to check"
+                                }
+                            ]
+                        },
+                        "description": "Check if a metadata key already exists in the system. Requires admin role."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get metadata type details",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}"
+                            ]
+                        },
+                        "description": "Get metadata type by key."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update metadata type",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"New name\",\n  \"isActive\": true\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}"
+                            ]
+                        },
+                        "description": "Update metadata type. Cannot change key or is_system. For system metadata, cannot update isActive.\n\nUse standalone endpoints to update allowedValues."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create metadata value",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"lecture\", \"student\"]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}",
+                                "values"
+                            ]
+                        },
+                        "description": "Add a new allowed value to a metadata type. For system metadata 'access_scope', adding values is forbidden."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update metadata value",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"International Relations (Updated)\",\n  \"isActive\": true\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/htqt",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}",
+                                "values",
+                                "htqt"
+                            ]
+                        },
+                        "description": "Update an existing allowed value in a metadata type. For system metadata, 'access_scope' blocks isActive updates, and 'academic_year'/'cohort' block isActive updates for value 'all'."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete metadata type (hard delete)",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}"
+                            ]
+                        },
+                        "description": "Hard delete: xoá hoàn toàn metadata type khỏi hệ thống.\n- CHỈ cho phép xóa khi totalFiles bằng 0.\n- Trả về 409 Conflict nếu totalFiles > 0.\n- Không thể xóa is_system=true types (returns 403).\n- Trả về 204 No Content thành công."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete metadata value (hard delete)",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/unused_value",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "metadata",
+                                "{{metadata_key}}",
+                                "values",
+                                "unused_value"
+                            ]
+                        },
+                        "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- System metadata 'access_scope' values and 'academic_year'/'cohort' 'all' values cannot be deleted.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "5. File Management",
+            "item": [
+                {
+                    "name": "Upload file",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF - max 20MB)"
+                                },
+                                {
+                                    "key": "storeId",
+                                    "value": "{{store_id}}",
+                                    "type": "text",
+                                    "description": "Optional - uses default store if empty"
+                                },
+                                {
+                                    "key": "displayName",
+                                    "value": "Quy che dao tao 2026",
+                                    "type": "text",
+                                    "description": "Optional display name"
+                                },
+                                {
+                                    "key": "customMetadata",
+                                    "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}",
+                                    "type": "text",
+                                    "description": "Required: must include accessScope (private, lecture, student (No mix private and student/lecture)) AND at least one of academicYear/cohort"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/files",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files"
+                            ]
+                        },
+                        "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- accessScope: mandatory\n- academicYear OR cohort: at least one required\n\nReturns status='active' and geminiDocumentName when complete.\n\nAfter upload, {{fileId}} is automatically updated."
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "  var json = pm.response.json();",
+                                    "  if (json.file_id) {",
+                                    "    pm.collectionVariables.set('file_id', json.file_id);",
+                                    "    console.log('file_id updated: ' + json.file_id);",
+                                    "  }",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ],
+                    "response": []
+                },
+                {
+                    "name": "List files",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files?page=1&limit=50",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files"
+                            ],
+                            "query": [
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "50"
+                                },
+                                {
+                                    "key": "fileStatus",
+                                    "value": "active",
+                                    "disabled": true,
+                                    "description": "active|processing|failed"
+                                },
+                                {
+                                    "key": "metadataFilter",
+                                    "value": "{\"academicYear\": [\"2024-2025\", \"2023-2024\"]}",
+                                    "disabled": true,
+                                    "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys). 'all' value logic is supported."
+                                },
+                                {
+                                    "key": "keywords",
+                                    "value": "quy chế",
+                                    "disabled": true,
+                                    "description": "Search by partial display name."
+                                }
+                            ]
+                        },
+                        "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes. Users only see fields meant for their role, while ADMIN bypasses this filtering and see all fields."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "List Files (Admin)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{admin_token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/admin?storeId={{store_id}}&fileStatus=active&keywords=quy chế&page=1&limit=50",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "admin"
+                            ],
+                            "query": [
+                                {
+                                    "key": "storeId",
+                                    "value": "{{store_id}}",
+                                    "disabled": true,
+                                    "description": "Filter by store ID. If missing, lists all stores."
+                                },
+                                {
+                                    "key": "fileStatus",
+                                    "value": "active",
+                                    "disabled": true
+                                },
+                                {
+                                    "key": "keywords",
+                                    "value": "quy chế",
+                                    "disabled": true
+                                },
+                                {
+                                    "key": "metadataFilter",
+                                    "value": "{\"academicYear\": [\"2024-2025\"]}",
+                                    "disabled": true,
+                                    "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys)."
+                                },
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "50"
+                                }
+                            ]
+                        },
+                        "description": "Admin-only file listing. Allows filtering by storeId or listing across all stores. Requires admin role."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get file details",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles (Admin bypass)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Download file",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/{{file_id}}/download",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "{{file_id}}",
+                                "download"
+                            ]
+                        },
+                        "description": "Download the file binary from R2 storage."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Batch upload",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "files",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Multiple files (PDF, DOCX, XLSX, etc.)"
+                                },
+                                {
+                                    "key": "storeId",
+                                    "value": "{{store_id}}",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "displayNames",
+                                    "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]",
+                                    "type": "text",
+                                    "description": "JSON array - use null for auto name"
+                                },
+                                {
+                                    "key": "metadataList",
+                                    "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]",
+                                    "type": "text",
+                                    "description": "JSON array - one object per file. accessScope (private, lecture, student (No mix private and student/lecture)) required + academicYear or cohort"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/files/batch",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "batch"
+                            ]
+                        },
+                        "description": "Batch upload multiple files. Returns summary of successful and failed uploads."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete file",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Hard delete file (R2 + Gemini + MongoDB)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete all files in store ⚠️",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/all?storeId={{store_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "all"
+                            ],
+                            "query": [
+                                {
+                                    "key": "storeId",
+                                    "value": "{{store_id}}"
+                                }
+                            ]
+                        },
+                        "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB). store_id parameter is optional (uses default if empty)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Check file sync",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/check-sync",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "check-sync"
+                            ]
+                        },
+                        "description": "Compare file state across MongoDB, R2, and Gemini.\n\nReturns is_synced flag, counts per system, and list of issues.\n\nIssue types:\n- missing_in_gemini: file in DB+R2 but not in Gemini\n- missing_in_r2: file in DB with gemini_document_name but not in R2\n- in_db_only: file in DB with no storage_path and no gemini_document_name\n- in_r2_only: object in R2 with no DB record\n- in_gemini_only: Gemini document with no DB record"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Sync files",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/files/sync",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "sync"
+                            ]
+                        },
+                        "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+R2 present): re-upload from R2 to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update file display name (PATCH)",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"Tên hiển thị mới của file\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Update the display name of a file in the MongoDB. Does not update Gemini index directly."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "6. Chat",
+            "item": [
+                {
+                    "name": "Chat query",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{student_token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ],\n    \"accessScope\": [\n      \"student\"\n    ]\n  }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/query",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "query"
+                            ]
+                        },
+                        "description": "RAG-based chat query. Returns complete answer with sources.\n\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student'].\nFor lecture role, access_scope is enforced to ['lecture'].\nFor admin role, no access_scope filter is applied (can see 'private').\n"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Chat query - Lecture role",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{student_token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"chatHistory\": []\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/query",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "query"
+                            ]
+                        },
+                        "description": "Lecture role: can see documents with scope 'lecture' and 'student'."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Chat query - With history",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{student_token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"chatHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/query",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "query"
+                            ]
+                        },
+                        "description": "Chat query with conversation history. NestJS manages sessions and sends history on each request."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Chat streaming (SSE)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{student_token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "text/event-stream"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ]\n  }\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/stream",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "stream"
+                            ]
+                        },
+                        "description": "Streaming chat response via Server-Sent Events (SSE).\n\nEach chunk: {\"chunk\": \"text\", \"done\": false}\nFinal message: {\"done\": true, \"sources\": [...], \"token_usage\": {...}, \"processing_time_ms\": 1234}\n\nNote: Postman may not display SSE well. Test with curl:\ncurl -X POST http://localhost:8000/api/chat/stream \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"question\":\"...\",\"user_context\":{...},\"chat_history\":[]}'"
+                    },
+                    "response": []
+                }
+            ]
         }
-      ]
-    },
-    {
-      "name": "3. Store Management",
-      "item": [
-        {
-          "name": "Create store",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"displayName\": \"Văn bản Đào tạo 2026\",\n  \"setAsDefault\": true\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/stores",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores"]
-            },
-            "description": "Tạo một File Search store mới trên Gemini API và MongoDB.\n\nSau khi tạo, biến {{store_id}} được tự động cập nhật."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  var json = pm.response.json();",
-                  "  if (json.store_id) {",
-                  "    pm.collectionVariables.set('store_id', json.store_id);",
-                  "    console.log('store_id cập nhật: ' + json.store_id);",
-                  "  }",
-                  "}"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "List stores",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores?page=1&limit=50",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores"],
-              "query": [
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "50" },
-                { "key": "isDefault", "value": "true", "disabled": true }
-              ]
-            },
-            "description": "List all stores. Enable is_default=true query param to get only the default store."
-          },
-          "response": []
-        },
-        {
-          "name": "Get store details",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/{{store_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "{{store_id}}"]
-            },
-            "description": "Get store details by MongoDB ObjectId."
-          },
-          "response": []
-        },
-        {
-          "name": "Update store",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"displayName\": \"Tên store mới\",\n  \"isDefault\": true\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/stores/{{store_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "{{store_id}}"]
-            },
-            "description": "Update store displayName or set as default. Both fields are optional."
-          },
-          "response": []
-        },
-        {
-          "name": "Sync store stats",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/{{store_id}}/sync",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "{{store_id}}", "sync"]
-            },
-            "description": "Sync store file_count and total_size from Gemini API to MongoDB."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete store",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/{{store_id}}?force=false",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "{{store_id}}"],
-              "query": [
-                { "key": "force", "value": "false", "description": "Set true to delete even if store has files" }
-              ]
-            },
-            "description": "Hard delete store (Gemini + R2 + MongoDB).\n\nforce=false: Rejected if store has files.\nforce=true: Delete store and all its files."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete all stores ⚠️",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/stores/all",
-              "host": ["{{base_url}}"],
-              "path": ["api", "stores", "all"]
-            },
-            "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + R2 + MongoDB). Cannot be undone!"
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "4. Metadata Types",
-      "item": [
-        {
-          "name": "Create metadata type",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/metadata",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata"]
-            },
-            "description": "Tạo metadata field type mới. isActive mặc định true, isSystem mặc định false."
-          },
-          "response": []
-        },
-        {
-          "name": "Create access_scope (system)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"public\", \"displayName\": \"Public (Student & Lecture)\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/metadata",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata"]
-            },
-            "description": "Tạo access_scope metadata type. Được seed sẵn trong DB, gọi endpoint này nếu muốn tạo lại."
-          },
-          "response": []
-        },
-        {
-          "name": "List metadata types",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/metadata?isActive=true&keywords=đào tạo",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata"],
-              "query": [
-                { "key": "isActive", "value": "true", "disabled": true, "description": "Filter by is_active status" },
-                { "key": "keywords", "value": "đào tạo", "disabled": true, "description": "Search by display_name of key or value" }
-              ]
-            },
-            "description": "List all metadata type definitions. Support isActive and keywords filtering."
-          },
-          "response": []
-        },
-        {
-          "name": "Check metadata key exists",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/metadata/exists?key=department",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "exists"],
-              "query": [
-                { "key": "key", "value": "department", "description": "Metadata key to check" }
-              ]
-            },
-            "description": "Check if a metadata key already exists in the system. Requires admin role."
-          },
-          "response": []
-        },
-        {
-          "name": "Get metadata type details",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}"]
-            },
-            "description": "Get metadata type by key."
-          },
-          "response": []
-        },
-        {
-          "name": "Update metadata type",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"displayName\": \"New name\",\n  \"isActive\": true\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}"]
-            },
-            "description": "Update metadata type. Cannot change key or is_system. For system metadata, cannot update isActive.\n\nUse standalone endpoints to update allowedValues."
-          },
-          "response": []
-        },
-        {
-          "name": "Create metadata value",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"lecture\", \"student\"]\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}", "values"]
-            },
-            "description": "Add a new allowed value to a metadata type. For system metadata 'access_scope', adding values is forbidden."
-          },
-          "response": []
-        },
-        {
-          "name": "Update metadata value",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"displayName\": \"International Relations (Updated)\",\n  \"isActive\": true\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/htqt",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}", "values", "htqt"]
-            },
-            "description": "Update an existing allowed value in a metadata type. For system metadata, 'access_scope' blocks isActive updates, and 'academic_year'/'cohort' block isActive updates for value 'all'."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete metadata type (hard delete)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}"]
-            },
-            "description": "Hard delete: xoá hoàn toàn metadata type khỏi hệ thống.\n- CHỈ cho phép xóa khi totalFiles bằng 0.\n- Trả về 409 Conflict nếu totalFiles > 0.\n- Không thể xóa is_system=true types (returns 403).\n- Trả về 204 No Content thành công."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete metadata value (hard delete)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/unused_value",
-              "host": ["{{base_url}}"],
-              "path": ["api", "metadata", "{{metadata_key}}", "values", "unused_value"]
-            },
-            "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- System metadata 'access_scope' values and 'academic_year'/'cohort' 'all' values cannot be deleted.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "5. File Management",
-      "item": [
-        {
-          "name": "Upload file",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "file", "type": "file", "src": [], "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF - max 20MB)" },
-                { "key": "storeId", "value": "{{store_id}}", "type": "text", "description": "Optional - uses default store if empty" },
-                { "key": "displayName", "value": "Quy che dao tao 2026", "type": "text", "description": "Optional display name" },
-                { "key": "customMetadata", "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}", "type": "text", "description": "Required: must include accessScope (private, public, lecture, student) AND at least one of academicYear/cohort" }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/api/files",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files"]
-            },
-            "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- accessScope: mandatory\n- academicYear OR cohort: at least one required\n\nReturns status='active' and geminiDocumentName when complete.\n\nAfter upload, {{fileId}} is automatically updated."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (pm.response.code === 201) {",
-                  "  var json = pm.response.json();",
-                  "  if (json.file_id) {",
-                  "    pm.collectionVariables.set('file_id', json.file_id);",
-                  "    console.log('file_id updated: ' + json.file_id);",
-                  "  }",
-                  "}"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "List files",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files?page=1&limit=50",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files"],
-              "query": [
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "50" },
-                { "key": "fileStatus", "value": "active", "disabled": true, "description": "active|processing|failed" },
-                { "key": "metadataFilter", "value": "{\"academicYear\": [\"2024-2025\", \"2023-2024\"]}", "disabled": true, "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys). 'all' value logic is supported." },
-                { "key": "keywords", "value": "quy chế", "disabled": true, "description": "Search by partial display name." }
-              ]
-            },
-            "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes. Users only see fields meant for their role, while ADMIN bypasses this filtering and see all fields."
-          },
-          "response": []
-        },
-        {
-          "name": "List Files (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/admin?storeId={{store_id}}&fileStatus=active&keywords=quy chế&page=1&limit=50",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "admin"],
-              "query": [
-                { "key": "storeId", "value": "{{store_id}}", "disabled": true, "description": "Filter by store ID. If missing, lists all stores." },
-                { "key": "fileStatus", "value": "active", "disabled": true },
-                { "key": "keywords", "value": "quy chế", "disabled": true },
-                { "key": "metadataFilter", "value": "{\"academicYear\": [\"2024-2025\"]}", "disabled": true, "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys)." },
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "50" }
-              ]
-            },
-            "description": "Admin-only file listing. Allows filtering by storeId or listing across all stores. Requires admin role."
-          },
-          "response": []
-        },
-        {
-          "name": "Get file details",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/{{file_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "{{file_id}}"]
-            },
-            "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles (Admin bypass)."
-          },
-          "response": []
-        },
-        {
-          "name": "Download file",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/{{file_id}}/download",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "{{file_id}}", "download"]
-            },
-            "description": "Download the file binary from R2 storage."
-          },
-          "response": []
-        },
-        {
-          "name": "Batch upload",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                { "key": "files", "type": "file", "src": [], "description": "Multiple files (PDF, DOCX, XLSX, etc.)" },
-                { "key": "storeId", "value": "{{store_id}}", "type": "text" },
-                { "key": "displayNames", "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]", "type": "text", "description": "JSON array - use null for auto name" },
-                { "key": "metadataList", "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]", "type": "text", "description": "JSON array - one object per file. accessScope (private, public, lecture, student) required + academicYear or cohort" }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/api/files/batch",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "batch"]
-            },
-            "description": "Batch upload multiple files. Returns summary of successful and failed uploads."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete file",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/{{file_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "{{file_id}}"]
-            },
-            "description": "Hard delete file (R2 + Gemini + MongoDB)."
-          },
-          "response": []
-        },
-        {
-          "name": "Delete all files in store ⚠️",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/all?storeId={{store_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "all"],
-              "query": [
-                { "key": "storeId", "value": "{{store_id}}" }
-              ]
-            },
-            "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB). store_id parameter is optional (uses default if empty)."
-          },
-          "response": []
-        },
-        {
-          "name": "Check file sync",
-          "request": {
-            "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/check-sync",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "check-sync"]
-            },
-            "description": "Compare file state across MongoDB, R2, and Gemini.\n\nReturns is_synced flag, counts per system, and list of issues.\n\nIssue types:\n- missing_in_gemini: file in DB+R2 but not in Gemini\n- missing_in_r2: file in DB with gemini_document_name but not in R2\n- in_db_only: file in DB with no storage_path and no gemini_document_name\n- in_r2_only: object in R2 with no DB record\n- in_gemini_only: Gemini document with no DB record"
-          },
-          "response": []
-        },
-        {
-          "name": "Sync files",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/files/sync",
-              "host": ["{{base_url}}"],
-              "path": ["api", "files", "sync"]
-            },
-            "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+R2 present): re-upload from R2 to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
-          },
-          "response": []
-        },
-        {
-          "name": "Update file display name (PATCH)",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"displayName\": \"Tên hiển thị mới của file\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/files/{{file_id}}",
-              "host": ["{{base_url}}"],
-              "path": [ "api", "files", "{{file_id}}" ]
-            },
-            "description": "Update the display name of a file in the MongoDB. Does not update Gemini index directly."
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "6. Chat",
-      "item": [
-        {
-          "name": "Chat query",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": [\"dao_tao\"],\n    \"accessScope\": [\"student\"]\n  }\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/chat/query",
-              "host": ["{{base_url}}"],
-              "path": ["api", "chat", "query"]
-            },
-            "description": "RAG-based chat query. Returns complete answer with sources.\n\nstore_id is optional - uses default store if not provided.\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student', 'public'].\nFor lecture role, access_scope is enforced to ['lecture', 'public'].\nFor admin role, no access_scope filter is applied.\n"
-          },
-          "response": []
-        },
-        {
-          "name": "Chat query - Lecture role",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"userContext\": {\n    \"userId\": \"lecture001\",\n    \"name\": \"Trần Thị B\",\n    \"cohort\": \"\",\n    \"role\": \"lecture\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/chat/query",
-              "host": ["{{base_url}}"],
-              "path": ["api", "chat", "query"]
-            },
-            "description": "Lecture role: can see documents with scope 'lecture' and 'student'."
-          },
-          "response": []
-        },
-        {
-          "name": "Chat query - With history",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ],\n  \"storeId\": \"{{store_id}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/chat/query",
-              "host": ["{{base_url}}"],
-              "path": ["api", "chat", "query"]
-            },
-            "description": "Chat query with conversation history. NestJS manages sessions and sends history on each request."
-          },
-          "response": []
-        },
-        {
-          "name": "Chat streaming (SSE)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Accept", "value": "text/event-stream" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"userContext\": {\n    \"userId\": \"sv001_anon\",\n    \"name\": \"Nguyễn Văn A\",\n    \"cohort\": \"K20\",\n    \"role\": \"student\"\n  },\n  \"chatHistory\": [],\n  \"storeId\": \"{{store_id}}\",\n  \"metadataFilter\": {\n    \"department\": [\"dao_tao\"]\n  }\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{base_url}}/api/chat/stream",
-              "host": ["{{base_url}}"],
-              "path": ["api", "chat", "stream"]
-            },
-            "description": "Streaming chat response via Server-Sent Events (SSE).\n\nEach chunk: {\"chunk\": \"text\", \"done\": false}\nFinal message: {\"done\": true, \"sources\": [...], \"token_usage\": {...}, \"processing_time_ms\": 1234}\n\nNote: Postman may not display SSE well. Test with curl:\ncurl -X POST http://localhost:8000/api/chat/stream \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"question\":\"...\",\"user_context\":{...},\"chat_history\":[]}'"
-          },
-          "response": []
-        }
-      ]
-    }
-  ]
+    ]
 }

@@ -68,10 +68,10 @@ class FilterBuilder:
         Args:
             key: Metadata key
             values: List of values (can be single-item list)
-            support_all_value: If True, add OR key="all"
+            support_all_value: If True, add OR key : "all"
         
         Returns:
-            Filter string like: key="value" or (key="v1" OR key="v2")
+            Filter string like: key : "value" or (key : "v1" OR key : "v2")
         """
         # Add "all" value if support_all_value is True
         if support_all_value and "all" not in values:
@@ -79,10 +79,10 @@ class FilterBuilder:
         
         # Single value - no parentheses needed
         if len(values) == 1:
-            return f'{key}="{values[0]}"'
+            return f'{key} : "{values[0]}"'
         
         # Multiple values - wrap in parentheses
-        or_parts = [f'{key}="{v}"' for v in values]
+        or_parts = [f'{key} : "{v}"' for v in values]
         return "(" + " OR ".join(or_parts) + ")"
     
     async def build_filter(
@@ -96,7 +96,7 @@ class FilterBuilder:
         
         Args:
             metadata: Metadata dict (e.g., {"academic_year": "2024-2025", "cohort": ["K20", "K21"]})
-            user_role: User role (student, staff, admin) for access_scope enforcement
+            user_role: User role (student, lecture, admin) for access_scope enforcement
             skip_validation: If True, skip validation (useful when metadata already validated at upload)
         
         Returns:
@@ -114,23 +114,25 @@ class FilterBuilder:
         
         # Validate user-provided metadata BEFORE injecting access_scope
         if not skip_validation and metadata:
-            is_valid, errors = await self.metadata_service.validate_metadata(metadata, allow_arrays=True)
+            is_valid, errors = await self.metadata_service.validate_metadata(metadata)
             if not is_valid:
                 raise ValueError(f"Invalid metadata: {', '.join(errors)}")
 
-        filter_metadata = dict(metadata)
+        filter_metadata = dict(metadata) if metadata else {}
         
         # Enforce access_scope by role AFTER validation
-        # This allows injecting a list without triggering strict string validation
+        # Only inject the user's explicit role, not generic "public"
         if user_role == "student":
-            filter_metadata["access_scope"] = ["student", "public"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['student', 'public']")
+            filter_metadata["access_scope"] = ["student"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['student']")
         elif user_role == "lecture":
-            filter_metadata["access_scope"] = ["lecture", "public"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture', 'public']")
+            filter_metadata["access_scope"] = ["lecture"]
+            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture']")
         elif user_role == "admin":
-            filter_metadata.pop("access_scope", None)
-            logger.debug(f"Role={user_role}: no access_scope filter")
+            if "access_scope" in filter_metadata:
+                logger.debug(f"Role={user_role}: using provided access_scope={filter_metadata['access_scope']}")
+            else:
+                logger.debug(f"Role={user_role}: no access_scope filter")
         
         # Build filter parts for each key
         filter_parts = []
@@ -169,10 +171,10 @@ class FilterBuilder:
         Internal helper for cases where metadata is already trusted/validated.
 
         Input format (JSON):
-            {"department": "Đào tạo", "category": "policy"}
+            {"department": ["Đào tạo"], "category": ["policy"]}
 
         Output format (Gemini):
-            'department="Đào tạo" AND category="policy"'
+            'department : "Đào tạo" AND category : "policy"'
         """
         if not metadata or not isinstance(metadata, dict):
             return None
@@ -183,13 +185,16 @@ class FilterBuilder:
             if value is None:
                 continue
             if isinstance(value, str):
-                filter_parts.append(f'{key}="{value}"')
+                filter_parts.append(f'{key} : "{value}"')
             elif isinstance(value, (int, float)):
                 filter_parts.append(f'{key}={value}')
             elif isinstance(value, list):
-                list_parts = [f'{key}="{v}"' for v in value if isinstance(v, str)]
+                list_parts = [f'{key} : "{v}"' for v in value if isinstance(v, str)]
                 if list_parts:
-                    filter_parts.append(f"({' OR '.join(list_parts)})")
+                     if len(list_parts) == 1:
+                         filter_parts.append(list_parts[0])
+                     else:
+                         filter_parts.append(f"({' OR '.join(list_parts)})")
 
         filter_string = " AND ".join(filter_parts) if filter_parts else None
         if filter_string:

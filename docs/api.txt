@@ -164,8 +164,8 @@ RESPONSE 200 OK (label = inquiry):
       "question": "Câu hỏi của bạn",
       "types": ["graduation"],
       "filters": {
-        "academicYear": "2024-2025",
-        "cohort": "k20"
+        "academicYear": ["2024-2025"],
+        "cohort": ["k20"]
       },
       "sources": [
         {
@@ -445,7 +445,7 @@ Metadata Type là định nghĩa các trường metadata có thể gắn vào fi
 Được dùng để filter documents trong RAG (Gemini File Search filter string).
 
 GHI CHÚ VỀ CHUẨN HÓA (CASE NORMALIZATION):
-  - Hệ thống tự động chuẩn hóa metadata keys và string values về snake_case trong DB.
+  - Hệ thống tự động chuẩn hóa metadata keys và list string values về snake_case trong DB.
   - API hỗ trợ nhận cả camelCase và snake_case cho key và value (input flexibility).
   - Kết quả trả về từ API sẽ duy trì camelCase cho keys để đồng bộ project.
 
@@ -745,14 +745,14 @@ MÔ TẢ:
   Upload file lên R2 và Gemini File Search (luôn đồng bộ - chờ Gemini hoàn thành).
 
 YÊU CẦU METADATA (BẮT BUỘC):
-  - access_scope: phải có
+  - access_scope: phải có (chỉ nhận "private", "student", "lecture"). Khi có "private" thì không được nhận "student"/"lecture", và ngược lại nếu có "student"/"lecture" thì không được nhận "private".
   - academicYear HOẶC cohort: phải có ít nhất một trong hai
 
 REQUEST (multipart/form-data):
   - file: <binary>                                                        // required
   - storeId: "67a5f2c8abc123def456789"                                   // optional
   - displayName: "Quy chế đào tạo 2026"                                 // optional
-  - customMetadata: '{"accessScope":"student","academicYear":"2024-2025"}' // required
+  - customMetadata: '{"accessScope":["student"],"academicYear":["2024-2025"]}' // required
 
 RESPONSE 201 Created:
   {
@@ -764,7 +764,7 @@ RESPONSE 201 Created:
     "mimeType": "application/pdf",
     "status": "active",
     "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
-    "customMetadata": {"accessScope": "student", "academicYear": "2024-2025"},
+    "customMetadata": {"accessScope": ["student"], "academicYear": ["2024-2025"]},
     "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
     "createdAt": "2026-03-11T10:30:00.000000",
     "message": "File uploaded successfully"
@@ -825,7 +825,7 @@ RESPONSE 200 OK:
         "mimeType": "application/pdf",
         "storagePath": "xxx/2026/03/document.pdf",
         "status": "active",
-        "customMetadata": {"department": "dao_tao"},
+        "customMetadata": {"department": ["dao_tao"]},
         "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
         "createdAt": "2026-03-11T10:30:00.000000",
         "updatedAt": "2026-03-11T10:30:00.000000"
@@ -853,7 +853,7 @@ MÔ TẢ:
 QUERY PARAMETERS:
   - storeId        : (optional, str) Filter theo store (ví dụ: fileSearchStores/xxx)
   - fileStatus     : (optional, str) active|processing|failed
-  - metadataFilter : (optional, json) {"academicYear": "2024-2025", ...}
+  - metadataFilter : (optional, json) {"academicYear": ["2024-2025"], ...}
   - keywords       : (optional, str) Search theo displayName
   - page, limit    : Pagination
 
@@ -1109,15 +1109,12 @@ Session history do NestJS quản lý và gửi kèm trong mỗi request.
 MÔ TẢ:
   Trả lời câu hỏi dựa trên RAG (đợi đến khi có toàn bộ câu trả lời).
 
+AUTH REQUIRED:
+  Header: Authorization: Bearer <token>
+
 REQUEST EXAMPLE:
   {
     "question": "Điều kiện tốt nghiệp là gì?",
-    "userContext": {
-      "userId": "sv001_anon",
-      "name": "Sinh viên A",
-      "cohort": "K20",
-      "role": "student"
-    },
     "chatHistory": [
       {
         "role": "user",
@@ -1130,10 +1127,9 @@ REQUEST EXAMPLE:
         "timestamp": "2026-03-11T10:00:05"
       }
     ],
-    "storeId": "67a5f2c8abc123def456789",  // optional, dùng default nếu bỏ qua
     "metadataFilter": {                     // optional, filter theo metadata
-      "department": "dao_tao",
-      "accessScope": "student"
+      "department": ["dao_tao"],
+      "accessScope": ["student"]
     }
   }
 
@@ -1160,11 +1156,11 @@ RESPONSE 400 Bad Request:
   { "detail": "No store available. Please create a store first." }
 
 WORKFLOW:
-  1. Resolve store (request.storeId → default store → error)
-  2. Convert metadataFilter dict → Gemini filter string
-  3. Enforce accessScope theo userContext.role:
+  1. Resolve default store (nếu bỏ trống storeId → gọi default store → error)
+  2. Bắt buộc require_auth() → Lấy role từ JWT Header
+  3. Enforce accessScope theo Auth Role:
      - student: Only "student" scope
-     - lecture: "lecture" and "student" scopes
+     - lecture: Only "lecture" scope
      - admin: All scopes
   4. Gọi Gemini generate_content với File Search tool
   5. Extract sources từ grounding metadata
@@ -1178,6 +1174,9 @@ WORKFLOW:
 MÔ TẢ:
   Trả lời câu hỏi theo dạng streaming (Server-Sent Events).
   Mỗi chunk text được gửi ngay khi có, giúp hiển thị progressive response.
+
+AUTH REQUIRED:
+  Header: Authorization: Bearer <token>
 
 REQUEST: (giống /api/chat/query)
 
@@ -1198,7 +1197,7 @@ Content-Type: text/event-stream
   }
 
 LUỒNG XỬ LÝ (WORKFLOW):
-  1. Resolve storeId.
+  1. Resolve default store.
   2. Convert metadataFilter sang định dạng Gemini.
   3. Gọi Gemini stream_chat_response (RAG enabled).
   4. Stream các text chunks về cho client qua SSE.
@@ -1391,7 +1390,8 @@ METADATA FILTER FORMAT (dùng trong Chat và File Search):
     Request: { "department": ["dao_tao"] }
     Gemini:  '(department="dao_tao" OR department="all")'
 
-Role-based accessScope (trong /api/chat/query):
-  - role="student": accessScope trong ["student", "public"]
-  - role="lecture": accessScope trong ["lecture", "public"]
-  - role="admin": thấy tất cả (bao gồm "private")
+Role-based accessScope (trong /api/chat/query và /api/chat/stream):
+  - Hệ thống lấy role của người dùng qua JWT Auth Header (Authorization: Bearer <token>)
+  - role="student": accessScope chỉ truy xuất được ["student"]
+  - role="lecture": accessScope chỉ truy xuất được ["lecture"]
+  - role="admin": thấy tất cả (bao gồm ["private"])

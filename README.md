@@ -211,11 +211,11 @@ Hệ thống sử dụng JWT Bearer token được xác thực qua gRPC AuthServ
  
 | API Category | Method | Endpoint | Permission | Note |
 |---|---|---|---|---|
-| **Chat (RAG)** | POST | `/api/chat/query` | Public/Implicit | Tùy vào cấu hình auth filter |
-| | POST | `/api/chat/stream` | Public/Implicit | Tùy vào cấu hình auth filter |
+| **Chat (RAG)** | POST | `/api/chat/query` | User (Auth) | Bắt buộc truyền JWT Token. Tự động parse role từ token để filter scope file search. |
+| | POST | `/api/chat/stream` | User (Auth) | Giống `/query` nhưng trả về SSE logic. |
 | File Search (GET) | `GET /api/files` | User (Auth) | Liệt danh sách file trong **default store**. Hỗ trợ `keywords` & metadata filter. |
 | File Search Admin | `GET /api/files/admin` | **Admin** | Liệt danh sách file (mặc định lấy tất cả store nếu không truyền `storeId`). |
-| File Search (POST) | `POST /api/files` | Admin | Requires metadata: `accessScope` (private, public, lecture, student), ... |
+| File Search (POST) | `POST /api/files` | Admin | Requires array list metadata: `access_scope` (chặn gộp chung `private` vs `student/lecture`), ... |
 | | POST | `/api/files/batch` | **Admin** | Batch upload |
 | | PATCH | `/api/files/{fileId}` | **Admin** | Cập nhật thông tin file (displayName) |
 | | DELETE | `/api/files/{fileId}` | **Admin** | Xóa file |

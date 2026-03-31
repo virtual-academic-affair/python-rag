@@ -63,7 +63,7 @@ SYSTEM_METADATA_TYPES = [
     {
         "key": "access_scope",
         "display_name": "Phạm vi truy cập",
-        "description": "Quyền truy cập tài liệu: private (chỉ admin), public (giảng viên & sinh viên), lecture (giảng viên), student (sinh viên).",
+        "description": "Quyền truy cập tài liệu: private (chỉ admin), lecture (giảng viên), student (sinh viên). Có thể chọn nhiều.",
         "allowed_values": [
             AllowedValue(
                 value="private",
@@ -73,25 +73,18 @@ SYSTEM_METADATA_TYPES = [
                 visible_roles=[],          # Only admins see this option
             ),
             AllowedValue(
-                value="public",
-                display_name="Public (Student & Lecture)",
-                is_active=True,
-                color="#3498DB",
-                visible_roles=["lecture", "student"], # Admins, lecturers, and students see this
-            ),
-            AllowedValue(
                 value="lecture",
                 display_name="Lecture Only",
                 is_active=True,
                 color="#F39C12",
-                visible_roles=["lecture"],  # Admins and lecturers see this
+                visible_roles=[],  # Only admins see this option
             ),
             AllowedValue(
                 value="student",
                 display_name="Student Only",
                 is_active=True,
                 color="#27AE60",
-                visible_roles=["student"], # Admins and students see this
+                visible_roles=[], # Only admins see this option
             ),
         ],
         "is_system": True,

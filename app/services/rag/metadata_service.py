@@ -376,14 +376,12 @@ class MetadataService:
         """Get all registered metadata keys."""
         return await self.metadata_repo.get_all_keys()
     
-    async def validate_metadata(self, metadata: dict, allow_arrays: bool = False) -> tuple[bool, list[str]]:
+    async def validate_metadata(self, metadata: dict) -> tuple[bool, list[str]]:
         """
         Validate metadata values against defined types and rules - Phase 4 refactored.
         
         Args:
             metadata: Metadata dictionary to validate
-            allow_arrays: If True, allows values to be a list of strings (OR logic for query).
-                         Default is False (for upload/creation, strictly one value per key).
             
         Returns:
             tuple: (is_valid, error_messages)
@@ -410,50 +408,37 @@ class MetadataService:
                 errors.append(f"Metadata type '{key}' is not active")
                 continue
             
+            # Require all values to be lists
+            if not isinstance(value, list):
+                errors.append(f"Metadata '{key}' must be an array of values (e.g., [\"{value}\"])")
+                continue
+                
             # Get allowed values
             allowed_values_list = meta_type.get_allowed_values()
             
-            # If allowed_values is None, any value is accepted (free text)
+            # If allowed_values is None, any list of values is accepted (free text)
             if allowed_values_list is None:
-                if isinstance(value, list):
-                    if not allow_arrays:
-                        errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed during upload).")
-                else:
-                    if allow_arrays:
-                        errors.append(f"Metadata '{key}' must be an array of values for filtering (e.g. [\"{value}\"]).")
                 continue
             
             # Check if value is in allowed_values and is active
             active_allowed_values = [av for av in allowed_values_list if av.is_active]
             active_values = [av.value for av in active_allowed_values]
             
-            # Case 1: Value is a list (allowed only when allow_arrays=True)
-            if isinstance(value, list):
-                if not allow_arrays:
-                    errors.append(f"Metadata '{key}' does not support multiple values (arrays are not allowed during upload).")
-                    continue
-                
-                # Normalize each value in the list
-                normalized_values = [normalize_to_snake(v) for v in value]
-                for v in normalized_values:
-                    if v not in active_values:
-                        errors.append(
-                            f"Invalid value '{v}' in list for metadata '{key}'. "
-                            f"Allowed active values: {active_values}"
-                        )
-            # Case 2: Value is a single string/number
-            else:
-                if allow_arrays:
-                    errors.append(f"Metadata '{key}' must be an array of values for filtering (e.g. [\"{value}\"]).")
-                    continue
-                
-                # Normalize value
-                val = normalize_to_snake(value)
-                if val not in active_values:
+            # Normalize each value in the list
+            normalized_values = [normalize_to_snake(v) for v in value]
+            for v in normalized_values:
+                if v not in active_values:
                     errors.append(
-                        f"Invalid value '{val}' for metadata '{key}'. "
+                        f"Invalid value '{v}' in list for metadata '{key}'. "
                         f"Allowed active values: {active_values}"
                     )
+            
+            # Specific validation for access_scope values
+            if key == "access_scope":
+                allowed_access_scopes = {"private", "student", "lecture"}
+                invalid_scopes = [v for v in normalized_values if v not in allowed_access_scopes]
+                if invalid_scopes:
+                    errors.append(f"Metadata '{key}' only accepts values: 'private', 'student', 'lecture'. Found: {invalid_scopes}")
         
         return len(errors) == 0, errors
 
@@ -519,7 +504,15 @@ class MetadataService:
                 "Metadata must include at least one of 'academic_year' or 'cohort'."
             )
 
-        # 5. Value validation against registered metadata types
+        # 5. Access scope exclusivity rule for file upload
+        access_scope = custom_metadata.get("access_scope")
+        if isinstance(access_scope, list):
+            has_private = "private" in access_scope
+            has_public = "student" in access_scope or "lecture" in access_scope
+            if has_private and has_public:
+                raise ValidationException("Metadata 'access_scope' cannot contain 'private' alongside 'student' or 'lecture'.")
+
+        # 6. Value validation against registered metadata types
         is_valid, errors = await self.validate_metadata(custom_metadata)
 
         if not is_valid:
@@ -555,13 +548,19 @@ class MetadataService:
                 continue
                 
             filtered_cm = {}
-            for k, v in cm.items():
-                roles = meta_map.get(k, {}).get(v)
-                if roles is None:
-                    # Value not found in allowed_values, keep it
-                    filtered_cm[k] = v
-                elif user_role == "admin" or user_role in roles:
-                    filtered_cm[k] = v
+            for k, v_list in cm.items():
+                if not isinstance(v_list, list):
+                    continue
+                visible_values = []
+                for val in v_list:
+                    roles = meta_map.get(k, {}).get(val)
+                    if roles is None:
+                        # Value not found in allowed_values, keep it
+                        visible_values.append(val)
+                    elif user_role == "admin" or user_role in roles:
+                        visible_values.append(val)
+                if visible_values:
+                    filtered_cm[k] = visible_values
             f["custom_metadata"] = filtered_cm
         
 

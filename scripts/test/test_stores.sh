@@ -12,7 +12,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/stores" \
     -H "${AUTH_HEADER}" \
     -d "{
         \"displayName\": \"Test Store ${TIMESTAMP}\",
-        \"setAsDefault\": true
+        \"setAsDefault\": false
     }" 2>/dev/null || echo -e "\n000")
 
 if check_response "$RESPONSE" "201" "Create Store"; then
