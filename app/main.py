@@ -125,15 +125,26 @@ async def lifespan(_: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Email consumer not started: {e}")
     
-    # 6. Test Gemini API
+    # 6. Initialize Neo4j schema (GraphRAG)
+    try:
+        from app.services.rag.graph.neo4j_client import neo4j_client
+        from app.services.rag.graph.neo4j_schema_service import neo4j_schema_service
+
+        neo4j_client.verify()
+        neo4j_schema_service.initialize_schema()
+        logger.info("✅ Neo4j GraphRAG initialized")
+    except Exception as e:
+        logger.warning(f"⚠️  Neo4j initialization warning: {e}")
+
+    # 7. Test Gemini API (used for generation + embeddings)
     try:
         from app.services.rag.gemini_client import gemini_client
         logger.info("✅ Gemini service initialized")
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
-    
+
     print(f"🟢 {settings.APP_NAME} is ready!\n")
-    
+
     yield
     
     # Shutdown
@@ -156,7 +167,15 @@ async def lifespan(_: FastAPI):
         logger.info("✅ MongoDB disconnected")
     except Exception as e:
         logger.warning(f"⚠️  Error disconnecting MongoDB: {e}")
-    
+
+    # Close Neo4j driver
+    try:
+        from app.services.rag.graph.neo4j_client import neo4j_client
+        neo4j_client.close()
+        logger.info("✅ Neo4j disconnected")
+    except Exception as e:
+        logger.warning(f"⚠️  Error disconnecting Neo4j: {e}")
+
     logger.info("👋 Shutdown complete")
 
 

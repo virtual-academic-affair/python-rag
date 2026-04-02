@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     R2_PUBLIC_DOMAIN: Optional[str] = None
 
     # ====================================
+    # Neo4j Configuration (GraphRAG)
+    # ====================================
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USERNAME: str = "neo4j"
+    NEO4J_PASSWORD: str = "neo4jpassword"
+    NEO4J_DATABASE: str = "neo4j"
+    NEO4J_VECTOR_DIMENSIONS: int = 768
+
+    # ====================================
     # gRPC (shared workflows)
     # ====================================
     GRPC_ENABLED: bool = False
