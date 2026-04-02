@@ -7,9 +7,10 @@ import asyncio
 import logging
 import mimetypes
 import os
+import tempfile
 from typing import Optional, BinaryIO, List, Tuple, Dict, Any
 
-# Ensure essential Office mime types are registered globally for Google GenAI SDK
+# Ensure essential Office mime types are registered globally.
 # (Production environments like Docker/Alpine often lack these in /etc/mime.types)
 mimetypes.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 mimetypes.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
@@ -59,11 +60,11 @@ def _to_file_model(doc: dict) -> Optional[FileDocument]:
 class FileService:
     """
     Service for file management operations.
-    Coordinates between Cloudflare R2 storage, MongoDB, and Gemini File Search.
+    Coordinates between Cloudflare R2 storage, MongoDB, and GraphRAG indexing.
     """
-    
+
     def __init__(self):
-        """Initialize FileService with repositories and Gemini client."""
+        """Initialize FileService with repositories and dependent services."""
         self._file_repo = None
         self._store_repo = None
         self._metadata_svc = None
@@ -76,7 +77,7 @@ class FileService:
             from app.services.rag.store_service import get_store_service
             self._store_svc = get_store_service()
         return self._store_svc
-    
+
     @property
     def metadata_svc(self):
         """Lazy load metadata service."""
@@ -90,7 +91,7 @@ class FileService:
         if self._file_repo is None:
             self._file_repo = FileRepository()
         return self._file_repo
-    
+
     @property
     def store_repo(self) -> StoreRepository:
         """Lazy load store repository."""
@@ -109,14 +110,14 @@ class FileService:
         max_retries: int = 3,
     ) -> FileDocument:
         """
-        Upload a file to Cloudflare R2 and Gemini File Search.
-        Coordinates validation, DB creation, storage upload, and metadata sync with retries and rollback.
+        Upload a file to Cloudflare R2 and index it into GraphRAG.
+        Coordinates validation, DB creation, storage upload, indexing and metadata sync with retries and rollback.
         """
         # 1. Validation & State Initialization
         state, file_info = await self._prepare_upload_state(
             file_path, original_filename, store_id, display_name, custom_metadata
         )
-        
+
         # 2. Execution with Retries
         try:
             return await self._execute_upload_steps(
@@ -148,20 +149,20 @@ class FileService:
         file_size = os.path.getsize(file_path)
         validate_file_size(file_size)
         mime_type = detect_mime_type(file_path)
-        
+
         # Metadata validation
         await self.metadata_svc.validate_file_metadata_requirements(custom_metadata)
-        
+
         existing_file = await self.file_repo.find_one({
             "store_id": store_id,
             "original_filename": original_filename,
         })
         if existing_file:
             raise ConflictException(f"File '{original_filename}' already exists in store")
-        
+
         # Prepare initial state
         state = UploadState(custom_metadata=custom_metadata)
-        
+
         # Generate storage path
         store_dict = await self.store_repo.find_by_id(store_id)
         if not store_dict:
@@ -170,12 +171,12 @@ class FileService:
 
         state.storage_path = generate_storage_path(store_name, original_filename)
         state.mark_step(UploadStep.VALIDATED)
-        
+
         file_info = {
             "file_size": file_size,
             "mime_type": mime_type
         }
-        
+
         return state, file_info
 
     async def _execute_upload_steps(
@@ -192,7 +193,7 @@ class FileService:
     ) -> FileDocument:
         """Execute the atomic steps of uploading with a retry loop."""
         retry_delay = 2
-        
+
         for attempt in range(max_retries):
             try:
                 # 1. Database record
@@ -205,14 +206,13 @@ class FileService:
                         "storage_bucket": settings.R2_BUCKET_NAME,
                         "file_size": file_size,
                         "mime_type": mime_type,
-                        "gemini_document_name": None,
                         "custom_metadata": state.custom_metadata or {},
                         "status": FileStatus.UPLOADING.value,
                     }
                     created_file = await self.file_repo.create(file_doc_data)
                     state.file_id = str(created_file["_id"])
                     state.mark_step(UploadStep.DB_CREATED)
-                
+
                 # 2. Cloudflare R2
                 if not state.has_step(UploadStep.R2_UPLOADED):
                     logger.info(f"[{state.file_id}] Uploading to Cloudflare R2 (Attempt {attempt+1})")
@@ -224,9 +224,9 @@ class FileService:
                             metadata={"file_id": state.file_id, "store_id": store_id},
                         )
                     state.mark_step(UploadStep.R2_UPLOADED)
-                
+
                 # 3. Parse -> Chunk -> Embed -> Index Neo4j (Sprint 1)
-                if not state.has_step(UploadStep.GEMINI_UPLOADED):
+                if not state.has_step(UploadStep.GRAPH_INDEXED):
                     logger.info(f"[{state.file_id}] Processing GraphRAG indexing")
                     chunk_count = await self._index_to_graph(
                         file_id=state.file_id,
@@ -235,7 +235,7 @@ class FileService:
                         display_name=display_name,
                         custom_metadata=state.custom_metadata,
                     )
-                    state.mark_step(UploadStep.GEMINI_UPLOADED)
+                    state.mark_step(UploadStep.GRAPH_INDEXED)
 
                     await self.file_repo.update_by_id(
                         state.file_id,
@@ -308,12 +308,12 @@ class FileService:
             except Exception as e:
                 logger.warning(f"Rollback DB delete failed: {e}")
 
-    
+
     async def download_file(self, file_id: str, user_role: Optional[str] = None) -> tuple[BinaryIO, str, str]:
         """
         Download a file from Cloudflare R2.
         If user_role is provided, validates access permissions.
-        
+
         Returns:
             tuple: (file_object, filename, mime_type)
         """
@@ -321,21 +321,21 @@ class FileService:
         file_doc = await self.get_file_by_id(file_id, user_role=user_role)
         if not file_doc:
             raise NotFoundException("File", file_id)
-        
+
         try:
             file_obj = await r2_storage.download_file(file_doc.storage_path)
             return file_obj, file_doc.original_filename, file_doc.mime_type
         except Exception as e:
             logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
             raise StorageException(f"File download failed: {str(e)}")
-    
+
 
     async def delete_file(self, file_id: str) -> bool:
         """Delete a file (hard delete)."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
-        
+
         store_id = file_doc.get("store_id")
 
         # Delete from Cloudflare R2
@@ -344,35 +344,35 @@ class FileService:
                 await r2_storage.delete_file(storage_path)
             except Exception as e:
                 logger.warning(f"Failed to delete from Cloudflare R2: {e}")
-        
+
         # Hard delete from MongoDB
         await self.file_repo.delete_by_id(file_id)
-        
+
         # Decrement metadata counters if the file was active and has custom_metadata
         if file_doc.get("status") == FileStatus.ACTIVE.value and file_doc.get("custom_metadata"):
             await self.metadata_svc.sync_metadata_counters(file_doc["custom_metadata"], delta=-1)
-        
+
         # Sync store stats
         if store_id:
             await self.store_svc.sync_store_stats(store_id)
-        
+
         logger.info(f"File {file_id} deleted")
         return True
-        
+
     async def update_file_display_name(self, file_id: str, new_display_name: str) -> Optional[FileDocument]:
         """Update the display name of a file."""
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
-            
+
         update_data = {"display_name": new_display_name}
         update_success = await self.file_repo.update_by_id(file_id, update_data)
-        
+
         if update_success:
             file_doc_dict["display_name"] = new_display_name
             return _to_file_model(file_doc_dict)
         return None
-        
+
     async def _apply_role_filters_and_metadata_masking(self, files: List[Dict[str, Any]], user_role: str) -> List[Dict[str, Any]]:
         """
         Centrally handles both access permission filtering (access_scope)
@@ -380,17 +380,17 @@ class FileService:
         """
         if not files or not user_role:
             return files
-            
+
         # 1. Filter by access_scope (DB and memory checks)
         if user_role == "student":
             files = [f for f in files if "student" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
         elif user_role == "lecture":
             files = [f for f in files if "lecture" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
         # Admin sees all, no filter needed
-            
+
         # 2. Mask custom_metadata based on visible_roles via MetadataService
         await self.metadata_svc.filter_custom_metadata_by_role(files, user_role)
-        
+
         return files
 
     async def _filter_custom_metadata_for_role(self, file_dicts: List[Dict[str, Any]], user_role: str) -> None:
@@ -413,25 +413,25 @@ class FileService:
             filters["store_id"] = store_id
         if status:
             filters["status"] = status.value
-            
+
         # Add keywords filter (partial match on display_name)
         if keywords:
             filters["display_name"] = {"$regex": keywords, "$options": "i"}
-            
+
         # Add metadata filters with "all" support
         if custom_metadata_filter:
             for k, v in custom_metadata_filter.items():
                 if k == "access_scope":
                     continue # Handled by role logic
-                
+
                 # Support array of values (OR logic for same key)
                 if isinstance(v, list):
                     filter_values = v + ["all"]
                 else:
                     filter_values = [v, "all"]
-                    
+
                 filters[f"custom_metadata.{k}"] = {"$in": filter_values}
-        
+
         # Database-level filtering for access_scope
         if user_role == "student":
             filters["custom_metadata.access_scope"] = {"$in": ["student"]}
@@ -440,21 +440,21 @@ class FileService:
         elif user_role == "admin":
             if custom_metadata_filter and "access_scope" in custom_metadata_filter:
                 v = custom_metadata_filter["access_scope"]
-                # Admin can pass list or string for access_scope, no "all" fallback implicitly needed for access_scope 
+                # Admin can pass list or string for access_scope, no "all" fallback implicitly needed for access_scope
                 if isinstance(v, list):
                     filters["custom_metadata.access_scope"] = {"$in": v}
                 else:
                     filters["custom_metadata.access_scope"] = {"$in": [v]}
-            
+
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)
-        
+
         # Final masking for visible_roles (permission check already implicitly handled by DB filters)
         file_dicts = await self._apply_role_filters_and_metadata_masking(file_dicts, user_role)
-        
+
         files = [_to_file_model(f) for f in file_dicts]
         return files, total
-    
+
     async def get_file_by_id(self, file_id: str, user_role: Optional[str] = None) -> Optional[FileDocument]:
         """
         Get a single file by ID.
@@ -463,7 +463,7 @@ class FileService:
         file_dict = await self.file_repo.find_by_id(file_id)
         if not file_dict:
             return None
-            
+
         if user_role:
             # _apply_role_filters_and_metadata_masking expects a list and returns a filtered list
             filtered_files = await self._apply_role_filters_and_metadata_masking([file_dict], user_role)
@@ -471,29 +471,20 @@ class FileService:
                 # If the file was filtered out due to access_scope, it's not found for this user
                 return None
             file_dict = filtered_files[0]
-                
+
         return _to_file_model(file_dict)
-    
+
     async def _sync_store_stats_by_id(self, store_id: str):
-        """Sync store statistics from Gemini by store_id."""
+        """Sync store statistics by store_id."""
         # This method is now replaced by direct call to store_svc.sync_store_stats
         pass
-    
+
     async def _sync_store_stats(self, store_id: str) -> None:
         """Sync store statistics via StoreService."""
         await self.store_svc.sync_store_stats(store_id)
-    
-    async def delete_all_files_in_store(self, store_id: str, gemini_only: bool = False) -> int:
-        """
-        Delete all files in a store.
-        
-        Args:
-            store_id: Store ID (MongoDB ObjectId)
-            gemini_only: If True, only delete from Gemini API (not Cloudflare R2/MongoDB)
-            
-        Returns:
-            Number of files deleted
-        """
+
+    async def delete_all_files_in_store(self, store_id: str) -> int:
+        """Delete all files in a store (MongoDB + Cloudflare R2)."""
         # Get store info
         store_dict = await self.store_repo.find_by_id(store_id)
         if not store_dict:
@@ -502,31 +493,30 @@ class FileService:
         # Get all files in store
         files = await self.file_repo.find_by_store(store_id, skip=0, limit=10000)
         deleted_count = 0
-        
+
         for file_doc in files:
             try:
-                if not gemini_only:
-                    # Delete from Cloudflare R2
-                    if storage_path := file_doc.get("storage_path"):
-                        try:
-                            await r2_storage.delete_file(storage_path)
-                        except Exception as e:
-                            logger.warning(f"Failed to delete from Cloudflare R2: {e}")
-                    
-                    # Delete from MongoDB
-                    await self.file_repo.delete_by_id(str(file_doc["_id"]))
-                
+                # Delete from Cloudflare R2
+                if storage_path := file_doc.get("storage_path"):
+                    try:
+                        await r2_storage.delete_file(storage_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete from Cloudflare R2: {e}")
+
+                # Delete from MongoDB
+                await self.file_repo.delete_by_id(str(file_doc["_id"]))
+
                 deleted_count += 1
-                
+
             except Exception as e:
                 logger.error(f"Failed to delete file {file_doc.get('_id')}: {e}")
-        
+
         # Sync store stats
         await self._sync_store_stats(store_id)
-        
-        logger.info(f"Deleted {deleted_count} files from store {store_id} (gemini_only={gemini_only})")
+
+        logger.info(f"Deleted {deleted_count} files from store {store_id}")
         return deleted_count
-    
+
 
     # ====================================
     # SYNC HELPERS
@@ -537,9 +527,6 @@ class FileService:
         files = await r2_storage.list_files(prefix="")
         return {f["object_name"] for f in files}
 
-    async def _list_all_gemini_doc_names(self) -> set[str]:
-        """Deprecated in GraphRAG mode (kept for backward compatibility)."""
-        return set()
 
     async def check_sync(self) -> dict:
         """Compare MongoDB records with R2 objects (GraphRAG mode)."""
@@ -562,7 +549,6 @@ class FileService:
                         "file_id": str(doc.get("_id", "")),
                         "original_filename": doc.get("original_filename", ""),
                         "storage_path": sp,
-                        "gemini_document_name": doc.get("gemini_document_name"),
                         "issue": "missing_in_r2",
                     }
                 )
@@ -575,7 +561,6 @@ class FileService:
                         "file_id": None,
                         "original_filename": path.split("/")[-1],
                         "storage_path": path,
-                        "gemini_document_name": None,
                         "issue": "in_r2_only",
                     }
                 )
@@ -584,7 +569,7 @@ class FileService:
             "is_synced": len(issues) == 0,
             "total_db": len(db_docs),
             "total_r2": len(r2_paths),
-            "total_gemini": 0,
+            "total_graph_indexed": 0,
             "synced_count": synced_count,
             "issues": issues,
         }
@@ -596,7 +581,7 @@ class FileService:
         if check["is_synced"]:
             return {
                 "total_issues": 0,
-                "uploaded_to_gemini": 0,
+                "indexed_to_graph": 0,
                 "deleted": 0,
                 "failed": 0,
                 "results": [],
@@ -614,7 +599,6 @@ class FileService:
                 "file_id": file_id,
                 "original_filename": fname,
                 "storage_path": sp,
-                "gemini_document_name": issue.get("gemini_document_name"),
             }
 
             try:
@@ -635,8 +619,70 @@ class FileService:
 
         return {
             "total_issues": len(check["issues"]),
-            "uploaded_to_gemini": 0,
+            "indexed_to_graph": 0,
             "deleted": deleted,
+            "failed": failed,
+            "results": results,
+        }
+
+    async def reindex_files_to_graph(self, store_id: Optional[str] = None) -> dict:
+        """Re-index ACTIVE files from R2/MongoDB into Neo4j graph."""
+        filters: Dict[str, Any] = {"status": FileStatus.ACTIVE.value}
+        if store_id:
+            filters["store_id"] = store_id
+
+        db_docs = await self.file_repo.find_many(filters, skip=0, limit=100000)
+        total = len(db_docs)
+        indexed = 0
+        failed = 0
+        results = []
+
+        for doc in db_docs:
+            file_id = str(doc.get("_id"))
+            storage_path = doc.get("storage_path")
+            display_name = doc.get("display_name") or doc.get("original_filename") or file_id
+            custom_metadata = doc.get("custom_metadata") or {}
+            temp_file_path = None
+
+            try:
+                if not storage_path:
+                    raise ValueError("missing storage_path")
+
+                file_obj = await r2_storage.download_file(storage_path)
+                ext = os.path.splitext(doc.get("original_filename") or "")[1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext, mode="wb") as temp_file:
+                    temp_file.write(file_obj.read())
+                    temp_file_path = temp_file.name
+
+                chunk_count = await self._index_to_graph(
+                    file_id=file_id,
+                    file_path=temp_file_path,
+                    store_id=doc.get("store_id"),
+                    display_name=display_name,
+                    custom_metadata=custom_metadata,
+                )
+
+                await self.file_repo.update_by_id(
+                    file_id,
+                    {
+                        "status": FileStatus.ACTIVE.value,
+                        "chunk_count": chunk_count,
+                    },
+                )
+
+                indexed += 1
+                results.append({"file_id": file_id, "success": True, "error": None})
+            except Exception as e:
+                failed += 1
+                logger.error(f"Reindex failed for file_id={file_id}: {e}", exc_info=True)
+                results.append({"file_id": file_id, "success": False, "error": str(e)})
+            finally:
+                if temp_file_path:
+                    cleanup_temp_file(temp_file_path)
+
+        return {
+            "total": total,
+            "indexed": indexed,
             "failed": failed,
             "results": results,
         }

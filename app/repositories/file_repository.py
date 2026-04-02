@@ -18,18 +18,14 @@ class FileRepository(BaseRepository):
     def __init__(self):
         super().__init__(Database.FILES)
     
+    async def find_by_indexed_name(self, indexed_document_name: str) -> Optional[Dict[str, Any]]:
+        """Find file by indexed document name (legacy DB alias: gemini_document_name)."""
+        return await self.find_one({"gemini_document_name": indexed_document_name})
+
     async def find_by_gemini_name(self, gemini_document_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Find file by Gemini document name.
-        
-        Args:
-            gemini_document_name: Gemini document name (fileSearchStores/xxx/documents/yyy)
-            
-        Returns:
-            File document or None
-        """
-        return await self.find_one({"gemini_document_name": gemini_document_name})
-    
+        """Backward-compatible alias for find_by_indexed_name."""
+        return await self.find_by_indexed_name(gemini_document_name)
+
     async def find_by_store(
         self,
         store_id: str,
@@ -108,28 +104,30 @@ class FileRepository(BaseRepository):
         """
         return await self.update_by_id(file_id, {"status": status.value})
     
+    async def update_indexed_info(
+        self,
+        file_id: str,
+        indexed_document_name: str,
+        status: FileStatus = FileStatus.ACTIVE,
+    ) -> bool:
+        """Update indexed document info after successful indexing."""
+        return await self.update_by_id(
+            file_id,
+            {
+                "gemini_document_name": indexed_document_name,
+                "status": status.value,
+            },
+        )
+
     async def update_gemini_info(
         self,
         file_id: str,
         gemini_document_name: str,
-        status: FileStatus = FileStatus.ACTIVE
+        status: FileStatus = FileStatus.ACTIVE,
     ) -> bool:
-        """
-        Update Gemini integration info after successful upload.
-        
-        Args:
-            file_id: File ID (MongoDB _id as string)
-            gemini_document_name: Gemini document name
-            status: New status (default: ACTIVE)
-            
-        Returns:
-            True if updated
-        """
-        return await self.update_by_id(file_id, {
-            "gemini_document_name": gemini_document_name,
-            "status": status.value,
-        })
-    
+        """Backward-compatible alias for update_indexed_info."""
+        return await self.update_indexed_info(file_id, gemini_document_name, status)
+
     async def count_by_store(self, store_id: str) -> int:
         """
         Count files in a store.

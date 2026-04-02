@@ -344,7 +344,7 @@ class EmailDraftService:
         )
 
         if result is None:
-            raise ValueError("Email draft service returned no result from Gemini")
+            raise ValueError("Email draft service returned no result from LLM")
 
         logger.info(
             f"Email draft generated successfully. "

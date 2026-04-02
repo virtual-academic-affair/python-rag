@@ -1,5 +1,5 @@
 """
-Store Repository - Database operations for Gemini File Search stores.
+Store Repository - Database operations for file-search stores.
 """
 
 from typing import Optional, List, Dict, Any
@@ -20,11 +20,11 @@ class StoreRepository(BaseRepository):
     
     async def find_by_store_name(self, store_name: str) -> Optional[Dict[str, Any]]:
         """
-        Find store by Gemini store name.
-        
+        Find store by provider store name.
+
         Args:
-            store_name: Gemini store name (fileSearchStores/xxx)
-            
+            store_name: Provider store name (fileSearchStores/xxx)
+
         Returns:
             Store document or None
         """
@@ -85,13 +85,13 @@ class StoreRepository(BaseRepository):
         total_size: int
     ) -> bool:
         """
-        Update store statistics from Gemini.
-        
+        Update store statistics from provider.
+
         Args:
             store_id: Store ID (MongoDB _id as string)
-            file_count: activeDocumentsCount from Gemini
-            total_size: sizeBytes from Gemini
-            
+            file_count: activeDocumentsCount from provider
+            total_size: sizeBytes from provider
+
         Returns:
             True if updated
         """

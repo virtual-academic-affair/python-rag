@@ -49,7 +49,7 @@ async def lifespan(_: FastAPI):
     print("=" * 80)
     print(f"📡 Server: {settings.HOST}:{settings.PORT}")
     print(f"🤖 LLM Model: {settings.LLM_MODEL}")
-    print(f"🤖 Gemini Model: {settings.GEMINI_MODEL}")
+    print(f"🤖 Provider Model: {settings.GEMINI_MODEL}")
     print(f"💾 Database: {settings.MONGODB_DB_NAME}")
     print(f"📦 Storage: R2 ({settings.R2_ENDPOINT})")
     print(
@@ -136,12 +136,12 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️  Neo4j initialization warning: {e}")
 
-    # 7. Test Gemini API (used for generation + embeddings)
+    # 7. Test LLM provider API (used for generation + embeddings)
     try:
         from app.services.rag.gemini_client import gemini_client
-        logger.info("✅ Gemini service initialized")
+        logger.info("✅ LLM provider service initialized")
     except Exception as e:
-        logger.warning(f"⚠️  Gemini service warning: {e}")
+        logger.warning(f"⚠️  LLM provider service warning: {e}")
 
     print(f"🟢 {settings.APP_NAME} is ready!\n")
 
@@ -260,12 +260,12 @@ async def health_check():
     Health check endpoint.
     Returns service status, version, and dependency connectivity.
     """
-    gemini_connected = False
+    llm_api_connected = False
     mongodb_connected = False
     
     try:
         from app.services.rag.gemini_client import gemini_client
-        gemini_connected = gemini_client.client is not None
+        llm_api_connected = gemini_client.client is not None
     except Exception:
         pass
     
@@ -276,10 +276,10 @@ async def health_check():
         pass
     
     return HealthCheckResponse(
-        status="healthy" if (gemini_connected and mongodb_connected) else "degraded",
+        status="healthy" if (llm_api_connected and mongodb_connected) else "degraded",
         service=settings.APP_NAME,
         version=settings.APP_VERSION,
-        gemini_api_connected=gemini_connected,
+        llm_api_connected=llm_api_connected,
         mongodb_connected=mongodb_connected,
     )
 

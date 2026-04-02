@@ -141,7 +141,7 @@ class HealthCheckResponse(BaseSchema):
     status: str = Field(..., description="Service status: healthy, degraded, unhealthy")
     service: str = Field(..., description="Service name")
     version: str = Field(..., description="Service version")
-    gemini_api_connected: bool = Field(default=False, description="Gemini API connectivity")
+    llm_api_connected: bool = Field(default=False, description="LLM API connectivity")
     mongodb_connected: bool = Field(default=False, description="MongoDB connectivity")
 
 
@@ -329,7 +329,7 @@ class ChatQueryRequest(BaseSchema):
 
 class ChatQueryResponse(BaseSchema):
     """Response body for POST /api/chat/query."""
-    answer: str = Field(..., description="Generated answer from Gemini")
+    answer: str = Field(..., description="Generated answer from LLM")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     token_usage: Optional[dict] = Field(default=None, description="Token consumption statistics")
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")
@@ -355,7 +355,7 @@ class FileUploadResponse(BaseSchema):
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str
     status: str
-    gemini_document_name: Optional[str] = None
+    indexed_document_name: Optional[str] = None
     custom_metadata: Optional[Dict[str, List[str]]] = Field(default_factory=dict)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
@@ -377,7 +377,7 @@ class FileDetailResponse(BaseSchema):
     mime_type: str
     storage_path: str
     status: str
-    gemini_document_name: Optional[str] = None
+    indexed_document_name: Optional[str] = None
     custom_metadata: Dict[str, List[str]] = Field(default_factory=dict)
     file_url: Optional[str] = None
     created_at: str
@@ -426,7 +426,7 @@ class SyncIssueItem(BaseSchema):
     file_id: Optional[str] = Field(None, description="MongoDB ObjectId (nếu có)")
     original_filename: Optional[str] = None
     storage_path: Optional[str] = None
-    gemini_document_name: Optional[str] = None
+    indexed_document_name: Optional[str] = None
     issue: str = Field(..., description="Mô tả vấn đề")
 
 
@@ -435,7 +435,7 @@ class SyncCheckResponse(BaseSchema):
     is_synced: bool = Field(..., description="True nếu 3 nơi đồng bộ hoàn toàn")
     total_db: int = Field(..., description="Số file trong MongoDB")
     total_r2: int = Field(..., description="Số file trong R2")
-    total_gemini: int = Field(..., description="Số file trong Gemini")
+    total_graph_indexed: int = Field(..., description="Số file đã index vào graph")
     synced_count: int = Field(..., description="Số file đồng bộ đầy đủ ở cả 3 nơi")
     issues: List[SyncIssueItem] = Field(default_factory=list, description="Danh sách file bị lệch sync")
 
@@ -445,8 +445,8 @@ class SyncActionResult(BaseSchema):
     file_id: Optional[str] = None
     original_filename: Optional[str] = None
     storage_path: Optional[str] = None
-    gemini_document_name: Optional[str] = None
-    action: str = Field(..., description="upload_to_gemini | delete_db | delete_r2 | delete_gemini | delete_all")
+    indexed_document_name: Optional[str] = None
+    action: str = Field(..., description="index_to_graph | delete_db | delete_r2 | delete_all")
     success: bool
     error: Optional[str] = None
 
@@ -454,7 +454,7 @@ class SyncActionResult(BaseSchema):
 class SyncResponse(BaseSchema):
     """Response cho POST /api/files/sync."""
     total_issues: int
-    uploaded_to_gemini: int = Field(..., description="Số file được import vào Gemini")
+    indexed_to_graph: int = Field(..., description="Số file được index vào graph")
     deleted: int = Field(..., description="Số file/record bị xoá")
     failed: int = Field(..., description="Số lỗi")
     results: List[SyncActionResult]
@@ -479,7 +479,7 @@ class UpdateStoreRequest(BaseSchema):
 class StoreDetailResponse(BaseSchema):
     """Response for GET /api/stores/{store_id}."""
     store_id: str = Field(..., description="MongoDB ObjectId as store ID")
-    store_name: str = Field(..., description="Gemini store name (fileSearchStores/xxx)")
+    store_name: str = Field(..., description="Provider store name (fileSearchStores/xxx)")
     display_name: str
     file_count: int = Field(..., description="Number of active documents")
     total_size: int = Field(..., description="Total size in bytes")

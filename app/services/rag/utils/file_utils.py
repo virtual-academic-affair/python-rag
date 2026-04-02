@@ -5,7 +5,6 @@ Validation, type detection, and file handling helpers.
 
 import os
 import logging
-from pathlib import Path
 from typing import Optional, Any
 from slugify import slugify
 from datetime import datetime, timezone
@@ -30,7 +29,7 @@ class UploadStep(Enum):
     VALIDATED = "validated"
     DB_CREATED = "db_created"
     R2_UPLOADED = "r2_uploaded"
-    GEMINI_UPLOADED = "gemini_uploaded"
+    GRAPH_INDEXED = "graph_indexed"
     METADATA_SYNCED = "metadata_synced"
     COMPLETED = "completed"
 
@@ -43,7 +42,6 @@ class UploadState:
     """
     file_id: Optional[str] = None
     storage_path: Optional[str] = None
-    gemini_document_name: Optional[str] = None
     custom_metadata: Optional[dict] = None
     completed_steps: list = field(default_factory=list)
     
@@ -56,20 +54,12 @@ class UploadState:
         return step in self.completed_steps
 
 
-@dataclass
-class GeminiFile:
-    """Result from Gemini upload."""
-    name: str
-    uri: Optional[str] = None
-
-
-
 # ====================================
 # CONSTANTS
 # ====================================
-# Extensions explicitly supported by Google Gemini File Search
-GEMINI_SUPPORTED_EXTENSIONS = {
-    '.pdf', '.docx', '.doc', '.txt', '.md', '.html', 
+# Extensions explicitly supported by the ingestion pipeline
+SUPPORTED_FILE_EXTENSIONS = {
+    '.pdf', '.docx', '.doc', '.txt', '.md', '.html',
     '.xlsx', '.xls', '.pptx', '.csv', '.rtf'
 }
 
@@ -102,8 +92,8 @@ def validate_file_extension(filename: str) -> None:
     """
     ext = os.path.splitext(filename)[1].lower()
     
-    if ext not in GEMINI_SUPPORTED_EXTENSIONS:
-        raise FileTypeException(ext, list(GEMINI_SUPPORTED_EXTENSIONS))
+    if ext not in SUPPORTED_FILE_EXTENSIONS:
+        raise FileTypeException(ext, list(SUPPORTED_FILE_EXTENSIONS))
 
 
 def detect_mime_type(file_path: str) -> str:
@@ -283,21 +273,6 @@ def convert_custom_metadata_to_snake(custom_metadata: dict) -> dict:
     if not custom_metadata:
         return {}
     return normalize_to_snake(custom_metadata)
-
-def convert_metadata_for_gemini(custom_metadata: dict) -> list[dict]:
-    if not custom_metadata:
-        return []
-    result = []
-    for k, v in custom_metadata.items():
-        if isinstance(v, str):
-            result.append({'key': k, 'stringValue': v})
-        elif isinstance(v, (int, float)):
-            result.append({'key': k, 'numericValue': v})
-        elif isinstance(v, list):
-            # Gemini SDK expects string_list_value directly or mapped correctly based on the version
-            # Using the format {'stringListValue': {'values': [str(x) for x in v]}} which is what the library serializes
-            result.append({'key': k, 'stringListValue': {'values': [str(x) for x in v]}})
-    return result
 
 def to_camel(name: str) -> str:
     """Convert snake_case string to camelCase."""

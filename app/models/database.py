@@ -18,28 +18,28 @@ from app.models.enums import FileStatus
 
 class StoreDocument(BaseModel):
     """
-    Gemini File Search Store - MongoDB Document.
-    
-    Mapping với Gemini API:
-    - store_name → name (fileSearchStores/xxx)
+    File Search Store - MongoDB Document.
+
+    Mapping với external file-search provider:
+    - store_name → provider store name (fileSearchStores/xxx)
     - display_name → displayName
-    - file_count → activeDocumentsCount (sync từ Gemini)
-    - total_size → sizeBytes (sync từ Gemini)
+    - file_count → activeDocumentsCount (provider sync)
+    - total_size → sizeBytes (provider sync)
     """
     # MongoDB ID (auto-generated, used as store_id in API)
     id: Optional[str] = Field(default=None, alias="_id")
     
-    # Gemini store name (immutable, unique)
+    # Provider store name (immutable, unique)
     # Format: "fileSearchStores/my-store-123a456b789c"
-    store_name: str = Field(..., description="Gemini store name (immutable)")
-    
+    store_name: str = Field(..., description="Provider store name (immutable)")
+
     # Display name (passed to Gemini when creating store)
     display_name: str = Field(..., description="Human-readable display name")
     
-    # Statistics (synced from Gemini API)
-    file_count: int = Field(default=0, description="activeDocumentsCount from Gemini")
-    total_size: int = Field(default=0, description="sizeBytes from Gemini")
-    
+    # Statistics (synced from provider API)
+    file_count: int = Field(default=0, description="activeDocumentsCount from provider")
+    total_size: int = Field(default=0, description="sizeBytes from provider")
+
     # Local settings
     is_default: bool = Field(default=False, description="Default store for uploads")
     
@@ -60,11 +60,11 @@ class FileDocument(BaseModel):
     """
     File Document - MongoDB Document.
     
-    Mapping với Gemini Document:
+    Mapping với indexed document:
     - display_name → displayName
-    - gemini_document_name → name (fileSearchStores/xxx/documents/yyy)
-    - custom_metadata → customMetadata[]
-    - status → state (STATE_PENDING/ACTIVE/FAILED)
+    - indexed_document_name → provider document name (legacy alias: gemini_document_name)
+    - custom_metadata → custom metadata
+    - status → processing state
     """
     # MongoDB ID (auto-generated, used as file_id in API)
     id: Optional[str] = Field(default=None, alias="_id")
@@ -82,19 +82,20 @@ class FileDocument(BaseModel):
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str = Field(..., description="MIME type")
     
-    # Gemini integration
-    gemini_document_name: Optional[str] = Field(
-        None, 
-        description="Gemini document name: fileSearchStores/xxx/documents/yyy"
+    # Graph indexing metadata (kept alias for backward DB compatibility)
+    indexed_document_name: Optional[str] = Field(
+        None,
+        alias="gemini_document_name",
+        description="Indexed document name (legacy alias: gemini_document_name)",
     )
-    
-    # Custom metadata (flexible dict, converted to Gemini CustomMetadata[] on upload)
+
+    # Custom metadata (flexible dict)
     custom_metadata: Dict[str, List[str]] = Field(
         default_factory=dict,
         description="Custom metadata key-value list pairs"
     )
     
-    # Status (maps to Gemini Document State)
+    # Status (upload/index processing state)
     status: FileStatus = Field(default=FileStatus.UPLOADING)
     
     # Timestamps

@@ -52,7 +52,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     response_model=FileUploadResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload file to store",
-    description="Upload a document file to R2 and Gemini File Search for RAG.",
+    description="Upload a document file to R2 and GraphRAG indexing pipeline.",
 )
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
@@ -62,9 +62,9 @@ async def upload_file(
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
-    Upload a file to R2 storage and Gemini File Search (synchronous).
+    Upload a file to R2 storage and GraphRAG indexing pipeline (synchronous).
 
-    Waits until both R2 and Gemini processing complete before returning.
+    Waits until both R2 upload and graph indexing complete before returning.
 
     **Required metadata:**
     - `access_scope`: bắt buộc (e.g. `["private"]`, `["lecture"]`, hoặc `["student", "lecture"]`)
@@ -75,14 +75,14 @@ async def upload_file(
     """
     temp_file_path = None
     file_svc = get_file_service()
-    
+
     try:
         from app.services.rag.utils.store_utils import resolve_store
-        
+
         # Get store (from param or default store)
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
-        
+
         # Parse custom metadata
         metadata_dict = {}
         if custom_metadata:
@@ -95,13 +95,13 @@ async def upload_file(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid custom_metadata JSON format",
                 )
-        
+
         # Save uploaded file to temp location
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
             contents = await file.read()
             temp_file.write(contents)
             temp_file_path = temp_file.name
-        
+
         # Upload file using FileService (validates metadata before upload)
         file_doc = await file_svc.upload_file(
             file_path=temp_file_path,
@@ -113,13 +113,13 @@ async def upload_file(
         )
 
         message = "File uploaded successfully"
-        
+
         return FileUploadResponse(
             file_id=str(file_doc.id),
             store_id=file_doc.store_id,
             original_filename=file_doc.original_filename,
             display_name=file_doc.display_name,
-            gemini_document_name=file_doc.gemini_document_name,
+            indexed_document_name=None,
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
@@ -128,35 +128,35 @@ async def upload_file(
             file_url=get_download_url(file_doc.storage_path),
             message=message,
         )
-        
+
     except ValidationException as e:
         logger.warning(f"Validation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    
+
     except ConflictException as e:
         logger.warning(f"Duplicate file: {e}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
-    
+
     except (StorageException, GeminiException) as e:
         logger.error(f"File upload failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"File upload failed: {str(e)}",
         )
-    
+
     except Exception as e:
         logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",
         )
-    
+
     finally:
         # Cleanup temp file
         if temp_file_path and os.path.exists(temp_file_path):
@@ -182,15 +182,15 @@ async def list_files(
 ):
     """
     List files in the default store with pagination and filters.
-    
+
     **Metadata Filter example:**
     `?metadataFilter={"academicYear":"2024-2025"}`
     """
-        
+
     try:
-        
+
         file_svc = get_file_service()
-        
+
         # Parse status
         status_enum = None
         if file_status:
@@ -201,7 +201,7 @@ async def list_files(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status: {file_status}",
                 )
-        
+
         # Parse metadata filter
         custom_metadata_filter = None
         if metadata_filter:
@@ -209,7 +209,7 @@ async def list_files(
                 custom_metadata_filter = json.loads(metadata_filter)
                 # Convert camelCase keys to snake_case for DB query
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
-                
+
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
@@ -224,10 +224,10 @@ async def list_files(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid metadataFilter JSON format",
                 )
-        
-        
+
+
         resolved_store_id, _ = await resolve_store(None)
-        
+
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             store_id=resolved_store_id,
@@ -246,7 +246,7 @@ async def list_files(
                     store_id=f.store_id,
                     original_filename=f.original_filename,
                     display_name=f.display_name,
-                    gemini_document_name=f.gemini_document_name,
+                    indexed_document_name=None,
                     file_size=f.file_size,
                     mime_type=f.mime_type,
                     storage_path=f.storage_path,
@@ -291,7 +291,7 @@ async def list_files_admin(
     """
     try:
         file_svc = get_file_service()
-        
+
         # Parse status
         status_enum = None
         if file_status:
@@ -302,14 +302,14 @@ async def list_files_admin(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status: {file_status}",
                 )
-        
+
         # Parse metadata filter
         custom_metadata_filter = None
         if metadata_filter:
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
-                
+
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
@@ -324,7 +324,7 @@ async def list_files_admin(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid metadataFilter JSON format",
                 )
-        
+
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             store_id=store_id,
@@ -343,7 +343,7 @@ async def list_files_admin(
                     store_id=f.store_id,
                     original_filename=f.original_filename,
                     display_name=f.display_name,
-                    gemini_document_name=f.gemini_document_name,
+                    indexed_document_name=None,
                     file_size=f.file_size,
                     mime_type=f.mime_type,
                     storage_path=f.storage_path,
@@ -372,11 +372,11 @@ async def list_files_admin(
     "/check-sync",
     response_model=SyncCheckResponse,
     summary="Check file sync status",
-    description="Compare files across MongoDB, R2, and Gemini to identify sync issues.",
+    description="Compare files across MongoDB and R2 to identify sync issues.",
 )
 async def check_sync(_admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Check synchronization status of files across all 3 storage systems.
+    Check synchronization status of files across MongoDB and R2.
     """
     try:
         file_svc = get_file_service()
@@ -405,14 +405,14 @@ async def batch_upload_files(
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
-    Batch upload multiple files to R2 storage and Gemini File Search.
+    Batch upload multiple files to R2 storage and GraphRAG indexing pipeline.
     """
     file_svc = get_file_service()
-    
+
     try:
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
-        
+
         # Parse display_names
         names_list = []
         if display_names:
@@ -422,7 +422,7 @@ async def batch_upload_files(
                     raise HTTPException(status_code=400, detail="display_names must be a list")
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid display_names JSON")
-        
+
         # Parse metadata_list
         meta_list = []
         if metadata_list:
@@ -434,23 +434,23 @@ async def batch_upload_files(
                 meta_list = [convert_custom_metadata_to_snake(m) if isinstance(m, dict) else m for m in meta_list]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
-        
+
         results = []
         successful = 0
         failed = 0
-        
+
         # Save each file to temp location and upload
         for idx, file in enumerate(files):
             temp_file_path = None
             try:
                 display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
                 metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
-                
+
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
                     contents = await file.read()
                     temp_file.write(contents)
                     temp_file_path = temp_file.name
-                
+
                 file_doc = await file_svc.upload_file(
                     file_path=temp_file_path,
                     original_filename=file.filename,
@@ -459,18 +459,18 @@ async def batch_upload_files(
                     display_name=display_name,
                     custom_metadata=metadata_dict,
                 )
-                
+
                 results.append(BatchFileUploadResult(
                     original_filename=file.filename,
                     success=True,
                     file_id=str(file_doc.id),
                     display_name=file_doc.display_name,
-                    gemini_document_name=file_doc.gemini_document_name,
+                    indexed_document_name=None,
                     file_url=get_download_url(file_doc.storage_path),
                     message="Uploaded successfully",
                 ))
                 successful += 1
-                
+
             except Exception as e:
                 logger.error(f"Failed to upload file {file.filename}: {e}")
                 results.append(BatchFileUploadResult(original_filename=file.filename, success=False, error=str(e)))
@@ -478,9 +478,9 @@ async def batch_upload_files(
             finally:
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
-        
+
         return BatchFileUploadResponse(total=len(files), successful=successful, failed=failed, results=results)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -495,7 +495,7 @@ async def batch_upload_files(
 )
 async def sync_files(_admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Synchronize files across MongoDB, R2, and Gemini.
+    Synchronize files across MongoDB and R2.
     """
     try:
         file_svc = get_file_service()
@@ -503,6 +503,27 @@ async def sync_files(_admin: Dict[str, Any] = Depends(require_admin)):
         return SyncResponse(**result)
     except Exception as e:
         logger.error(f"Error during sync: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@router.post(
+    "/reindex-graph",
+    summary="Re-index active files into graph",
+    description="Re-index ACTIVE files from MongoDB/R2 into Neo4j graph.",
+)
+async def reindex_graph(
+    store_id: Optional[str] = Query(None, alias="storeId", description="Optional store ID to reindex a single store"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Trigger GraphRAG re-index for active files."""
+    _ = _admin
+    try:
+        file_svc = get_file_service()
+        result = await file_svc.reindex_files_to_graph(store_id=store_id)
+        return result
+    except Exception as e:
+        logger.error(f"Error during graph reindex: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -518,13 +539,14 @@ async def delete_all_files_in_store(
     """
     Delete all files in a store.
     """
+    _ = _admin
     try:
         # Resolve store_id if not provided
         resolved_store_id, _ = await resolve_store(store_id)
-        
+
         file_svc = get_file_service()
         deleted_count = await file_svc.delete_all_files_in_store(resolved_store_id)
-        
+
         return BulkDeleteResponse(
             deleted_count=deleted_count,
             message=f"Deleted {deleted_count} files from store {resolved_store_id}",
@@ -551,7 +573,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             store_id=file_doc.store_id,
             original_filename=file_doc.original_filename,
             display_name=file_doc.display_name,
-            gemini_document_name=file_doc.gemini_document_name,
+            indexed_document_name=None,
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
@@ -573,22 +595,23 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     summary="Update file display name",
 )
 async def update_file(
-    file_id: str, 
+    file_id: str,
     request: UpdateFileRequest,
     _admin: Dict[str, Any] = Depends(require_admin)
 ):
+    _ = _admin
     try:
         file_svc = get_file_service()
         file_doc = await file_svc.update_file_display_name(file_id, request.display_name)
         if not file_doc:
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         return FileDetailResponse(
             file_id=str(file_doc.id),
             store_id=file_doc.store_id,
             original_filename=file_doc.original_filename,
             display_name=file_doc.display_name,
-            gemini_document_name=file_doc.gemini_document_name,
+            indexed_document_name=None,
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
@@ -629,6 +652,7 @@ async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_au
     summary="Delete file",
 )
 async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
+    _ = _admin
     try:
         file_svc = get_file_service()
         await file_svc.delete_file(file_id)

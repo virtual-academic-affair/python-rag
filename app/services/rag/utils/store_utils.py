@@ -65,14 +65,14 @@ async def resolve_store(request_store_id: Optional[str] = None) -> Tuple[str, st
 
 async def get_store_name_by_id(store_id: str) -> str:
     """
-    Get store_name (Gemini name) from store_id.
-    
+    Get provider store_name from store_id.
+
     Args:
         store_id: MongoDB ObjectId as string
-        
+
     Returns:
-        Gemini store name (fileSearchStores/xxx)
-        
+        Provider store name (fileSearchStores/xxx)
+
     Raises:
         HTTPException: If store not found
     """

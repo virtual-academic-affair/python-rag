@@ -1,5 +1,5 @@
 """
-Store Service - Business logic for Gemini File Search store management.
+Store Service - Business logic for file-search store management.
 """
 
 import asyncio
@@ -29,8 +29,8 @@ def _to_store_model(doc: dict) -> Optional[StoreDocument]:
 
 
 class StoreService:
-    """Service for Gemini File Search store management."""
-    
+    """Service for file-search store management."""
+
     def __init__(self):
         self._store_repo = None
         self._file_repo = None
@@ -38,7 +38,7 @@ class StoreService:
     
     @property
     def gemini_client(self):
-        """Share Gemini client from GeminiClient singleton."""
+        """Share provider client from singleton."""
         if self._gemini_client is None:
             from app.services.rag.gemini_client import gemini_client
             self._gemini_client = gemini_client.client
@@ -62,11 +62,11 @@ class StoreService:
         set_as_default: bool = False,
     ) -> StoreDocument:
         """
-        Create a new Gemini File Search store.
+        Create a new file-search store.
         """
         try:
-            # Create store in Gemini API (Native Async)
-            logger.info(f"Creating Gemini store with display_name: {display_name}")
+            # Create store in provider API (Native Async)
+            logger.info(f"Creating file-search store with display_name: {display_name}")
             gemini_store = await self.gemini_client.aio.file_search_stores.create(
                 config={"display_name": display_name}
             )
@@ -109,16 +109,16 @@ class StoreService:
         if file_count > 0 and not force:
             raise ValidationException(f"Store has {file_count} files. Use force=true to delete.")
         
-        # Delete from Gemini API (Native Async)
+        # Delete from provider API (Native Async)
         try:
             await self.gemini_client.aio.file_search_stores.delete(
                 name=store_name,
                 config={"force": True}
             )
-            logger.info(f"Deleted store from Gemini: {store_name}")
+            logger.info(f"Deleted store from provider: {store_name}")
         except Exception as e:
-            logger.warning(f"Gemini store deletion failed: {e}")
-        
+            logger.warning(f"Provider store deletion failed: {e}")
+
         # Delete files from R2 and MongoDB
         if file_count > 0:
             files = await self.file_repo.find_by_store(store_id, skip=0, limit=10000)
@@ -137,7 +137,7 @@ class StoreService:
     
     async def sync_store_stats(self, store_id: str) -> StoreDocument:
         """
-        Sync store statistics from Gemini API.
+        Sync store statistics from provider API.
         """
         store_dict = await self.store_repo.find_by_id(store_id)
         if not store_dict:
@@ -146,7 +146,7 @@ class StoreService:
         store_name = store_dict["store_name"]
         
         try:
-            # Get store info from Gemini (Native Async)
+            # Get store info from provider (Native Async)
             gemini_store = await self.gemini_client.aio.file_search_stores.get(
                 name=store_name,
             )
@@ -204,8 +204,8 @@ class StoreService:
 
     async def delete_all_stores(self) -> int:
         """
-        Delete all stores (Gemini + MongoDB + all files).
-        
+        Delete all stores (provider + MongoDB + all files).
+
         Returns:
             Number of stores deleted
         """

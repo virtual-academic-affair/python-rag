@@ -113,7 +113,7 @@ class FileDownloadException(StorageException):
 
 
 class GeminiException(AppException):
-    """Gemini API operation failed."""
+    """LLM provider API operation failed."""
     def __init__(self, message: str, details: Optional[Any] = None):
         super().__init__(message, status_code=502, details=details)
 

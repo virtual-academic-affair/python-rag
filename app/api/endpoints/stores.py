@@ -1,6 +1,6 @@
 """
-Store Management Endpoints - Handle Gemini File Search store operations.
-Provides CRUD operations for managing stores and synchronizing with Gemini API.
+Store Management Endpoints - Handle file-search store operations.
+Provides CRUD operations for managing stores and synchronizing with provider API.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -47,12 +47,12 @@ def _to_store_response(store) -> StoreDetailResponse:
     response_model=StoreDetailResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create store",
-    description="Create a new Gemini File Search store.",
+    description="Create a new file-search store.",
 )
 async def create_store(request: CreateStoreRequest, _admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Create a new Gemini File Search store.
-    
+    Create a new file-search store.
+
     **Example:**
     ```json
     {
@@ -78,7 +78,7 @@ async def create_store(request: CreateStoreRequest, _admin: Dict[str, Any] = Dep
         )
     
     except GeminiException as e:
-        logger.error(f"Gemini error creating store: {e}", exc_info=True)
+        logger.error(f"Provider API error creating store: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
@@ -221,12 +221,12 @@ async def update_store(store_id: str, request: UpdateStoreRequest, _admin: Dict[
     "/all",
     response_model=BulkDeleteResponse,
     summary="Delete all stores",
-    description="Delete all stores (from Gemini, R2, and MongoDB).",
+    description="Delete all stores (from provider API, R2, and MongoDB).",
 )
 async def delete_all_stores(_admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Delete all stores (full delete from Gemini, R2, and MongoDB).
-    
+    Delete all stores (full delete from provider API, R2, and MongoDB).
+
     **Warning:** This will permanently delete all stores and their files!
     """
     try:
@@ -239,7 +239,7 @@ async def delete_all_stores(_admin: Dict[str, Any] = Depends(require_admin)):
         )
         
     except GeminiException as e:
-        logger.error(f"Gemini error deleting all stores: {e}", exc_info=True)
+        logger.error(f"Provider API error deleting all stores: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
@@ -291,7 +291,7 @@ async def delete_store(
         )
     
     except GeminiException as e:
-        logger.error(f"Gemini error deleting store: {e}", exc_info=True)
+        logger.error(f"Provider API error deleting store: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
@@ -309,12 +309,12 @@ async def delete_store(
     "/{store_id}/sync",
     response_model=StoreDetailResponse,
     summary="Sync store stats",
-    description="Synchronize store statistics with Gemini API.",
+    description="Synchronize store statistics with provider API.",
 )
 async def sync_store_stats(store_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
     """
-    Sync store statistics with Gemini API.
-    Updates file_count and total_size from Gemini.
+    Sync store statistics with provider API.
+    Updates file_count and total_size from provider.
     """
     try:
         store_svc = get_store_service()
@@ -330,7 +330,7 @@ async def sync_store_stats(store_id: str, _admin: Dict[str, Any] = Depends(requi
         )
     
     except GeminiException as e:
-        logger.error(f"Gemini sync failed: {e}", exc_info=True)
+        logger.error(f"Provider API sync failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
