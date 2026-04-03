@@ -15,7 +15,7 @@ from app.core.prompts import (
 from app.models.schemas import ChatHistoryItem, UserContext
 from app.repositories.file_repository import FileRepository
 from app.services.rag.gemini_client import gemini_client
-from app.services.rag.graph.neo4j_retrieval_service import neo4j_retrieval_service
+from app.services.rag.graphiti.graphiti_retrieval_service import graphiti_retrieval_service
 from app.services.rag.utils.gemini_rag_utils import (
     format_chat_history,
     enrich_sources_with_urls,
@@ -46,14 +46,14 @@ class ChatService:
         store_name: Optional[str] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
-        """Generate chat response using Neo4j retrieval + Gemini generation."""
+        """Generate chat response using Graphiti retrieval + Gemini generation."""
         if not store_name:
             raise ValueError("store_name is required for GraphRAG retrieval.")
 
         start_time = time.time()
         history_text = format_chat_history(chat_history)
 
-        chunks = await neo4j_retrieval_service.retrieve_chunks(
+        chunks = await graphiti_retrieval_service.retrieve_chunks(
             question=question,
             store_id=store_name,
             metadata_filter=metadata_filter or {},
@@ -103,7 +103,7 @@ class ChatService:
         store_name: Optional[str] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream chat response with Neo4j retrieval + Gemini generation."""
+        """Stream chat response with Graphiti retrieval + Gemini generation."""
         result = await self.generate_chat_response(
             question=question,
             user_context=user_context,
