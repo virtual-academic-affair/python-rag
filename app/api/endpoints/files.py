@@ -510,7 +510,7 @@ async def sync_files(_admin: Dict[str, Any] = Depends(require_admin)):
 @router.post(
     "/reindex-graph",
     summary="Re-index active files into graph",
-    description="Re-index ACTIVE files from MongoDB/R2 into Neo4j graph.",
+    description="Re-index ACTIVE files from MongoDB/R2 into Graphiti graph.",
 )
 async def reindex_graph(
     store_id: Optional[str] = Query(None, alias="storeId", description="Optional store ID to reindex a single store"),

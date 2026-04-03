@@ -1,7 +1,7 @@
 """
 Chat Endpoints - Handle all RAG-based chat operations.
 Includes: query and stream.
-All chat operations use GraphRAG retrieval from Neo4j.
+All chat operations use GraphRAG retrieval from Graphiti.
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends
@@ -40,7 +40,7 @@ async def chat_query(
     
     **Flow:**
     1. Receive question + student context + chat history
-    2. Retrieve relevant chunks from Neo4j GraphRAG
+    2. Retrieve relevant chunks from Graphiti GraphRAG
     3. Return complete answer with sources and token usage
 
     **Note:** 
