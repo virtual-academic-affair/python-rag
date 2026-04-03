@@ -143,6 +143,7 @@ class HealthCheckResponse(BaseSchema):
     version: str = Field(..., description="Service version")
     llm_api_connected: bool = Field(default=False, description="LLM API connectivity")
     mongodb_connected: bool = Field(default=False, description="MongoDB connectivity")
+    graphiti_connected: bool = Field(default=False, description="Graphiti connectivity")
 
 
 class ErrorResponse(BaseSchema):

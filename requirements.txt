@@ -78,3 +78,5 @@ llama-index-core==0.12.52
 llama-index-readers-file==0.4.12
 llama-index-embeddings-google-genai==0.3.0
 pypdf==5.6.0
+
+graphiti-core

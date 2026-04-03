@@ -125,16 +125,19 @@ async def lifespan(_: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️  Email consumer not started: {e}")
     
-    # 6. Initialize Neo4j schema (GraphRAG)
+    # 6. Initialize Graphiti schema
     try:
-        from app.services.rag.graph.neo4j_client import neo4j_client
-        from app.services.rag.graph.neo4j_schema_service import neo4j_schema_service
+        if settings.GRAPHITI_ENABLED:
+            from app.services.rag.graphiti.graphiti_client import graphiti_client
+            from app.services.rag.graphiti.graphiti_schema import graphiti_schema_service
 
-        neo4j_client.verify()
-        neo4j_schema_service.initialize_schema()
-        logger.info("✅ Neo4j GraphRAG initialized")
+            graphiti_client.verify()
+            graphiti_schema_service.initialize_schema()
+            logger.info("✅ Graphiti initialized")
+        else:
+            logger.info("ℹ️  Graphiti disabled via config")
     except Exception as e:
-        logger.warning(f"⚠️  Neo4j initialization warning: {e}")
+        logger.warning(f"⚠️  Graphiti initialization warning: {e}")
 
     # 7. Test LLM provider API (used for generation + embeddings)
     try:
@@ -168,13 +171,14 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️  Error disconnecting MongoDB: {e}")
 
-    # Close Neo4j driver
+    # Close Graphiti driver
     try:
-        from app.services.rag.graph.neo4j_client import neo4j_client
-        neo4j_client.close()
-        logger.info("✅ Neo4j disconnected")
+        if settings.GRAPHITI_ENABLED:
+            from app.services.rag.graphiti.graphiti_client import graphiti_client
+            graphiti_client.close()
+            logger.info("✅ Graphiti disconnected")
     except Exception as e:
-        logger.warning(f"⚠️  Error disconnecting Neo4j: {e}")
+        logger.warning(f"⚠️  Error disconnecting Graphiti: {e}")
 
     logger.info("👋 Shutdown complete")
 
@@ -262,7 +266,8 @@ async def health_check():
     """
     llm_api_connected = False
     mongodb_connected = False
-    
+    graphiti_connected = False
+
     try:
         from app.services.rag.gemini_client import gemini_client
         llm_api_connected = gemini_client.client is not None
@@ -274,13 +279,24 @@ async def health_check():
         mongodb_connected = Database._db is not None
     except Exception:
         pass
-    
+
+    try:
+        if settings.GRAPHITI_ENABLED:
+            from app.services.rag.graphiti.graphiti_client import graphiti_client
+            graphiti_client.verify()
+            graphiti_connected = True
+        else:
+            graphiti_connected = True
+    except Exception:
+        pass
+
     return HealthCheckResponse(
-        status="healthy" if (llm_api_connected and mongodb_connected) else "degraded",
+        status="healthy" if (llm_api_connected and mongodb_connected and graphiti_connected) else "degraded",
         service=settings.APP_NAME,
         version=settings.APP_VERSION,
         llm_api_connected=llm_api_connected,
         mongodb_connected=mongodb_connected,
+        graphiti_connected=graphiti_connected,
     )
 
 

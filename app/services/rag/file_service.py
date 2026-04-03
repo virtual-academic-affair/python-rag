@@ -1,6 +1,6 @@
 """
 File Service - Business logic for file management operations.
-Handles file uploads, downloads, deletions, and GraphRAG indexing with Neo4j.
+Handles file uploads, downloads, deletions, and GraphRAG indexing with Graphiti.
 """
 
 import asyncio
@@ -43,7 +43,7 @@ from app.services.rag.metadata_service import get_metadata_service
 from app.services.rag.ingestion.llama_parser_service import llama_parser_service
 from app.services.rag.ingestion.chunking_service import chunking_service
 from app.services.rag.ingestion.embedding_service import embedding_service
-from app.services.rag.graph.graph_ingestion_service import graph_ingestion_service
+from app.services.rag.graphiti.graphiti_ingestion_service import graphiti_ingestion_service
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ class FileService:
                         )
                     state.mark_step(UploadStep.R2_UPLOADED)
 
-                # 3. Parse -> Chunk -> Embed -> Index Neo4j (Sprint 1)
+                # 3. Parse -> Chunk -> Embed -> Index Graphiti (Phase 2)
                 if not state.has_step(UploadStep.GRAPH_INDEXED):
                     logger.info(f"[{state.file_id}] Processing GraphRAG indexing")
                     chunk_count = await self._index_to_graph(
@@ -277,7 +277,7 @@ class FileService:
 
         vectors = await embedding_service.embed_texts([c.text for c in chunks])
         return await asyncio.to_thread(
-            graph_ingestion_service.upsert_document_and_chunks,
+            graphiti_ingestion_service.index_document,
             doc_id=file_id,
             store_id=store_id,
             title=display_name,
@@ -626,7 +626,7 @@ class FileService:
         }
 
     async def reindex_files_to_graph(self, store_id: Optional[str] = None) -> dict:
-        """Re-index ACTIVE files from R2/MongoDB into Neo4j graph."""
+        """Re-index ACTIVE files from R2/MongoDB into Graphiti graph."""
         filters: Dict[str, Any] = {"status": FileStatus.ACTIVE.value}
         if store_id:
             filters["store_id"] = store_id
