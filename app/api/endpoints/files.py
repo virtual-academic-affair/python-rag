@@ -25,9 +25,12 @@ from app.models.schemas import (
     UpdateFileRequest,
     FileParsePreviewResponse,
     FileParsePreviewPage,
+    FileChunkPreviewResponse,
+    FileChunkPreviewItem,
 )
 from app.services.rag.file_service import get_file_service
 from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
+from app.services.rag.chunking_service import get_chunking_service
 from app.services.rag.utils.file_utils import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
@@ -214,6 +217,70 @@ async def parse_pdf_preview(
                 os.unlink(temp_file_path)
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup parse-preview temp file: {cleanup_error}")
+
+
+@router.post(
+    "/chunk-preview",
+    response_model=FileChunkPreviewResponse,
+    summary="Parse + chunk PDF preview (Sprint 2)",
+    description="Parse uploaded PDF with LlamaParse and preview section-aware chunks.",
+)
+async def chunk_pdf_preview(
+    file: UploadFile = File(..., description="PDF file to parse and chunk"),
+    chunk_size_chars: int = Form(1800, alias="chunkSizeChars"),
+    chunk_overlap_chars: int = Form(250, alias="chunkOverlapChars"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    temp_file_path = None
+    try:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only .pdf files are supported")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", mode="wb") as temp_file:
+            contents = await file.read()
+            temp_file.write(contents)
+            temp_file_path = temp_file.name
+
+        parser_svc = get_llamaparse_ingest_service()
+        chunking_svc = get_chunking_service()
+
+        pages = await parser_svc.parse_pdf_to_markdown(temp_file_path)
+        chunks = chunking_svc.chunk_markdown_pages(
+            pages,
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars,
+        )
+
+        return FileChunkPreviewResponse(
+            filename=file.filename,
+            page_count=len(pages),
+            chunk_count=len(chunks),
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars,
+            chunks=[
+                FileChunkPreviewItem(
+                    chunk_index=c.chunk_index,
+                    page_index_start=c.page_index_start,
+                    page_index_end=c.page_index_end,
+                    section_path=c.section_path,
+                    text=c.text,
+                )
+                for c in chunks
+            ],
+        )
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chunk preview failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup chunk-preview temp file: {cleanup_error}")
 
 @router.get(
     "",

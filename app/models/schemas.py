@@ -376,6 +376,26 @@ class FileParsePreviewResponse(BaseSchema):
     pages: List[FileParsePreviewPage] = Field(default_factory=list)
 
 
+
+class FileChunkPreviewItem(BaseSchema):
+    """One chunk preview item from parsed markdown."""
+    chunk_index: int
+    page_index_start: int
+    page_index_end: int
+    section_path: Optional[str] = None
+    text: str
+
+
+class FileChunkPreviewResponse(BaseSchema):
+    """Response for PDF chunk preview endpoint (Sprint 2)."""
+    filename: str
+    page_count: int
+    chunk_count: int
+    chunk_size_chars: int
+    chunk_overlap_chars: int
+    chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
+
+
 class UpdateFileRequest(BaseSchema):
     """Request body for PATCH /api/files/{file_id}."""
     display_name: str = Field(..., min_length=1, max_length=512, description="New display name for the file")
