@@ -275,7 +275,7 @@ class AllowedValueCreateRequest(BaseSchema):
     is_active: bool = Field(True, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
     visible_roles: List[Literal["lecture", "student"]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description="Roles that can see this value"
     )
 
@@ -286,7 +286,7 @@ class AllowedValueUpdateRequest(BaseSchema):
     is_active: Optional[bool] = Field(None, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
     visible_roles: Optional[List[Literal["lecture", "student"]]] = Field(
-        None, 
+        None,
         description="Roles that can see this value"
     )
 
@@ -360,6 +360,20 @@ class FileUploadResponse(BaseSchema):
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     message: Optional[str] = None
+
+
+
+class FileParsePreviewPage(BaseSchema):
+    """One parsed markdown page preview."""
+    page_index: int = Field(..., description="Page index from parser metadata")
+    markdown: str = Field(..., description="Normalized markdown content")
+
+
+class FileParsePreviewResponse(BaseSchema):
+    """Response for PDF parse preview endpoint (Sprint 1)."""
+    filename: str
+    page_count: int
+    pages: List[FileParsePreviewPage] = Field(default_factory=list)
 
 
 class UpdateFileRequest(BaseSchema):

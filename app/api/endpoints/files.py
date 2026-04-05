@@ -23,8 +23,11 @@ from app.models.schemas import (
     SyncCheckResponse,
     SyncResponse,
     UpdateFileRequest,
+    FileParsePreviewResponse,
+    FileParsePreviewPage,
 )
 from app.services.rag.file_service import get_file_service
+from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
 from app.services.rag.utils.file_utils import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
@@ -75,14 +78,14 @@ async def upload_file(
     """
     temp_file_path = None
     file_svc = get_file_service()
-    
+
     try:
         from app.services.rag.utils.store_utils import resolve_store
-        
+
         # Get store (from param or default store)
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
-        
+
         # Parse custom metadata
         metadata_dict = {}
         if custom_metadata:
@@ -95,13 +98,13 @@ async def upload_file(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid custom_metadata JSON format",
                 )
-        
+
         # Save uploaded file to temp location
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
             contents = await file.read()
             temp_file.write(contents)
             temp_file_path = temp_file.name
-        
+
         # Upload file using FileService (validates metadata before upload)
         file_doc = await file_svc.upload_file(
             file_path=temp_file_path,
@@ -113,7 +116,7 @@ async def upload_file(
         )
 
         message = "File uploaded successfully"
-        
+
         return FileUploadResponse(
             file_id=str(file_doc.id),
             store_id=file_doc.store_id,
@@ -128,35 +131,35 @@ async def upload_file(
             file_url=get_download_url(file_doc.storage_path),
             message=message,
         )
-        
+
     except ValidationException as e:
         logger.warning(f"Validation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    
+
     except ConflictException as e:
         logger.warning(f"Duplicate file: {e}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
-    
+
     except (StorageException, GeminiException) as e:
         logger.error(f"File upload failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"File upload failed: {str(e)}",
         )
-    
+
     except Exception as e:
         logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",
         )
-    
+
     finally:
         # Cleanup temp file
         if temp_file_path and os.path.exists(temp_file_path):
@@ -165,6 +168,52 @@ async def upload_file(
             except Exception as e:
                 logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
 
+
+@router.post(
+    "/parse-preview",
+    response_model=FileParsePreviewResponse,
+    summary="Parse PDF to markdown preview (Sprint 1)",
+    description="Parse an uploaded PDF using LlamaParse and return normalized markdown pages.",
+)
+async def parse_pdf_preview(
+    file: UploadFile = File(..., description="PDF file to parse"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    """Preview LlamaParse output before indexing/chunking."""
+    temp_file_path = None
+    try:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only .pdf files are supported")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", mode="wb") as temp_file:
+            contents = await file.read()
+            temp_file.write(contents)
+            temp_file_path = temp_file.name
+
+        parser_svc = get_llamaparse_ingest_service()
+        pages = await parser_svc.parse_pdf_to_markdown(temp_file_path)
+
+        return FileParsePreviewResponse(
+            filename=file.filename,
+            page_count=len(pages),
+            pages=[
+                FileParsePreviewPage(page_index=p.page_index, markdown=p.markdown)
+                for p in pages
+            ],
+        )
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Parse preview failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup parse-preview temp file: {cleanup_error}")
 
 @router.get(
     "",
@@ -182,15 +231,15 @@ async def list_files(
 ):
     """
     List files in the default store with pagination and filters.
-    
+
     **Metadata Filter example:**
     `?metadataFilter={"academicYear":"2024-2025"}`
     """
-        
+
     try:
-        
+
         file_svc = get_file_service()
-        
+
         # Parse status
         status_enum = None
         if file_status:
@@ -201,7 +250,7 @@ async def list_files(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status: {file_status}",
                 )
-        
+
         # Parse metadata filter
         custom_metadata_filter = None
         if metadata_filter:
@@ -209,7 +258,7 @@ async def list_files(
                 custom_metadata_filter = json.loads(metadata_filter)
                 # Convert camelCase keys to snake_case for DB query
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
-                
+
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
@@ -224,10 +273,10 @@ async def list_files(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid metadataFilter JSON format",
                 )
-        
-        
+
+
         resolved_store_id, _ = await resolve_store(None)
-        
+
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             store_id=resolved_store_id,
@@ -291,7 +340,7 @@ async def list_files_admin(
     """
     try:
         file_svc = get_file_service()
-        
+
         # Parse status
         status_enum = None
         if file_status:
@@ -302,14 +351,14 @@ async def list_files_admin(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status: {file_status}",
                 )
-        
+
         # Parse metadata filter
         custom_metadata_filter = None
         if metadata_filter:
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
                 custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
-                
+
                 # Validate metadata filter (allow arrays)
                 from app.services.rag.metadata_service import get_metadata_service
                 metadata_svc = get_metadata_service()
@@ -324,7 +373,7 @@ async def list_files_admin(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid metadataFilter JSON format",
                 )
-        
+
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             store_id=store_id,
@@ -408,11 +457,11 @@ async def batch_upload_files(
     Batch upload multiple files to R2 storage and Gemini File Search.
     """
     file_svc = get_file_service()
-    
+
     try:
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
-        
+
         # Parse display_names
         names_list = []
         if display_names:
@@ -422,7 +471,7 @@ async def batch_upload_files(
                     raise HTTPException(status_code=400, detail="display_names must be a list")
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid display_names JSON")
-        
+
         # Parse metadata_list
         meta_list = []
         if metadata_list:
@@ -434,23 +483,23 @@ async def batch_upload_files(
                 meta_list = [convert_custom_metadata_to_snake(m) if isinstance(m, dict) else m for m in meta_list]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
-        
+
         results = []
         successful = 0
         failed = 0
-        
+
         # Save each file to temp location and upload
         for idx, file in enumerate(files):
             temp_file_path = None
             try:
                 display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
                 metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
-                
+
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
                     contents = await file.read()
                     temp_file.write(contents)
                     temp_file_path = temp_file.name
-                
+
                 file_doc = await file_svc.upload_file(
                     file_path=temp_file_path,
                     original_filename=file.filename,
@@ -459,7 +508,7 @@ async def batch_upload_files(
                     display_name=display_name,
                     custom_metadata=metadata_dict,
                 )
-                
+
                 results.append(BatchFileUploadResult(
                     original_filename=file.filename,
                     success=True,
@@ -470,7 +519,7 @@ async def batch_upload_files(
                     message="Uploaded successfully",
                 ))
                 successful += 1
-                
+
             except Exception as e:
                 logger.error(f"Failed to upload file {file.filename}: {e}")
                 results.append(BatchFileUploadResult(original_filename=file.filename, success=False, error=str(e)))
@@ -478,9 +527,9 @@ async def batch_upload_files(
             finally:
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
-        
+
         return BatchFileUploadResponse(total=len(files), successful=successful, failed=failed, results=results)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -521,10 +570,10 @@ async def delete_all_files_in_store(
     try:
         # Resolve store_id if not provided
         resolved_store_id, _ = await resolve_store(store_id)
-        
+
         file_svc = get_file_service()
         deleted_count = await file_svc.delete_all_files_in_store(resolved_store_id)
-        
+
         return BulkDeleteResponse(
             deleted_count=deleted_count,
             message=f"Deleted {deleted_count} files from store {resolved_store_id}",
@@ -573,7 +622,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     summary="Update file display name",
 )
 async def update_file(
-    file_id: str, 
+    file_id: str,
     request: UpdateFileRequest,
     _admin: Dict[str, Any] = Depends(require_admin)
 ):
@@ -582,7 +631,7 @@ async def update_file(
         file_doc = await file_svc.update_file_display_name(file_id, request.display_name)
         if not file_doc:
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         return FileDetailResponse(
             file_id=str(file_doc.id),
             store_id=file_doc.store_id,
