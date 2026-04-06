@@ -27,10 +27,12 @@ from app.models.schemas import (
     FileParsePreviewPage,
     FileChunkPreviewResponse,
     FileChunkPreviewItem,
+    FileIngestChunksResponse,
 )
 from app.services.rag.file_service import get_file_service
 from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
 from app.services.rag.chunking_service import get_chunking_service
+from app.services.rag.rag_ingest_service import get_rag_ingest_service
 from app.services.rag.utils.file_utils import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
@@ -281,6 +283,66 @@ async def chunk_pdf_preview(
                 os.unlink(temp_file_path)
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup chunk-preview temp file: {cleanup_error}")
+
+
+@router.post(
+    "/{file_id}/ingest-chunks",
+    response_model=FileIngestChunksResponse,
+    summary="Ingest file chunks (Sprint 3)",
+    description="Parse file from R2 storage, chunk content, and persist to Mongo.",
+)
+async def ingest_file_chunks(
+    file_id: str,
+    chunk_size_chars: int = Form(1800, alias="chunkSizeChars"),
+    chunk_overlap_chars: int = Form(250, alias="chunkOverlapChars"),
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    temp_file_path = None
+    try:
+        file_svc = get_file_service()
+        file_doc = await file_svc.get_file(file_id)
+
+        if not file_doc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+        # Download to temp before parse
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_file_path = temp_file.name
+        temp_file.close()
+
+        await file_svc.download_file(file_id=file_id, output_path=temp_file_path)
+
+        ingest_svc = get_rag_ingest_service()
+        result = await ingest_svc.ingest_pdf_chunks(
+            file_id=file_id,
+            file_name=file_doc.display_name,
+            file_path=temp_file_path,
+            metadata=file_doc.custom_metadata,
+            chunk_size_chars=chunk_size_chars,
+            chunk_overlap_chars=chunk_overlap_chars,
+        )
+
+        return FileIngestChunksResponse(
+            file_id=result["file_id"],
+            file_name=file_doc.display_name,
+            page_count=result["page_count"],
+            chunk_count=result["chunk_count"],
+            inserted_count=result["inserted_count"],
+            deleted_previous_mongo=result["deleted_previous_mongo"],
+        )
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ingest chunks failed for file {file_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup ingest temp file: {cleanup_error}")
 
 @router.get(
     "",

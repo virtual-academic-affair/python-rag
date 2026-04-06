@@ -1,38 +1,27 @@
 """
 Chat Service - Handles RAG-based chat operations (generate/stream).
 """
-import asyncio
 import json
 import time
-import queue
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, Any
 
 from google.genai import types
 
 from app.core.config import settings
-from app.core.prompts import (
-    CHAT_SYSTEM_PROMPT,
-    CHAT_WITH_CONTEXT_TEMPLATE,
-)
+from app.core.prompts import CHAT_SYSTEM_PROMPT, CHAT_WITH_CONTEXT_TEMPLATE
 from app.models.schemas import ChatHistoryItem, UserContext
 from app.repositories.file_repository import FileRepository
 from app.services.rag.gemini_client import gemini_client
-from app.services.rag.utils.gemini_rag_utils import (
-    format_chat_history,
-    extract_sources,
-    inject_citations,
-    enrich_sources_with_urls,
-    extract_token_usage
-)
+from app.services.rag.utils.gemini_rag_utils import format_chat_history, enrich_sources_with_urls, extract_token_usage
+from app.services.rag.vectorless_retrieval_service import get_vectorless_retrieval_service
 
 
 class ChatService:
-    """
-    Service for RAG-based chat operations using Gemini.
-    """
-    
+    """Service for RAG-based chat operations using Gemini + vectorless retrieval."""
+
     def __init__(self):
         self._file_repo = None
+        self._retrieval = get_vectorless_retrieval_service()
 
     @property
     def file_repo(self) -> FileRepository:
@@ -47,27 +36,51 @@ class ChatService:
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
         store_name: Optional[str] = None,
-        metadata_filter: Optional[str] = None,
+        metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
-        """
-        Generate a chat response using Gemini with RAG (File Search).
-        """
-        if not store_name:
-            raise ValueError("store_name is required. RAG Service requires File Search for all chat operations.")
-        
+        """Generate chat response using vectorless retrieval (no Gemini File Search)."""
         start_time = time.time()
-        
-        # Build the full prompt with context
+
+        retrieved_chunks = await self._retrieval.retrieve(
+            query=question,
+            top_k=settings.VECTORLESS_TOP_K,
+            min_score=settings.VECTORLESS_MIN_SCORE,
+            metadata_filter=metadata_filter,
+            user_role=user_context.role,
+        )
+
+        context_blocks = []
+        citations = []
+        for idx, c in enumerate(retrieved_chunks, start=1):
+            context_blocks.append(
+                f"[{idx}] (file={c.get('file_name','Unknown')}, page={c.get('page_index_start',0)}-{c.get('page_index_end',0)})\n{c.get('text','')}"
+            )
+            citations.append(
+                {
+                    "citation_id": idx,
+                    "title": c.get("file_name"),
+                    "text": c.get("text"),
+                    "file_id": c.get("file_id"),
+                    "page_index_start": c.get("page_index_start"),
+                    "page_index_end": c.get("page_index_end"),
+                }
+            )
+
         history_text = format_chat_history(chat_history)
-        full_prompt = CHAT_WITH_CONTEXT_TEMPLATE.format(
+        base_prompt = CHAT_WITH_CONTEXT_TEMPLATE.format(
             student_name=user_context.name,
             student_id=user_context.user_id,
             cohort=user_context.cohort,
             chat_history=history_text,
             current_question=question,
         )
-        
-        # Prepare generation config
+        full_prompt = (
+            base_prompt
+            + "\n\n**NGỮ CẢNH TRUY XUẤT (VECTORLESS):**\n"
+            + ("\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)")
+            + "\n\nHãy trả lời dựa trên ngữ cảnh ở trên. Nếu thiếu thông tin thì nói rõ."
+        )
+
         config = types.GenerateContentConfig(
             temperature=settings.GEMINI_TEMPERATURE,
             max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
@@ -75,94 +88,83 @@ class ChatService:
             top_k=settings.GEMINI_TOP_K,
             system_instruction=CHAT_SYSTEM_PROMPT,
         )
-        
-        # Add File Search tool
-        file_search_config = types.FileSearch(
-            fileSearchStoreNames=[store_name],
-            metadataFilter=metadata_filter
-        )
-        
-        config.tools = [
-            types.Tool(fileSearch=file_search_config)
-        ]
-        
-        # Native async Gemini call
+
         response = await gemini_client.client.aio.models.generate_content(
             model=settings.GEMINI_MODEL,
             contents=full_prompt,
             config=config,
         )
-        
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        # Extract answer
+
         answer = response.text if hasattr(response, "text") else ""
-        
-        # Extract sources from grounding metadata
-        sources, chunk_map = extract_sources(response)
-        
-        # Inject citations
-        if answer and chunk_map:
-            answer = inject_citations(answer, response, chunk_map)
-        
-        # Enrich sources with download URLs
-        sources = await enrich_sources_with_urls(sources, self.file_repo)
-        
-        # Extract token usage
         token_usage = extract_token_usage(response)
-        
+
+        sources = await enrich_sources_with_urls(citations, self.file_repo)
+
         return {
             "answer": answer,
             "sources": sources,
             "token_usage": token_usage,
-            "processing_time_ms": processing_time_ms,
+            "processing_time_ms": int((time.time() - start_time) * 1000),
         }
-    
+
     async def stream_chat_response(
         self,
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
         store_name: Optional[str] = None,
-        metadata_filter: Optional[str] = None,
+        metadata_filter: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
-        """
-        Stream chat response using Server-Sent Events (SSE) with RAG.
-        Uses native async streaming.
-        """
-        if not store_name:
-            raise ValueError("store_name is required. RAG Service requires File Search for all chat operations.")
-        
+        """Stream chat response with vectorless retrieval context."""
         start_time = time.time()
-        
+
+        retrieved_chunks = await self._retrieval.retrieve(
+            query=question,
+            top_k=settings.VECTORLESS_TOP_K,
+            min_score=settings.VECTORLESS_MIN_SCORE,
+            metadata_filter=metadata_filter,
+            user_role=user_context.role,
+        )
+
+        context_blocks = []
+        citations = []
+        for idx, c in enumerate(retrieved_chunks, start=1):
+            context_blocks.append(
+                f"[{idx}] (file={c.get('file_name','Unknown')}, page={c.get('page_index_start',0)}-{c.get('page_index_end',0)})\n{c.get('text','')}"
+            )
+            citations.append(
+                {
+                    "citation_id": idx,
+                    "title": c.get("file_name"),
+                    "text": c.get("text"),
+                    "file_id": c.get("file_id"),
+                    "page_index_start": c.get("page_index_start"),
+                    "page_index_end": c.get("page_index_end"),
+                }
+            )
+
         history_text = format_chat_history(chat_history)
-        full_prompt = CHAT_WITH_CONTEXT_TEMPLATE.format(
+        base_prompt = CHAT_WITH_CONTEXT_TEMPLATE.format(
             student_name=user_context.name,
             student_id=user_context.user_id,
             cohort=user_context.cohort,
             chat_history=history_text,
             current_question=question,
         )
-        
+        full_prompt = (
+            base_prompt
+            + "\n\n**NGỮ CẢNH TRUY XUẤT (VECTORLESS):**\n"
+            + ("\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)")
+            + "\n\nHãy trả lời dựa trên ngữ cảnh ở trên. Nếu thiếu thông tin thì nói rõ."
+        )
+
         config = types.GenerateContentConfig(
             temperature=settings.GEMINI_TEMPERATURE,
             max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
             system_instruction=CHAT_SYSTEM_PROMPT,
         )
-        
-        # Add File Search tool
-        file_search_config = types.FileSearch(
-            fileSearchStoreNames=[store_name],
-            metadataFilter=metadata_filter
-        )
-        
-        config.tools = [
-            types.Tool(fileSearch=file_search_config)
-        ]
-        
+
         all_chunks = []
-        
-        # Native async Gemini streaming
         stream = await gemini_client.client.aio.models.generate_content_stream(
             model=settings.GEMINI_MODEL,
             contents=full_prompt,
@@ -173,38 +175,23 @@ class ChatService:
             all_chunks.append(chunk)
             if hasattr(chunk, "text") and chunk.text:
                 yield json.dumps({"chunk": chunk.text, "done": False})
-        
-        # Collect sources and usage from final aggregated state or chunks
-        all_sources = []
+
         token_usage = {}
-        
         for chunk in all_chunks:
-            chunk_sources, _ = extract_sources(chunk)
-            if chunk_sources:
-                all_sources.extend(chunk_sources)
-            
             chunk_usage = extract_token_usage(chunk)
             if chunk_usage:
                 token_usage = chunk_usage
-        
-        seen = set()
-        unique_sources = []
-        for source in all_sources:
-            key = source.get("title")
-            if key not in seen:
-                seen.add(key)
-                unique_sources.append(source)
-        
-        unique_sources = await enrich_sources_with_urls(unique_sources, self.file_repo)
-        
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        yield json.dumps({
-            "done": True,
-            "sources": unique_sources if unique_sources else None,
-            "token_usage": token_usage if token_usage else None,
-            "processing_time_ms": processing_time_ms,
-        })
+
+        sources = await enrich_sources_with_urls(citations, self.file_repo)
+
+        yield json.dumps(
+            {
+                "done": True,
+                "sources": sources if sources else None,
+                "token_usage": token_usage if token_usage else None,
+                "processing_time_ms": int((time.time() - start_time) * 1000),
+            }
+        )
 
 _chat_service_instance: Optional[ChatService] = None
 

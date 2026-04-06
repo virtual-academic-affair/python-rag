@@ -173,12 +173,14 @@ class ChatHistoryItem(BaseSchema):
 
 
 class SourceCitation(BaseSchema):
-    """Citation information from File Search grounding metadata."""
+    """Citation information from internal vectorless retrieval sources."""
     citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
     title: Optional[str] = Field(None, description="Document title/name")
     text: Optional[str] = Field(None, description="Relevant text excerpt from document")
     url: Optional[str] = Field(None, description="R2 URL to view the document")
     file_id: Optional[str] = Field(None, description="File ID in database")
+    page_index_start: Optional[int] = Field(None, description="Start page index of cited chunk")
+    page_index_end: Optional[int] = Field(None, description="End page index of cited chunk")
 
 
 # ====================================
@@ -342,6 +344,39 @@ class ChatStreamRequest(BaseSchema):
     metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
 
 
+
+class ChatRetrievePreviewRequest(BaseSchema):
+    """Request body for POST /api/chat/retrieve-preview."""
+    question: str = Field(..., min_length=1, max_length=2000)
+    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
+    top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    min_score: Optional[float] = Field(default=None, ge=0)
+    include_explain: bool = Field(default=True, description="Whether to include score breakdown details")
+
+
+class ChatRetrievePreviewItem(BaseSchema):
+    """One retrieved chunk for debugging vectorless relevance."""
+    rank: int
+    file_id: Optional[str] = None
+    file_name: Optional[str] = None
+    page_index_start: Optional[int] = None
+    page_index_end: Optional[int] = None
+    section_path: Optional[str] = None
+    score: Optional[float] = None
+    explain: Optional[Dict[str, Any]] = None
+    text: str
+
+
+class ChatRetrievePreviewResponse(BaseSchema):
+    """Response body for POST /api/chat/retrieve-preview."""
+    query: str
+    top_k: int
+    min_score: float
+    count: int
+    cache_stats: Optional[Dict[str, Any]] = None
+    items: List[ChatRetrievePreviewItem] = Field(default_factory=list)
+
+
 # ====================================
 # FILE MANAGEMENT SCHEMAS
 # ====================================
@@ -394,6 +429,17 @@ class FileChunkPreviewResponse(BaseSchema):
     chunk_size_chars: int
     chunk_overlap_chars: int
     chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
+
+
+
+class FileIngestChunksResponse(BaseSchema):
+    """Response for ingesting PDF chunks into Mongo."""
+    file_id: str
+    file_name: str
+    page_count: int
+    chunk_count: int
+    inserted_count: int
+    deleted_previous_mongo: int
 
 
 class UpdateFileRequest(BaseSchema):
