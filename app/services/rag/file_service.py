@@ -130,16 +130,11 @@ class FileService:
         max_retries: int = 3,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> FileDocument:
-        """
-        Upload a file to Cloudflare R2 and Gemini File Search.
-        Coordinates validation, DB creation, storage upload, and metadata sync with retries and rollback.
-        """
-        # 1. Validation & State Initialization
+        """Legacy sync upload flow (kept for compatibility)."""
         state, file_info = await self._prepare_upload_state(
             file_path, original_filename, store_id, display_name, custom_metadata
         )
 
-        # 2. Execution with Retries
         try:
             return await self._execute_upload_steps(
                 state=state,
@@ -156,6 +151,127 @@ class FileService:
         except Exception as e:
             await self._rollback_upload(state, str(e))
             raise
+
+    async def upload_file_quick(
+        self,
+        file_path: str,
+        original_filename: str,
+        store_id: str,
+        store_name: str,
+        display_name: Optional[str] = None,
+        custom_metadata: Optional[dict] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> tuple[FileDocument, dict[str, Any]]:
+        """Create DB record + upload original to R2, then return immediately with pending status."""
+        state, file_info = await self._prepare_upload_state(
+            file_path, original_filename, store_id, display_name, custom_metadata
+        )
+
+        async def _notify(step: str, message: str):
+            if progress_callback:
+                await progress_callback({"step": step, "message": message, "file_id": state.file_id})
+
+        try:
+            await _notify("db_creating", "Đang tạo bản ghi file")
+            file_doc_data = {
+                "store_id": store_id,
+                "display_name": display_name or original_filename,
+                "original_filename": original_filename,
+                "storage_path": state.storage_path,
+                "storage_bucket": settings.R2_BUCKET_NAME,
+                "file_size": file_info["file_size"],
+                "mime_type": file_info["mime_type"],
+                "gemini_document_name": None,
+                "custom_metadata": state.custom_metadata or {},
+                "status": FileStatus.PENDING.value,
+            }
+            created_file = await self.file_repo.create(file_doc_data)
+            state.file_id = str(created_file["_id"])
+            state.mark_step(UploadStep.DB_CREATED)
+
+            await _notify("uploading_original", "Đang upload file gốc lên storage")
+            with open(file_path, "rb") as f:
+                await r2_storage.upload_file(
+                    file=f,
+                    object_name=state.storage_path,
+                    content_type=file_info["mime_type"],
+                    metadata={"file_id": state.file_id, "store_id": store_id},
+                )
+            state.mark_step(UploadStep.R2_UPLOADED)
+            await _notify("queued_background", "Đã lưu file lên storage, đang xử lý nền")
+
+            file_doc = await self.get_file_by_id(state.file_id)
+            return file_doc, {
+                "file_id": state.file_id,
+                "display_name": display_name or original_filename,
+                "store_id": store_id,
+                "store_name": store_name,
+                "custom_metadata": state.custom_metadata or {},
+                "storage_path": state.storage_path,
+            }
+        except Exception as e:
+            await self._rollback_upload(state, str(e))
+            raise
+
+    async def process_file_background(
+        self,
+        file_id: str,
+        file_path: str,
+        display_name: str,
+        custom_metadata: Optional[dict] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> None:
+        """Continue processing after original file is stored in R2."""
+        async def _notify(step: str, message: str):
+            if progress_callback:
+                await progress_callback({"step": step, "message": message, "file_id": file_id})
+
+        try:
+            file_doc = await self.file_repo.find_by_id(file_id)
+            if not file_doc:
+                raise NotFoundException("File", file_id)
+
+            storage_path = file_doc.get("storage_path")
+            await _notify("parsing_markdown", "Đang OCR/parse file sang markdown")
+            md_result = await self._generate_markdown_artifacts(file_path, storage_path)
+
+            await self.file_repo.update_by_id(
+                file_id,
+                {
+                    "markdown_storage_path": md_result["markdown_storage_path"],
+                    "markdown_file_size": md_result["markdown_file_size"],
+                    "summary": md_result["summary"],
+                    "table_of_contents": md_result["table_of_contents"],
+                },
+            )
+
+            await _notify("saving_vector_db", "Đang lưu thông tin file vào Vector DB")
+            await self._ingest_to_vector_db(
+                file_id=file_id,
+                display_name=display_name,
+                summary=md_result["summary"] or "",
+                table_of_contents=md_result["table_of_contents"],
+                custom_metadata=custom_metadata,
+            )
+
+            await self.file_repo.update_by_id(
+                file_id,
+                {
+                    "status": FileStatus.ACTIVE.value,
+                    "gemini_document_name": None,
+                },
+            )
+
+            if custom_metadata:
+                await self.metadata_svc.sync_metadata_counters(custom_metadata, delta=1)
+
+            await _notify("completed", "Upload hoàn tất")
+        except Exception as e:
+            logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
+            await self.file_repo.update_by_id(file_id, {"status": FileStatus.FAILED.value})
+            await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
+        finally:
+            cleanup_temp_file(file_path)
 
     async def _prepare_upload_state(
         self,

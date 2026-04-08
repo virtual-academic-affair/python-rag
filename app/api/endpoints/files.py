@@ -3,7 +3,7 @@ File Management Endpoints - Handle file uploads and downloads.
 Refactored to use FileService and StoreService with MongoDB + R2.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -64,6 +64,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     description="Upload a document file to R2 and Gemini File Search for RAG.",
 )
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="File to upload"),
     display_name: Optional[str] = Form(None, alias="displayName", description="Display name for the file"),
     store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
@@ -71,40 +72,34 @@ async def upload_file(
     client_id: Optional[str] = Form(None, alias="clientId", description="WebSocket client id for upload progress events"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
-    """
-    Upload a file to R2 storage and Gemini File Search (synchronous).
-
-    Waits until both R2 and Gemini processing complete before returning.
-
-    **Required metadata:**
-    - `access_scope`: bắt buộc (allowed: `["lecture"]`, `["student"]`; null/[] được coi là file nội bộ)
-    - `academic_year` hoặc `cohort`: ít nhất một trong hai
-
-    **Custom Metadata example:**
-    `'{"accessScope": ["student"], "academicYear": ["2024-2025"], "cohort": ["K21"]}'`
-    """
+    """Upload sync-to-R2 then continue parse/vector steps in background."""
     notifier = get_file_status_notifier()
 
     async def _progress_callback(payload: Dict[str, Any]):
         if client_id:
             await notifier.notify(client_id, payload)
 
+    async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any]):
+        await file_svc.process_file_background(
+            file_id=file_id,
+            file_path=bg_file_path,
+            display_name=bg_display_name,
+            custom_metadata=bg_metadata,
+            progress_callback=_progress_callback,
+        )
+
     temp_file_path = None
     file_svc = get_file_service()
 
     try:
-        from app.services.rag.utils.store_utils import resolve_store
-
         # Get store (from param or default store)
         resolved_store_id, store_name = await resolve_store(store_id)
         store_id = resolved_store_id
 
-        # Parse custom metadata
         metadata_dict = {}
         if custom_metadata:
             try:
                 metadata_dict = json.loads(custom_metadata)
-                # Convert camelCase keys to snake_case for DB validation
                 metadata_dict = convert_custom_metadata_to_snake(metadata_dict)
             except json.JSONDecodeError:
                 raise HTTPException(
@@ -112,14 +107,12 @@ async def upload_file(
                     detail="Invalid custom_metadata JSON format",
                 )
 
-        # Save uploaded file to temp location
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
             contents = await file.read()
             temp_file.write(contents)
             temp_file_path = temp_file.name
 
-        # Upload file using FileService (validates metadata before upload)
-        file_doc = await file_svc.upload_file(
+        file_doc, bg_payload = await file_svc.upload_file_quick(
             file_path=temp_file_path,
             original_filename=file.filename,
             store_id=store_id,
@@ -129,7 +122,13 @@ async def upload_file(
             progress_callback=_progress_callback,
         )
 
-        message = "File uploaded successfully"
+        background_tasks.add_task(
+            _background_process,
+            bg_payload["file_id"],
+            temp_file_path,
+            bg_payload["display_name"],
+            bg_payload["custom_metadata"],
+        )
 
         return FileUploadResponse(
             file_id=str(file_doc.id),
@@ -146,11 +145,13 @@ async def upload_file(
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
             summary=file_doc.summary,
             table_of_contents=file_doc.table_of_contents or [],
-            message=message,
+            message="File uploaded to storage. Background processing started.",
         )
 
     except ValidationException as e:
         logger.warning(f"Validation failed: {e}")
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -158,6 +159,8 @@ async def upload_file(
 
     except ConflictException as e:
         logger.warning(f"Duplicate file: {e}")
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
@@ -165,6 +168,8 @@ async def upload_file(
 
     except (StorageException, GeminiException) as e:
         logger.error(f"File upload failed: {e}", exc_info=True)
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"File upload failed: {str(e)}",
@@ -172,18 +177,12 @@ async def upload_file(
 
     except Exception as e:
         logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",
         )
-
-    finally:
-        # Cleanup temp file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
 
 
 @router.post(
