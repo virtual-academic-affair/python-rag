@@ -17,7 +17,7 @@ from app.services.rag.utils.file_utils import remove_accents
 from app.services.rag.gemini_client import gemini_client
 from app.services.rag.utils.gemini_rag_utils import enrich_sources_with_urls, extract_token_usage
 from app.services.rag.utils.store_utils import resolve_store
-from app.services.rag.vectorless_retrieval_service import get_vectorless_retrieval_service
+from app.services.rag.qdrant_retrieval_service import get_qdrant_retrieval_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class EmailDraftService:
     
     def __init__(self):
         self._file_repo = None
-        self._retrieval = get_vectorless_retrieval_service()
+        self._retrieval = get_qdrant_retrieval_service()
 
     @property
     def file_repo(self) -> FileRepository:
@@ -46,12 +46,12 @@ class EmailDraftService:
         store_name: Optional[str] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> dict:
-        """Draft a professional email reply using vectorless retrieval."""
+        """Draft a professional email reply using Qdrant retrieval."""
         retrieval_query = f"{original_subject}\n{original_body}"
         chunks = await self._retrieval.retrieve(
             query=retrieval_query,
-            top_k=settings.VECTORLESS_TOP_K,
-            min_score=settings.VECTORLESS_MIN_SCORE,
+            top_k=settings.QDRANT_TOP_K,
+            min_score=settings.QDRANT_MIN_SCORE,
             metadata_filter=metadata_filter,
             user_role="student",
         )
@@ -78,7 +78,7 @@ class EmailDraftService:
             f"\n**EMAIL GỐC:**",
             f"Subject: {original_subject}",
             f"Body:\n{original_body}",
-            "\n**NGỮ CẢNH TRUY XUẤT (VECTORLESS):**",
+            "\n**NGỮ CẢNH TRUY XUẤT (QDRANT):**",
             "\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)",
         ]
 

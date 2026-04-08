@@ -30,7 +30,9 @@ class UploadStep(Enum):
     VALIDATED = "validated"
     DB_CREATED = "db_created"
     R2_UPLOADED = "r2_uploaded"
+    MARKDOWN_GENERATED = "markdown_generated"
     GEMINI_UPLOADED = "gemini_uploaded"
+    VECTOR_DB_SAVED = "vector_db_saved"
     METADATA_SYNCED = "metadata_synced"
     COMPLETED = "completed"
 
@@ -43,10 +45,13 @@ class UploadState:
     """
     file_id: Optional[str] = None
     storage_path: Optional[str] = None
+    markdown_storage_path: Optional[str] = None
     gemini_document_name: Optional[str] = None
+    summary: Optional[str] = None
+    table_of_contents: list[str] = field(default_factory=list)
     custom_metadata: Optional[dict] = None
     completed_steps: list = field(default_factory=list)
-    
+
     def mark_step(self, step: UploadStep):
         """Record a completed step."""
         self.completed_steps.append(step)

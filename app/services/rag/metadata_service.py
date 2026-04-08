@@ -435,11 +435,11 @@ class MetadataService:
             
             # Specific validation for access_scope values
             if key == "access_scope":
-                allowed_access_scopes = {"private", "student", "lecture"}
+                allowed_access_scopes = {"student", "lecture"}
                 invalid_scopes = [v for v in normalized_values if v not in allowed_access_scopes]
                 if invalid_scopes:
-                    errors.append(f"Metadata '{key}' only accepts values: 'private', 'student', 'lecture'. Found: {invalid_scopes}")
-        
+                    errors.append(f"Metadata '{key}' only accepts values: 'student', 'lecture'. Found: {invalid_scopes}")
+
         return len(errors) == 0, errors
 
     async def sync_metadata_counters(self, custom_metadata: dict, delta: int) -> None:
@@ -504,13 +504,17 @@ class MetadataService:
                 "Metadata must include at least one of 'academic_year' or 'cohort'."
             )
 
-        # 5. Access scope exclusivity rule for file upload
+        # 5. Access scope rule for file upload
+        # - Required as system metadata key
+        # - Allowed values: student, lecture
+        # - Null/empty means internal file (handled by access filtering layer)
         access_scope = custom_metadata.get("access_scope")
-        if isinstance(access_scope, list):
-            has_private = "private" in access_scope
-            has_public = "student" in access_scope or "lecture" in access_scope
-            if has_private and has_public:
-                raise ValidationException("Metadata 'access_scope' cannot contain 'private' alongside 'student' or 'lecture'.")
+        if isinstance(access_scope, list) and len(access_scope) > 0:
+            invalid_scopes = [v for v in access_scope if v not in {"student", "lecture"}]
+            if invalid_scopes:
+                raise ValidationException(
+                    f"Metadata 'access_scope' only accepts ['student', 'lecture']. Found: {invalid_scopes}"
+                )
 
         # 6. Value validation against registered metadata types
         is_valid, errors = await self.validate_metadata(custom_metadata)

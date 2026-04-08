@@ -15,6 +15,7 @@ from typing import Any, Optional
 from app.repositories.file_chunk_repository import FileChunkRepository
 from app.services.rag.chunking_service import get_chunking_service
 from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
+from app.services.rag.qdrant_retrieval_service import get_qdrant_retrieval_service
 
 
 class RagIngestService:
@@ -74,6 +75,53 @@ class RagIngestService:
             "chunk_count": len(chunks),
             "inserted_count": inserted_count,
             "deleted_previous_mongo": deleted_mongo,
+        }
+
+    async def ingest_file_overview(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        summary: str,
+        table_of_contents: list[str],
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Persist only file-level overview (no full content chunks) into vector DB collection."""
+        deleted_mongo = await self.chunk_repo.delete_by_file_id(file_id)
+
+        overview_text = "\n".join(
+            part for part in [summary.strip(), *[h.strip() for h in table_of_contents if h.strip()]] if part
+        )
+        chunk_doc = {
+            "chunk_id": self._build_chunk_id(file_id=file_id, chunk_index=0, text=overview_text or file_name),
+            "file_id": file_id,
+            "file_name": file_name,
+            "chunk_index": 0,
+            "text": "",
+            "page_index_start": None,
+            "page_index_end": None,
+            "section_path": "overview",
+            "summary": summary,
+            "table_of_contents": table_of_contents,
+            "metadata": metadata or {},
+        }
+
+        inserted_count = await self.chunk_repo.create_many([chunk_doc])
+
+        qdrant_svc = get_qdrant_retrieval_service()
+        await qdrant_svc.upsert_file_overview(
+            file_id=file_id,
+            file_name=file_name,
+            summary=summary,
+            table_of_contents=table_of_contents,
+            metadata=metadata or {},
+        )
+
+        return {
+            "file_id": file_id,
+            "inserted_count": inserted_count,
+            "deleted_previous_mongo": deleted_mongo,
+            "mode": "overview_only",
         }
 
     @staticmethod

@@ -13,15 +13,15 @@ from app.models.schemas import ChatHistoryItem, UserContext
 from app.repositories.file_repository import FileRepository
 from app.services.rag.gemini_client import gemini_client
 from app.services.rag.utils.gemini_rag_utils import format_chat_history, enrich_sources_with_urls, extract_token_usage
-from app.services.rag.vectorless_retrieval_service import get_vectorless_retrieval_service
+from app.services.rag.qdrant_retrieval_service import get_qdrant_retrieval_service
 
 
 class ChatService:
-    """Service for RAG-based chat operations using Gemini + vectorless retrieval."""
+    """Service for RAG-based chat operations using Gemini + Qdrant retrieval."""
 
     def __init__(self):
         self._file_repo = None
-        self._retrieval = get_vectorless_retrieval_service()
+        self._retrieval = get_qdrant_retrieval_service()
 
     @property
     def file_repo(self) -> FileRepository:
@@ -38,13 +38,13 @@ class ChatService:
         store_name: Optional[str] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
-        """Generate chat response using vectorless retrieval (no Gemini File Search)."""
+        """Generate chat response using Qdrant retrieval."""
         start_time = time.time()
 
         retrieved_chunks = await self._retrieval.retrieve(
             query=question,
-            top_k=settings.VECTORLESS_TOP_K,
-            min_score=settings.VECTORLESS_MIN_SCORE,
+            top_k=settings.QDRANT_TOP_K,
+            min_score=settings.QDRANT_MIN_SCORE,
             metadata_filter=metadata_filter,
             user_role=user_context.role,
         )
@@ -76,7 +76,7 @@ class ChatService:
         )
         full_prompt = (
             base_prompt
-            + "\n\n**NGỮ CẢNH TRUY XUẤT (VECTORLESS):**\n"
+            + "\n\n**NGỮ CẢNH TRUY XUẤT (QDRANT):**\n"
             + ("\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)")
             + "\n\nHãy trả lời dựa trên ngữ cảnh ở trên. Nếu thiếu thông tin thì nói rõ."
         )
@@ -115,13 +115,13 @@ class ChatService:
         store_name: Optional[str] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream chat response with vectorless retrieval context."""
+        """Stream chat response with Qdrant retrieval context."""
         start_time = time.time()
 
         retrieved_chunks = await self._retrieval.retrieve(
             query=question,
-            top_k=settings.VECTORLESS_TOP_K,
-            min_score=settings.VECTORLESS_MIN_SCORE,
+            top_k=settings.QDRANT_TOP_K,
+            min_score=settings.QDRANT_MIN_SCORE,
             metadata_filter=metadata_filter,
             user_role=user_context.role,
         )
@@ -153,7 +153,7 @@ class ChatService:
         )
         full_prompt = (
             base_prompt
-            + "\n\n**NGỮ CẢNH TRUY XUẤT (VECTORLESS):**\n"
+            + "\n\n**NGỮ CẢNH TRUY XUẤT (QDRANT):**\n"
             + ("\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)")
             + "\n\nHãy trả lời dựa trên ngữ cảnh ở trên. Nếu thiếu thông tin thì nói rõ."
         )

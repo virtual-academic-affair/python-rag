@@ -35,10 +35,11 @@ logger.info("✅ Classification routes included")
 # RAG ENDPOINTS
 # ====================================
 
-from app.api.endpoints import chat, files, stores, metadata
+from app.api.endpoints import chat, files, stores, metadata, file_progress_ws
 
 api_router.include_router(chat.router, prefix="/api", tags=["Chat"])
 api_router.include_router(files.router, prefix="/api", tags=["Files"])
 api_router.include_router(stores.router, prefix="/api", tags=["Stores"])
 api_router.include_router(metadata.router, prefix="/api", tags=["Metadata"])
-logger.info("✅ RAG endpoints included (chat, files, stores, metadata)")
+api_router.include_router(file_progress_ws.router, prefix="/api", tags=["Files"])
+logger.info("✅ RAG endpoints included (chat, files, stores, metadata, file_progress_ws)")

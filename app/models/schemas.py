@@ -394,6 +394,9 @@ class FileUploadResponse(BaseSchema):
     custom_metadata: Optional[Dict[str, List[str]]] = Field(default_factory=dict)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
+    markdown_file_url: Optional[str] = Field(None, description="Direct download URL for generated markdown in R2")
+    summary: Optional[str] = None
+    table_of_contents: List[str] = Field(default_factory=list)
     message: Optional[str] = None
 
 
@@ -460,6 +463,9 @@ class FileDetailResponse(BaseSchema):
     gemini_document_name: Optional[str] = None
     custom_metadata: Dict[str, List[str]] = Field(default_factory=dict)
     file_url: Optional[str] = None
+    markdown_file_url: Optional[str] = None
+    summary: Optional[str] = None
+    table_of_contents: List[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
 

@@ -1,6 +1,6 @@
 """
 Chat Endpoints - Handle all RAG-based chat operations.
-Includes: query, stream, and retrieval preview (vectorless).
+Includes: query, stream, and retrieval preview (Qdrant).
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends
@@ -18,7 +18,7 @@ from app.models.schemas import (
 )
 from app.dependencies.auth import require_auth
 from app.services.rag.chat_service import chat_service
-from app.services.rag.vectorless_retrieval_service import get_vectorless_retrieval_service
+from app.services.rag.qdrant_retrieval_service import get_qdrant_retrieval_service
 from app.services.rag.utils.file_utils import convert_custom_metadata_to_snake
 from app.core.config import settings
 
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
     "/query",
     response_model=ChatQueryResponse,
     summary="Generate RAG-based chat response",
-    description="Process a user question with vectorless RAG retrieval and return a complete answer.",
+    description="Process a user question with Qdrant RAG retrieval and return a complete answer.",
 )
 async def chat_query(
     request: ChatQueryRequest,
@@ -43,7 +43,7 @@ async def chat_query(
 
     **Flow:**
     1. Receive question + student context + chat history
-    2. Use internal vectorless lexical retrieval over persisted chunks
+    2. Use internal Qdrant semantic retrieval
     3. Return complete answer with sources and token usage
 
     **Note:**
@@ -66,7 +66,7 @@ async def chat_query(
             role=user_role,
         )
 
-        # Generate response using vectorless retrieval service
+        # Generate response using Qdrant retrieval service
         result = await chat_service.generate_chat_response(
             question=request.question,
             user_context=user_context,
@@ -176,21 +176,21 @@ async def chat_stream(
 @router.post(
     "/retrieve-preview",
     response_model=ChatRetrievePreviewResponse,
-    summary="Preview vectorless retrieval results",
+    summary="Preview Qdrant retrieval results",
     description="Debug endpoint to inspect retrieved chunks and ranking before generation.",
 )
 async def chat_retrieve_preview(
     request: ChatRetrievePreviewRequest,
     user: dict = Depends(require_auth),
 ):
-    """Preview lexical retrieval result list for relevance tuning."""
+    """Preview semantic retrieval result list for relevance tuning."""
     try:
         meta_dict = request.metadata_filter or {}
         if meta_dict:
             meta_dict = convert_custom_metadata_to_snake(meta_dict)
 
         user_role = user.get("role", "student")
-        retrieval = get_vectorless_retrieval_service()
+        retrieval = get_qdrant_retrieval_service()
 
         chunks = await retrieval.retrieve(
             query=request.question,
@@ -217,11 +217,11 @@ async def chat_retrieve_preview(
 
         return ChatRetrievePreviewResponse(
             query=request.question,
-            top_k=request.top_k or settings.VECTORLESS_TOP_K,
+            top_k=request.top_k or settings.QDRANT_TOP_K,
             min_score=(
                 float(request.min_score)
                 if request.min_score is not None
-                else float(settings.VECTORLESS_MIN_SCORE)
+                else float(settings.QDRANT_MIN_SCORE)
             ),
             count=len(items),
             cache_stats=retrieval.get_cache_stats(),
@@ -235,5 +235,5 @@ async def chat_retrieve_preview(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview vectorless retrieval: {str(e)}",
+            detail=f"Failed to preview Qdrant retrieval: {str(e)}",
         )

@@ -33,6 +33,7 @@ from app.services.rag.file_service import get_file_service
 from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
 from app.services.rag.chunking_service import get_chunking_service
 from app.services.rag.rag_ingest_service import get_rag_ingest_service
+from app.services.rag.file_status_notifier import get_file_status_notifier
 from app.services.rag.utils.file_utils import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
@@ -67,6 +68,7 @@ async def upload_file(
     display_name: Optional[str] = Form(None, alias="displayName", description="Display name for the file"),
     store_id: Optional[str] = Form(None, alias="storeId", description="Target store ID (uses default if not provided)"),
     custom_metadata: Optional[str] = Form(None, alias="customMetadata", description="JSON string of custom metadata"),
+    client_id: Optional[str] = Form(None, alias="clientId", description="WebSocket client id for upload progress events"),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -75,12 +77,18 @@ async def upload_file(
     Waits until both R2 and Gemini processing complete before returning.
 
     **Required metadata:**
-    - `access_scope`: bắt buộc (e.g. `["private"]`, `["lecture"]`, hoặc `["student", "lecture"]`)
+    - `access_scope`: bắt buộc (allowed: `["lecture"]`, `["student"]`; null/[] được coi là file nội bộ)
     - `academic_year` hoặc `cohort`: ít nhất một trong hai
 
     **Custom Metadata example:**
     `'{"accessScope": ["student"], "academicYear": ["2024-2025"], "cohort": ["K21"]}'`
     """
+    notifier = get_file_status_notifier()
+
+    async def _progress_callback(payload: Dict[str, Any]):
+        if client_id:
+            await notifier.notify(client_id, payload)
+
     temp_file_path = None
     file_svc = get_file_service()
 
@@ -118,6 +126,7 @@ async def upload_file(
             store_name=store_name,
             display_name=display_name,
             custom_metadata=metadata_dict,
+            progress_callback=_progress_callback,
         )
 
         message = "File uploaded successfully"
@@ -134,6 +143,9 @@ async def upload_file(
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
             file_url=get_download_url(file_doc.storage_path),
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            summary=file_doc.summary,
+            table_of_contents=file_doc.table_of_contents or [],
             message=message,
         )
 
@@ -431,6 +443,9 @@ async def list_files(
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
                     custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
                     file_url=get_download_url(f.storage_path),
+                    markdown_file_url=get_download_url(f.markdown_storage_path),
+                    summary=f.summary,
+                    table_of_contents=f.table_of_contents or [],
                     created_at=f.created_at.isoformat() if f.created_at else "",
                     updated_at=f.updated_at.isoformat() if f.updated_at else "",
                 )
@@ -528,6 +543,9 @@ async def list_files_admin(
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
                     custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
                     file_url=get_download_url(f.storage_path),
+                    markdown_file_url=get_download_url(f.markdown_storage_path),
+                    summary=f.summary,
+                    table_of_contents=f.table_of_contents or [],
                     created_at=f.created_at.isoformat() if f.created_at else "",
                     updated_at=f.updated_at.isoformat() if f.updated_at else "",
                 )
@@ -736,6 +754,9 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             file_url=get_download_url(file_doc.storage_path),
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            summary=file_doc.summary,
+            table_of_contents=file_doc.table_of_contents or [],
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
@@ -773,6 +794,9 @@ async def update_file(
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             file_url=get_download_url(file_doc.storage_path),
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            summary=file_doc.summary,
+            table_of_contents=file_doc.table_of_contents or [],
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )

@@ -57,13 +57,13 @@ class Settings(BaseSettings):
     LLAMA_PARSE_RESULT_TYPE: str = "markdown"
     LLAMA_PARSE_LANGUAGE: str = "vi"
 
-    # Vectorless retrieval tuning (Sprint 4.2)
-    VECTORLESS_TOP_K: int = 6
-    VECTORLESS_MIN_SCORE: float = 1.0
-    VECTORLESS_MAX_SCAN_DOCS: int = 3000
-    VECTORLESS_CACHE_TTL_SECONDS: int = 30
-    VECTORLESS_CACHE_MAX_KEYS: int = 200
-    VECTORLESS_EXTRA_STOPWORDS: str = ""
+    # Qdrant retrieval tuning
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION_NAME: str = "file_overviews"
+    QDRANT_TOP_K: int = 6
+    QDRANT_MIN_SCORE: float = 0.2
+    QDRANT_VECTOR_SIZE: int = 3072
 
 
 
