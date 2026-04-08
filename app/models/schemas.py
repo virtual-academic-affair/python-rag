@@ -173,12 +173,14 @@ class ChatHistoryItem(BaseSchema):
 
 
 class SourceCitation(BaseSchema):
-    """Citation information from File Search grounding metadata."""
+    """Citation information from internal vectorless retrieval sources."""
     citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
     title: Optional[str] = Field(None, description="Document title/name")
     text: Optional[str] = Field(None, description="Relevant text excerpt from document")
     url: Optional[str] = Field(None, description="R2 URL to view the document")
     file_id: Optional[str] = Field(None, description="File ID in database")
+    page_index_start: Optional[int] = Field(None, description="Start page index of cited chunk")
+    page_index_end: Optional[int] = Field(None, description="End page index of cited chunk")
 
 
 # ====================================
@@ -275,7 +277,7 @@ class AllowedValueCreateRequest(BaseSchema):
     is_active: bool = Field(True, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
     visible_roles: List[Literal["lecture", "student"]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description="Roles that can see this value"
     )
 
@@ -286,7 +288,7 @@ class AllowedValueUpdateRequest(BaseSchema):
     is_active: Optional[bool] = Field(None, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
     visible_roles: Optional[List[Literal["lecture", "student"]]] = Field(
-        None, 
+        None,
         description="Roles that can see this value"
     )
 
@@ -342,6 +344,39 @@ class ChatStreamRequest(BaseSchema):
     metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
 
 
+
+class ChatRetrievePreviewRequest(BaseSchema):
+    """Request body for POST /api/chat/retrieve-preview."""
+    question: str = Field(..., min_length=1, max_length=2000)
+    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
+    top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    min_score: Optional[float] = Field(default=None, ge=0)
+    include_explain: bool = Field(default=True, description="Whether to include score breakdown details")
+
+
+class ChatRetrievePreviewItem(BaseSchema):
+    """One retrieved chunk for debugging vectorless relevance."""
+    rank: int
+    file_id: Optional[str] = None
+    file_name: Optional[str] = None
+    page_index_start: Optional[int] = None
+    page_index_end: Optional[int] = None
+    section_path: Optional[str] = None
+    score: Optional[float] = None
+    explain: Optional[Dict[str, Any]] = None
+    text: str
+
+
+class ChatRetrievePreviewResponse(BaseSchema):
+    """Response body for POST /api/chat/retrieve-preview."""
+    query: str
+    top_k: int
+    min_score: float
+    count: int
+    cache_stats: Optional[Dict[str, Any]] = None
+    items: List[ChatRetrievePreviewItem] = Field(default_factory=list)
+
+
 # ====================================
 # FILE MANAGEMENT SCHEMAS
 # ====================================
@@ -359,7 +394,55 @@ class FileUploadResponse(BaseSchema):
     custom_metadata: Optional[Dict[str, List[str]]] = Field(default_factory=dict)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
+    markdown_file_url: Optional[str] = Field(None, description="Direct download URL for generated markdown in R2")
+    summary: Optional[str] = None
+    table_of_contents: List[str] = Field(default_factory=list)
     message: Optional[str] = None
+
+
+
+class FileParsePreviewPage(BaseSchema):
+    """One parsed markdown page preview."""
+    page_index: int = Field(..., description="Page index from parser metadata")
+    markdown: str = Field(..., description="Normalized markdown content")
+
+
+class FileParsePreviewResponse(BaseSchema):
+    """Response for PDF parse preview endpoint (Sprint 1)."""
+    filename: str
+    page_count: int
+    pages: List[FileParsePreviewPage] = Field(default_factory=list)
+
+
+
+class FileChunkPreviewItem(BaseSchema):
+    """One chunk preview item from parsed markdown."""
+    chunk_index: int
+    page_index_start: int
+    page_index_end: int
+    section_path: Optional[str] = None
+    text: str
+
+
+class FileChunkPreviewResponse(BaseSchema):
+    """Response for PDF chunk preview endpoint (Sprint 2)."""
+    filename: str
+    page_count: int
+    chunk_count: int
+    chunk_size_chars: int
+    chunk_overlap_chars: int
+    chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
+
+
+
+class FileIngestChunksResponse(BaseSchema):
+    """Response for ingesting PDF chunks into Mongo."""
+    file_id: str
+    file_name: str
+    page_count: int
+    chunk_count: int
+    inserted_count: int
+    deleted_previous_mongo: int
 
 
 class UpdateFileRequest(BaseSchema):
@@ -380,6 +463,9 @@ class FileDetailResponse(BaseSchema):
     gemini_document_name: Optional[str] = None
     custom_metadata: Dict[str, List[str]] = Field(default_factory=dict)
     file_url: Optional[str] = None
+    markdown_file_url: Optional[str] = None
+    summary: Optional[str] = None
+    table_of_contents: List[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
 

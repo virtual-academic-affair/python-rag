@@ -68,3 +68,7 @@ langchain-community==0.4.1
 langchain-google-genai==4.2.1
 langchain-text-splitters==1.1.1
 
+# LlamaParse (Sprint 1 ingestion)
+llama-parse==0.5.19
+qdrant-client==1.15.1
+

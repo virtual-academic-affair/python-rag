@@ -4,12 +4,17 @@ Handles file uploads, downloads, deletions, and integrations with Cloudflare R2 
 """
 
 import asyncio
+import io
 import logging
 import mimetypes
 import os
 import tempfile
 import time
-from typing import Optional, BinaryIO, List, Tuple, Dict, Any
+from pathlib import Path
+from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable
+
+from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
+from app.services.rag.rag_ingest_service import get_rag_ingest_service
 
 # Ensure essential Office mime types are registered globally for Google GenAI SDK
 # (Production environments like Docker/Alpine often lack these in /etc/mime.types)
@@ -68,7 +73,7 @@ class FileService:
     Service for file management operations.
     Coordinates between Cloudflare R2 storage, MongoDB, and Gemini File Search.
     """
-    
+
     def __init__(self):
         """Initialize FileService with repositories and Gemini client."""
         self._file_repo = None
@@ -76,7 +81,7 @@ class FileService:
         self._gemini_client = None
         self._metadata_svc = None
         self._store_svc = None
-    
+
     @property
     def store_svc(self):
         """Lazy load store service."""
@@ -84,7 +89,7 @@ class FileService:
             from app.services.rag.store_service import get_store_service
             self._store_svc = get_store_service()
         return self._store_svc
-    
+
     @property
     def metadata_svc(self):
         """Lazy load metadata service."""
@@ -98,7 +103,7 @@ class FileService:
         if self._file_repo is None:
             self._file_repo = FileRepository()
         return self._file_repo
-    
+
     @property
     def store_repo(self) -> StoreRepository:
         """Lazy load store repository."""
@@ -112,8 +117,8 @@ class FileService:
         if self._gemini_client is None:
             self._gemini_client = gemini_client.client
         return self._gemini_client
-    
-    
+
+
     async def upload_file(
         self,
         file_path: str,
@@ -123,17 +128,13 @@ class FileService:
         display_name: Optional[str] = None,
         custom_metadata: Optional[dict] = None,
         max_retries: int = 3,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> FileDocument:
-        """
-        Upload a file to Cloudflare R2 and Gemini File Search.
-        Coordinates validation, DB creation, storage upload, and metadata sync with retries and rollback.
-        """
-        # 1. Validation & State Initialization
+        """Legacy sync upload flow (kept for compatibility)."""
         state, file_info = await self._prepare_upload_state(
             file_path, original_filename, store_id, display_name, custom_metadata
         )
-        
-        # 2. Execution with Retries
+
         try:
             return await self._execute_upload_steps(
                 state=state,
@@ -144,11 +145,133 @@ class FileService:
                 display_name=display_name or original_filename,
                 mime_type=file_info["mime_type"],
                 file_size=file_info["file_size"],
-                max_retries=max_retries
+                max_retries=max_retries,
+                progress_callback=progress_callback,
             )
         except Exception as e:
             await self._rollback_upload(state, str(e))
             raise
+
+    async def upload_file_quick(
+        self,
+        file_path: str,
+        original_filename: str,
+        store_id: str,
+        store_name: str,
+        display_name: Optional[str] = None,
+        custom_metadata: Optional[dict] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> tuple[FileDocument, dict[str, Any]]:
+        """Create DB record + upload original to R2, then return immediately with pending status."""
+        state, file_info = await self._prepare_upload_state(
+            file_path, original_filename, store_id, display_name, custom_metadata
+        )
+
+        async def _notify(step: str, message: str):
+            if progress_callback:
+                await progress_callback({"step": step, "message": message, "file_id": state.file_id})
+
+        try:
+            await _notify("db_creating", "Đang tạo bản ghi file")
+            file_doc_data = {
+                "store_id": store_id,
+                "display_name": display_name or original_filename,
+                "original_filename": original_filename,
+                "storage_path": state.storage_path,
+                "storage_bucket": settings.R2_BUCKET_NAME,
+                "file_size": file_info["file_size"],
+                "mime_type": file_info["mime_type"],
+                "gemini_document_name": None,
+                "custom_metadata": state.custom_metadata or {},
+                "status": FileStatus.PENDING.value,
+            }
+            created_file = await self.file_repo.create(file_doc_data)
+            state.file_id = str(created_file["_id"])
+            state.mark_step(UploadStep.DB_CREATED)
+
+            await _notify("uploading_original", "Đang upload file gốc lên storage")
+            with open(file_path, "rb") as f:
+                await r2_storage.upload_file(
+                    file=f,
+                    object_name=state.storage_path,
+                    content_type=file_info["mime_type"],
+                    metadata={"file_id": state.file_id, "store_id": store_id},
+                )
+            state.mark_step(UploadStep.R2_UPLOADED)
+            await _notify("queued_background", "Đã lưu file lên storage, đang xử lý nền")
+
+            file_doc = await self.get_file_by_id(state.file_id)
+            return file_doc, {
+                "file_id": state.file_id,
+                "display_name": display_name or original_filename,
+                "store_id": store_id,
+                "store_name": store_name,
+                "custom_metadata": state.custom_metadata or {},
+                "storage_path": state.storage_path,
+            }
+        except Exception as e:
+            await self._rollback_upload(state, str(e))
+            raise
+
+    async def process_file_background(
+        self,
+        file_id: str,
+        file_path: str,
+        display_name: str,
+        custom_metadata: Optional[dict] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> None:
+        """Continue processing after original file is stored in R2."""
+        async def _notify(step: str, message: str):
+            if progress_callback:
+                await progress_callback({"step": step, "message": message, "file_id": file_id})
+
+        try:
+            file_doc = await self.file_repo.find_by_id(file_id)
+            if not file_doc:
+                raise NotFoundException("File", file_id)
+
+            storage_path = file_doc.get("storage_path")
+            await _notify("parsing_markdown", "Đang OCR/parse file sang markdown")
+            md_result = await self._generate_markdown_artifacts(file_path, storage_path)
+
+            await self.file_repo.update_by_id(
+                file_id,
+                {
+                    "markdown_storage_path": md_result["markdown_storage_path"],
+                    "markdown_file_size": md_result["markdown_file_size"],
+                    "summary": md_result["summary"],
+                    "table_of_contents": md_result["table_of_contents"],
+                },
+            )
+
+            await _notify("saving_vector_db", "Đang lưu thông tin file vào Vector DB")
+            await self._ingest_to_vector_db(
+                file_id=file_id,
+                display_name=display_name,
+                summary=md_result["summary"] or "",
+                table_of_contents=md_result["table_of_contents"],
+                custom_metadata=custom_metadata,
+            )
+
+            await self.file_repo.update_by_id(
+                file_id,
+                {
+                    "status": FileStatus.ACTIVE.value,
+                    "gemini_document_name": None,
+                },
+            )
+
+            if custom_metadata:
+                await self.metadata_svc.sync_metadata_counters(custom_metadata, delta=1)
+
+            await _notify("completed", "Upload hoàn tất")
+        except Exception as e:
+            logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
+            await self.file_repo.update_by_id(file_id, {"status": FileStatus.FAILED.value})
+            await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
+        finally:
+            cleanup_temp_file(file_path)
 
     async def _prepare_upload_state(
         self,
@@ -164,20 +287,20 @@ class FileService:
         file_size = os.path.getsize(file_path)
         validate_file_size(file_size)
         mime_type = detect_mime_type(file_path)
-        
+
         # Metadata validation
         await self.metadata_svc.validate_file_metadata_requirements(custom_metadata)
-        
+
         existing_file = await self.file_repo.find_one({
             "store_id": store_id,
             "original_filename": original_filename,
         })
         if existing_file:
             raise ConflictException(f"File '{original_filename}' already exists in store")
-        
+
         # Prepare initial state
         state = UploadState(custom_metadata=custom_metadata)
-        
+
         # Generate storage path
         store_dict = await self.store_repo.find_by_id(store_id)
         if not store_dict:
@@ -186,12 +309,12 @@ class FileService:
 
         state.storage_path = generate_storage_path(store_name, original_filename)
         state.mark_step(UploadStep.VALIDATED)
-        
+
         file_info = {
             "file_size": file_size,
             "mime_type": mime_type
         }
-        
+
         return state, file_info
 
     async def _execute_upload_steps(
@@ -204,15 +327,20 @@ class FileService:
         display_name: str,
         mime_type: str,
         file_size: int,
-        max_retries: int
+        max_retries: int,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> FileDocument:
         """Execute the atomic steps of uploading with a retry loop."""
         retry_delay = 2
-        
+
+        async def _notify(step: str, message: str):
+            if progress_callback:
+                await progress_callback({"step": step, "message": message, "file_id": state.file_id})
+
         for attempt in range(max_retries):
             try:
-                # 1. Database record
                 if not state.has_step(UploadStep.DB_CREATED):
+                    await _notify("db_creating", "Đang tạo bản ghi file")
                     file_doc_data = {
                         "store_id": store_id,
                         "display_name": display_name,
@@ -228,10 +356,9 @@ class FileService:
                     created_file = await self.file_repo.create(file_doc_data)
                     state.file_id = str(created_file["_id"])
                     state.mark_step(UploadStep.DB_CREATED)
-                
-                # 2. Cloudflare R2
+
                 if not state.has_step(UploadStep.R2_UPLOADED):
-                    logger.info(f"[{state.file_id}] Uploading to Cloudflare R2 (Attempt {attempt+1})")
+                    await _notify("uploading_original", "Đang upload file gốc lên storage")
                     with open(file_path, "rb") as f:
                         await r2_storage.upload_file(
                             file=f,
@@ -240,39 +367,120 @@ class FileService:
                             metadata={"file_id": state.file_id, "store_id": store_id},
                         )
                     state.mark_step(UploadStep.R2_UPLOADED)
-                
-        # 3. Gemini File Search
-                if not state.has_step(UploadStep.GEMINI_UPLOADED):
-                    logger.info(f"[{state.file_id}] Processing Gemini upload")
-                    gemini_file = await self._upload_to_gemini(
-                        file_path, display_name, store_name, state.custom_metadata
-                    )
-                    state.gemini_document_name = gemini_file.name
-                    state.mark_step(UploadStep.GEMINI_UPLOADED)
-                    
-                    # Update DB with Gemini document name
+
+                if not state.has_step(UploadStep.MARKDOWN_GENERATED):
+                    await _notify("parsing_markdown", "Đang OCR/parse file sang markdown")
+                    md_result = await self._generate_markdown_artifacts(file_path, state.storage_path)
+                    state.markdown_storage_path = md_result["markdown_storage_path"]
+                    state.summary = md_result["summary"]
+                    state.table_of_contents = md_result["table_of_contents"]
                     await self.file_repo.update_by_id(
                         state.file_id,
                         {
-                            "gemini_document_name": gemini_file.name,
-                            "status": FileStatus.ACTIVE.value, 
-                        }
+                            "markdown_storage_path": state.markdown_storage_path,
+                            "markdown_file_size": md_result["markdown_file_size"],
+                            "summary": state.summary,
+                            "table_of_contents": state.table_of_contents,
+                        },
                     )
-                
-                # Update store stats and metadata counters
-                await self.store_svc.sync_store_stats(store_id)
+                    state.mark_step(UploadStep.MARKDOWN_GENERATED)
+
+                if not state.has_step(UploadStep.VECTOR_DB_SAVED):
+                    await _notify("saving_vector_db", "Đang lưu thông tin file vào Vector DB")
+                    await self._ingest_to_vector_db(
+                        file_id=state.file_id,
+                        display_name=display_name,
+                        summary=state.summary or "",
+                        table_of_contents=state.table_of_contents,
+                        custom_metadata=state.custom_metadata,
+                    )
+                    state.mark_step(UploadStep.VECTOR_DB_SAVED)
+
+                await self.file_repo.update_by_id(
+                    state.file_id,
+                    {
+                        "gemini_document_name": None,
+                        "status": FileStatus.ACTIVE.value,
+                    },
+                )
+
+                # Payload-only mode: skip Gemini store stats sync entirely
                 if state.custom_metadata and not state.has_step(UploadStep.METADATA_SYNCED):
                     await self.metadata_svc.sync_metadata_counters(state.custom_metadata, delta=1)
                     state.mark_step(UploadStep.METADATA_SYNCED)
-                
+
+                await _notify("completed", "Upload hoàn tất")
                 state.mark_step(UploadStep.COMPLETED)
                 return await self.get_file_by_id(state.file_id)
-                
+
             except Exception as e:
-                logger.warning(f"[{state.file_id or 'NEW'}] Upload attempt {attempt+1} failed: {e}. Retrying in {retry_delay * (attempt + 1)}s...")
+                logger.warning(f"[{state.file_id or 'NEW'}] Upload attempt {attempt + 1} failed: {e}. Retrying in {retry_delay * (attempt + 1)}s...")
                 if attempt == max_retries - 1:
                     raise
                 await asyncio.sleep(retry_delay * (attempt + 1))
+
+
+    async def _generate_markdown_artifacts(self, source_file_path: str, original_storage_path: str) -> Dict[str, Any]:
+        """Convert uploaded file to markdown, upload markdown file to R2, extract summary and TOC."""
+        parser = get_llamaparse_ingest_service()
+        pages = await parser.parse_pdf_to_markdown(source_file_path)
+
+        markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
+        if not markdown_content.strip():
+            raise ValidationException("Không thể tạo markdown từ file upload")
+
+        table_of_contents = self._extract_toc_from_markdown(markdown_content)
+        summary = self._summarize_markdown(markdown_content)
+
+        md_storage_path = f"{Path(original_storage_path).with_suffix('.md').as_posix()}"
+        markdown_bytes = markdown_content.encode("utf-8")
+        await r2_storage.upload_file(
+            file=io.BytesIO(markdown_bytes),
+            object_name=md_storage_path,
+            content_type="text/markdown",
+            metadata={"artifact": "markdown", "source_path": original_storage_path},
+        )
+
+        return {
+            "markdown_storage_path": md_storage_path,
+            "markdown_file_size": len(markdown_bytes),
+            "summary": summary,
+            "table_of_contents": table_of_contents,
+        }
+
+    async def _ingest_to_vector_db(
+        self,
+        file_id: str,
+        display_name: str,
+        summary: str,
+        table_of_contents: List[str],
+        custom_metadata: Optional[dict],
+    ) -> None:
+        """Persist only file-level overview (name + summary + TOC) into Mongo vector DB collection."""
+        ingest_svc = get_rag_ingest_service()
+        await ingest_svc.ingest_file_overview(
+            file_id=file_id,
+            file_name=display_name,
+            summary=summary,
+            table_of_contents=table_of_contents,
+            metadata=custom_metadata or {},
+        )
+
+    @staticmethod
+    def _extract_toc_from_markdown(markdown_content: str) -> List[str]:
+        toc: List[str] = []
+        for line in markdown_content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                heading = stripped.lstrip("#").strip()
+                if heading:
+                    toc.append(heading)
+        return toc
+
+    @staticmethod
+    def _summarize_markdown(markdown_content: str, max_chars: int = 1000) -> str:
+        cleaned = " ".join(markdown_content.split())
+        return cleaned[:max_chars]
 
     async def _process_gemini_upload(
         self,
@@ -296,14 +504,14 @@ class FileService:
         # Let's rename the existing _upload_to_gemini to _process_gemini_upload and adjust its return.
         pass # This method is effectively replaced/refactored into _upload_to_gemini and _execute_upload_steps
 
- 
+
     async def _rollback_upload(self, state: UploadState, error_msg: str) -> None:
         """
         Intelligent rollback based on completed steps.
         Cleans up resources in reverse order of creation.
         """
         logger.warning(f"Rolling back upload (file_id={state.file_id}): {error_msg}")
-        
+
         # Rollback Metadata (if synced)
         if state.has_step(UploadStep.METADATA_SYNCED) and state.custom_metadata:
             try:
@@ -311,7 +519,7 @@ class FileService:
                 logger.info(f"Rollback: Decremented metadata counters for {list(state.custom_metadata.keys())}")
             except Exception as e:
                 logger.warning(f"Rollback: Failed to decrement metadata counters: {e}")
-        
+
         # Rollback Gemini (if uploaded)
         if state.has_step(UploadStep.GEMINI_UPLOADED) and state.gemini_document_name:
             try:
@@ -323,7 +531,15 @@ class FileService:
                 logger.info(f"Rollback: Deleted Gemini document {state.gemini_document_name}")
             except Exception as e:
                 logger.warning(f"Rollback: Failed to delete Gemini document: {e}")
-        
+
+        # Rollback markdown artifact in Cloudflare R2
+        if state.has_step(UploadStep.MARKDOWN_GENERATED) and state.markdown_storage_path:
+            try:
+                await r2_storage.delete_file(state.markdown_storage_path)
+                logger.info(f"Rollback: Deleted markdown artifact {state.markdown_storage_path}")
+            except Exception as e:
+                logger.warning(f"Rollback: Failed to delete markdown artifact: {e}")
+
         # Rollback Cloudflare R2 (if uploaded)
         if state.has_step(UploadStep.R2_UPLOADED) and state.storage_path:
             try:
@@ -331,7 +547,7 @@ class FileService:
                 logger.info(f"Rollback: Deleted Cloudflare R2 file {state.storage_path}")
             except Exception as e:
                 logger.warning(f"Rollback: Failed to delete Cloudflare R2 file: {e}")
-        
+
         # Rollback DB record (if created)
         if state.has_step(UploadStep.DB_CREATED) and state.file_id:
             try:
@@ -351,11 +567,11 @@ class FileService:
         try:
             # Prepare config
             config = {"display_name": display_name}
-            
+
             # Add custom metadata
             if custom_metadata:
                 config["custom_metadata"] = convert_metadata_for_gemini(custom_metadata)
-            
+
             # Upload file directly to store
             logger.info(f"Uploading to Gemini store {store_name}: {display_name}")
             operation = await asyncio.to_thread(
@@ -364,32 +580,32 @@ class FileService:
                 file_search_store_name=store_name,
                 config=config,
             )
-            
+
             # Wait for processing with timeout
             document_name = await wait_for_gemini_operation(
                 self.gemini_client, operation, display_name, store_name
             )
-            
+
             logger.info(f"File uploaded to Gemini: {document_name}")
             return GeminiFile(name=document_name)
-            
+
         except GeminiException:
             raise
         except Exception as e:
             logger.error(f"Gemini upload failed: {e}", exc_info=True)
             raise GeminiException(f"Gemini upload failed: {str(e)}")
-    
+
     async def _wait_for_operation(self, operation, display_name: str, store_name: str, timeout: int = 120) -> str:
         """Wait for Gemini operation to complete and extract document name."""
         # This method is replaced by the direct call to wait_for_gemini_operation in _upload_to_gemini
         pass
-    
-    
+
+
     async def download_file(self, file_id: str, user_role: Optional[str] = None) -> tuple[BinaryIO, str, str]:
         """
         Download a file from Cloudflare R2.
         If user_role is provided, validates access permissions.
-        
+
         Returns:
             tuple: (file_object, filename, mime_type)
         """
@@ -397,31 +613,31 @@ class FileService:
         file_doc = await self.get_file_by_id(file_id, user_role=user_role)
         if not file_doc:
             raise NotFoundException("File", file_id)
-        
+
         try:
             file_obj = await r2_storage.download_file(file_doc.storage_path)
             return file_obj, file_doc.original_filename, file_doc.mime_type
         except Exception as e:
             logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
             raise StorageException(f"File download failed: {str(e)}")
-    
+
 
     async def delete_file(self, file_id: str) -> bool:
         """Delete a file (hard delete)."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
-        
+
         gemini_document_name = file_doc.get("gemini_document_name")
         store_id = file_doc.get("store_id")
-        
+
         # Delete from Cloudflare R2
         if storage_path := file_doc.get("storage_path"):
             try:
                 await r2_storage.delete_file(storage_path)
             except Exception as e:
                 logger.warning(f"Failed to delete from Cloudflare R2: {e}")
-        
+
         # Delete from Gemini
         if gemini_document_name:
             try:
@@ -432,35 +648,33 @@ class FileService:
                 )
             except Exception as e:
                 logger.warning(f"Failed to delete from Gemini: {e}")
-        
+
         # Hard delete from MongoDB
         await self.file_repo.delete_by_id(file_id)
-        
+
         # Decrement metadata counters if the file was active and has custom_metadata
         if file_doc.get("status") == FileStatus.ACTIVE.value and file_doc.get("custom_metadata"):
             await self.metadata_svc.sync_metadata_counters(file_doc["custom_metadata"], delta=-1)
-        
-        # Sync store stats
-        if store_id:
-            await self.store_svc.sync_store_stats(store_id)
-        
+
+        # Payload-only mode: skip Gemini store stats sync entirely
+
         logger.info(f"File {file_id} deleted")
         return True
-        
+
     async def update_file_display_name(self, file_id: str, new_display_name: str) -> Optional[FileDocument]:
         """Update the display name of a file."""
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
-            
+
         update_data = {"display_name": new_display_name}
         update_success = await self.file_repo.update_by_id(file_id, update_data)
-        
+
         if update_success:
             file_doc_dict["display_name"] = new_display_name
             return _to_file_model(file_doc_dict)
         return None
-        
+
     async def _apply_role_filters_and_metadata_masking(self, files: List[Dict[str, Any]], user_role: str) -> List[Dict[str, Any]]:
         """
         Centrally handles both access permission filtering (access_scope)
@@ -468,17 +682,26 @@ class FileService:
         """
         if not files or not user_role:
             return files
-            
-        # 1. Filter by access_scope (DB and memory checks)
+
+        # 1. Filter by access_scope (scope null means internal file => lecture/admin only)
         if user_role == "student":
-            files = [f for f in files if "student" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
+            files = [
+                f for f in files
+                if "student" in ((f.get("custom_metadata") or {}).get("access_scope") or [])
+            ]
         elif user_role == "lecture":
-            files = [f for f in files if "lecture" in ((f.get("custom_metadata") or {}).get("access_scope") or [])]
+            files = [
+                f for f in files
+                if (
+                    "lecture" in ((f.get("custom_metadata") or {}).get("access_scope") or [])
+                    or not ((f.get("custom_metadata") or {}).get("access_scope") or [])
+                )
+            ]
         # Admin sees all, no filter needed
-            
+
         # 2. Mask custom_metadata based on visible_roles via MetadataService
         await self.metadata_svc.filter_custom_metadata_by_role(files, user_role)
-        
+
         return files
 
     async def _filter_custom_metadata_for_role(self, file_dicts: List[Dict[str, Any]], user_role: str) -> None:
@@ -501,48 +724,52 @@ class FileService:
             filters["store_id"] = store_id
         if status:
             filters["status"] = status.value
-            
+
         # Add keywords filter (partial match on display_name)
         if keywords:
             filters["display_name"] = {"$regex": keywords, "$options": "i"}
-            
+
         # Add metadata filters with "all" support
         if custom_metadata_filter:
             for k, v in custom_metadata_filter.items():
                 if k == "access_scope":
                     continue # Handled by role logic
-                
+
                 # Support array of values (OR logic for same key)
                 if isinstance(v, list):
                     filter_values = v + ["all"]
                 else:
                     filter_values = [v, "all"]
-                    
+
                 filters[f"custom_metadata.{k}"] = {"$in": filter_values}
-        
+
         # Database-level filtering for access_scope
         if user_role == "student":
             filters["custom_metadata.access_scope"] = {"$in": ["student"]}
         elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = {"$in": ["lecture"]}
+            filters["$or"] = [
+                {"custom_metadata.access_scope": {"$in": ["lecture"]}},
+                {"custom_metadata.access_scope": {"$exists": False}},
+                {"custom_metadata.access_scope": []},
+                {"custom_metadata.access_scope": None},
+            ]
         elif user_role == "admin":
             if custom_metadata_filter and "access_scope" in custom_metadata_filter:
                 v = custom_metadata_filter["access_scope"]
-                # Admin can pass list or string for access_scope, no "all" fallback implicitly needed for access_scope 
                 if isinstance(v, list):
                     filters["custom_metadata.access_scope"] = {"$in": v}
                 else:
                     filters["custom_metadata.access_scope"] = {"$in": [v]}
-            
+
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)
-        
+
         # Final masking for visible_roles (permission check already implicitly handled by DB filters)
         file_dicts = await self._apply_role_filters_and_metadata_masking(file_dicts, user_role)
-        
+
         files = [_to_file_model(f) for f in file_dicts]
         return files, total
-    
+
     async def get_file_by_id(self, file_id: str, user_role: Optional[str] = None) -> Optional[FileDocument]:
         """
         Get a single file by ID.
@@ -551,7 +778,7 @@ class FileService:
         file_dict = await self.file_repo.find_by_id(file_id)
         if not file_dict:
             return None
-            
+
         if user_role:
             # _apply_role_filters_and_metadata_masking expects a list and returns a filtered list
             filtered_files = await self._apply_role_filters_and_metadata_masking([file_dict], user_role)
@@ -559,26 +786,26 @@ class FileService:
                 # If the file was filtered out due to access_scope, it's not found for this user
                 return None
             file_dict = filtered_files[0]
-                
+
         return _to_file_model(file_dict)
-    
+
     async def _sync_store_stats_by_id(self, store_id: str):
         """Sync store statistics from Gemini by store_id."""
         # This method is now replaced by direct call to store_svc.sync_store_stats
         pass
-    
+
     async def _sync_store_stats(self, store_id: str) -> None:
-        """Sync store statistics via StoreService."""
-        await self.store_svc.sync_store_stats(store_id)
-    
+        """Payload-only mode: no Gemini store stats sync."""
+        return None
+
     async def delete_all_files_in_store(self, store_id: str, gemini_only: bool = False) -> int:
         """
         Delete all files in a store.
-        
+
         Args:
             store_id: Store ID (MongoDB ObjectId)
             gemini_only: If True, only delete from Gemini API (not Cloudflare R2/MongoDB)
-            
+
         Returns:
             Number of files deleted
         """
@@ -586,17 +813,17 @@ class FileService:
         store_dict = await self.store_repo.find_by_id(store_id)
         if not store_dict:
             raise NotFoundException("Store", store_id)
-        
+
         store_name = store_dict["store_name"]
-        
+
         # Get all files in store
         files = await self.file_repo.find_by_store(store_id, skip=0, limit=10000)
         deleted_count = 0
-        
+
         for file_doc in files:
             try:
                 gemini_document_name = file_doc.get("gemini_document_name")
-                
+
                 # Delete from Gemini
                 if gemini_document_name:
                     try:
@@ -607,7 +834,7 @@ class FileService:
                         )
                     except Exception as e:
                         logger.warning(f"Failed to delete {gemini_document_name} from Gemini: {e}")
-                
+
                 if not gemini_only:
                     # Delete from Cloudflare R2
                     if storage_path := file_doc.get("storage_path"):
@@ -615,21 +842,20 @@ class FileService:
                             await r2_storage.delete_file(storage_path)
                         except Exception as e:
                             logger.warning(f"Failed to delete from Cloudflare R2: {e}")
-                    
+
                     # Delete from MongoDB
                     await self.file_repo.delete_by_id(str(file_doc["_id"]))
-                
+
                 deleted_count += 1
-                
+
             except Exception as e:
                 logger.error(f"Failed to delete file {file_doc.get('_id')}: {e}")
-        
-        # Sync store stats
-        await self._sync_store_stats(store_id)
-        
+
+        # Payload-only mode: skip Gemini store stats sync
+
         logger.info(f"Deleted {deleted_count} files from store {store_id} (gemini_only={gemini_only})")
         return deleted_count
-    
+
 
     # ====================================
     # SYNC HELPERS
@@ -680,11 +906,11 @@ class FileService:
         db_storage_paths, db_gemini_names, db_issues, synced_count = self._detect_db_discrepancies(
             db_docs, r2_paths, gemini_names
         )
-        
+
         orphaned_issues = self._detect_orphaned_cloud_files(
             r2_paths, gemini_names, db_storage_paths, db_gemini_names
         )
-        
+
         issues = db_issues + orphaned_issues
 
         return {
@@ -697,9 +923,9 @@ class FileService:
         }
 
     def _detect_db_discrepancies(
-        self, 
-        db_docs: list[dict], 
-        r2_paths: set[str], 
+        self,
+        db_docs: list[dict],
+        r2_paths: set[str],
         gemini_names: set[str]
     ) -> Tuple[set[str], set[str], list[dict], int]:
         """Detect issues where a DB record is missing its cloud counterpart."""
@@ -707,7 +933,7 @@ class FileService:
         db_gemini_names: set[str] = set()
         issues = []
         synced_count = 0
-        
+
         for doc in db_docs:
             sp = doc.get("storage_path")
             gn = doc.get("gemini_document_name")
@@ -733,7 +959,7 @@ class FileService:
                     "storage_path": sp, "gemini_document_name": gn,
                     "issue": issue_type
                 })
-        
+
         return db_storage_paths, db_gemini_names, issues, synced_count
 
     def _detect_orphaned_cloud_files(
@@ -745,7 +971,7 @@ class FileService:
     ) -> list[dict]:
         """Detect files in R2 or Gemini that have no corresponding DB record."""
         issues = []
-        
+
         # Files in R2 but not in DB
         for path in r2_paths:
             if path not in db_storage_paths:
@@ -763,7 +989,7 @@ class FileService:
                     "storage_path": None, "gemini_document_name": name,
                     "issue": "in_gemini_only"
                 })
-        
+
         return issues
 
     async def sync_files(self) -> dict:

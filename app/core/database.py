@@ -8,6 +8,7 @@ from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from typing import Optional, Any
 import logging
+from pymongo import ASCENDING
 
 from app.core.config import settings
 
@@ -16,15 +17,16 @@ logger = logging.getLogger(__name__)
 
 class Database:
     """MongoDB database connection manager (Singleton)."""
-    
+
     # Collection name constants
     FILES = "files"
+    FILE_CHUNKS = "file_chunks"
     METADATA_TYPES = "metadata_types"
     STORES = "stores"
-    
+
     _client: Optional[Any] = None  # AsyncIOMotorClient
     _db: Optional[Any] = None  # AsyncIOMotorDatabase
-    
+
     @classmethod
     async def connect(cls):
         """
@@ -52,6 +54,22 @@ class Database:
 
             logger.info("✅ MongoDB connected successfully")
 
+            # Ensure indexes for vectorless retrieval performance
+            file_chunks = cls._db[cls.FILE_CHUNKS]
+            await file_chunks.create_index([("file_id", ASCENDING)], name="idx_file_chunks_file_id")
+            await file_chunks.create_index([("chunk_id", ASCENDING)], name="idx_file_chunks_chunk_id", unique=True)
+            await file_chunks.create_index(
+                [("metadata.access_scope", ASCENDING)],
+                name="idx_file_chunks_access_scope",
+                sparse=True,
+            )
+            await file_chunks.create_index(
+                [("metadata.hoc_ky", ASCENDING), ("metadata.nam_hoc", ASCENDING)],
+                name="idx_file_chunks_hoc_ky_nam_hoc",
+                sparse=True,
+            )
+
+
         except Exception as e:
             logger.error(f"❌ Failed to connect to MongoDB: {e}")
             raise
@@ -65,30 +83,30 @@ class Database:
         if cls._client:
             cls._client.close()
             logger.info("MongoDB connection closed")
-    
+
     @classmethod
     def get_db(cls) -> Any:
         """
         Get database instance.
-        
+
         Returns:
             AsyncIOMotorDatabase instance
-            
+
         Raises:
             RuntimeError: If database not connected
         """
         if cls._db is None:
             raise RuntimeError("Database not connected. Call Database.connect() first.")
         return cls._db
-    
+
     @classmethod
     def get_collection(cls, name: str):
         """
         Get a specific collection.
-        
+
         Args:
             name: Collection name
-            
+
         Returns:
             AsyncIOMotorCollection
         """

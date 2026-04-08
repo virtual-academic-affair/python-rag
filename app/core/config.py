@@ -12,30 +12,30 @@ _ENV_FILE = Path(__file__).parent.parent.parent / ".env"
 
 class Settings(BaseSettings):
     """Unified application settings loaded from environment variables."""
-    
+
     # ====================================
     # API Configuration
     # ====================================
     APP_NAME: str = "AI Service"
     APP_VERSION: str = "3.0.0"
     DEBUG: bool = False
-    
+
     # Server Configuration
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
+
     # Uvicorn settings
     RELOAD: bool = True
     UVICORN_LOG_LEVEL: str = "info"
-    
+
     # Application logging
     LOG_LEVEL: str = "INFO"
-    
+
     # ====================================
     # Google Gemini Configuration
     # ====================================
     GOOGLE_API_KEY: str
-    
+
     # Classification settings (from python-rag)
     LLM_MODEL: str = "gemini-2.5-flash"
     LLM_TEMPERATURE: float = 0.1
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     GENAI_REQUEST_TIMEOUT: int = 60
     GENAI_MAX_OUTPUT_TOKENS_CLASSIFICATION: int = 100
     GENAI_MAX_OUTPUT_TOKENS_EXTRACTION: int = 1200
-    
+
     # RAG settings (from rag-service)
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_TEMPERATURE: float = 0.7
@@ -51,7 +51,23 @@ class Settings(BaseSettings):
     GEMINI_TOP_P: float = 0.95
     GEMINI_TOP_K: int = 40
     GEMINI_TIMEOUT_SECONDS: int = 60
-    
+
+    # LlamaParse configuration (Sprint 1)
+    LLAMA_CLOUD_API_KEY: Optional[str] = None
+    LLAMA_PARSE_RESULT_TYPE: str = "markdown"
+    LLAMA_PARSE_LANGUAGE: str = "vi"
+
+    # Qdrant retrieval tuning
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION_NAME: str = "file_overviews"
+    QDRANT_TOP_K: int = 6
+    QDRANT_MIN_SCORE: float = 0.2
+    QDRANT_VECTOR_SIZE: int = 3072
+
+
+
+
     # ====================================
     # MongoDB Configuration
     # ====================================
@@ -96,17 +112,17 @@ class Settings(BaseSettings):
     # File Upload Configuration
     # ====================================
     MAX_FILE_SIZE_MB: int = 20
-    
+
     # ====================================
     # Rate Limiting
     # ====================================
     MAX_REQUESTS_PER_MINUTE: int = 60
-    
+
     # ====================================
     # CORS Configuration
     # ====================================
     CORS_ORIGINS: list[str] = ["*"]
-    
+
     # ====================================
     # Pydantic Config
     # ====================================

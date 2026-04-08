@@ -9,9 +9,10 @@ from enum import Enum
 class FileStatus(str, Enum):
     """
     File processing status.
-    Maps to Gemini Document State where applicable.
+    Maps to async upload pipeline states.
     """
-    UPLOADING = "uploading"     # Being uploaded to R2
-    PROCESSING = "processing"   # Being processed by Gemini (STATE_PENDING)
-    ACTIVE = "active"           # Ready for search (STATE_ACTIVE)
-    FAILED = "failed"           # Processing failed (STATE_FAILED)
+    UPLOADING = "uploading"     # Temporary state while receiving/uploading original file
+    PENDING = "pending"         # Uploaded to R2, queued/running background processing
+    PROCESSING = "processing"   # Backward-compatible alias status
+    ACTIVE = "active"           # Ready for retrieval
+    FAILED = "failed"           # Processing failed

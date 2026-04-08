@@ -15,14 +15,9 @@ from app.models.schemas import InquiryIntent, InquiryTypesResult, InquiryFilters
 from app.repositories.file_repository import FileRepository
 from app.services.rag.utils.file_utils import remove_accents
 from app.services.rag.gemini_client import gemini_client
-from app.services.rag.utils.gemini_rag_utils import (
-    extract_sources,
-    inject_citations,
-    enrich_sources_with_urls,
-    extract_token_usage
-)
+from app.services.rag.utils.gemini_rag_utils import enrich_sources_with_urls, extract_token_usage
 from app.services.rag.utils.store_utils import resolve_store
-from app.services.rag.utils.filter_builder import convert_metadata_filter_to_gemini_format
+from app.services.rag.qdrant_retrieval_service import get_qdrant_retrieval_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +29,7 @@ class EmailDraftService:
     
     def __init__(self):
         self._file_repo = None
+        self._retrieval = get_qdrant_retrieval_service()
 
     @property
     def file_repo(self) -> FileRepository:
@@ -48,59 +44,64 @@ class EmailDraftService:
         original_body: str,
         additional_context: Optional[str] = None,
         store_name: Optional[str] = None,
-        metadata_filter: Optional[str] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> dict:
-        """
-        Draft a professional email reply using RAG.
-        """
-        if not store_name:
-            raise ValueError("store_name is required. RAG Service requires File Search for email replies.")
-        
+        """Draft a professional email reply using Qdrant retrieval."""
+        retrieval_query = f"{original_subject}\n{original_body}"
+        chunks = await self._retrieval.retrieve(
+            query=retrieval_query,
+            top_k=settings.QDRANT_TOP_K,
+            min_score=settings.QDRANT_MIN_SCORE,
+            metadata_filter=metadata_filter,
+            user_role="student",
+        )
+
+        context_blocks = []
+        citations = []
+        for idx, c in enumerate(chunks, start=1):
+            context_blocks.append(
+                f"[{idx}] (file={c.get('file_name','Unknown')}, page={c.get('page_index_start',0)}-{c.get('page_index_end',0)})\n{c.get('text','')}"
+            )
+            citations.append(
+                {
+                    "citation_id": idx,
+                    "title": c.get("file_name"),
+                    "text": c.get("text"),
+                    "file_id": c.get("file_id"),
+                    "page_index_start": c.get("page_index_start"),
+                    "page_index_end": c.get("page_index_end"),
+                }
+            )
+
         prompt_parts = [
             EMAIL_DRAFT_REPLY_PROMPT,
             f"\n**EMAIL GỐC:**",
             f"Subject: {original_subject}",
             f"Body:\n{original_body}",
+            "\n**NGỮ CẢNH TRUY XUẤT (QDRANT):**",
+            "\n\n".join(context_blocks) if context_blocks else "(Không tìm thấy đoạn phù hợp)",
         ]
-        
+
         if additional_context:
             prompt_parts.append(f"\n**Chỉ dẫn thêm:** {additional_context}")
-        
+
         full_prompt = "\n".join(prompt_parts)
-        
+
         config = types.GenerateContentConfig(
             temperature=0.7,
             max_output_tokens=1500,
             response_mime_type="text/plain",
         )
-        
-        # Add File Search tool
-        file_search_config = types.FileSearch(
-            fileSearchStoreNames=[store_name],
-            metadataFilter=metadata_filter
-        )
-        
-        config.tools = [
-            types.Tool(fileSearch=file_search_config)
-        ]
-        
-        # Native async Gemini call
+
         response = await gemini_client.client.aio.models.generate_content(
             model=settings.GEMINI_MODEL,
             contents=full_prompt,
             config=config,
         )
-        
+
         answer = response.text or ""
-        
-        sources, chunk_map = extract_sources(response)
-        sources = sources or []
-        
-        if answer and chunk_map:
-            answer = inject_citations(answer, response, chunk_map)
-        
-        sources = await enrich_sources_with_urls(sources, self.file_repo) or []
-        
+        sources = await enrich_sources_with_urls(citations, self.file_repo) or []
+
         return {
             "answer": answer,
             "sources": sources,
@@ -318,12 +319,9 @@ class EmailDraftService:
         """
         Draft an email reply for inquiry-classified emails using RAG.
         """
-        # Resolve store (request → default store → error)
+        # Keep store resolution for backward-compatible logs/behavior.
         store_id_resolved, store_name = await resolve_store(store_id)
         logger.info(f"Drafting email reply using store: {store_name}")
-
-        # Convert metadata filter using standardized utility
-        gemini_filter = convert_metadata_filter_to_gemini_format(metadata_filter)
 
         # Build additional context
         context_parts = []
@@ -340,7 +338,7 @@ class EmailDraftService:
             original_body=body,
             additional_context=full_context,
             store_name=store_name,
-            metadata_filter=gemini_filter,
+            metadata_filter=metadata_filter,
         )
 
         if result is None:

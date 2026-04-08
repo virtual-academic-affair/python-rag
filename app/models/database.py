@@ -77,11 +77,13 @@ class FileDocument(BaseModel):
     original_filename: str = Field(..., description="Original filename when uploaded")
     
     # R2 storage info
-    storage_path: str = Field(..., description="Path in R2 bucket")
+    storage_path: str = Field(..., description="Path in R2 bucket (original file)")
     storage_bucket: str = Field(..., description="R2 bucket name")
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str = Field(..., description="MIME type")
-    
+    markdown_storage_path: Optional[str] = Field(None, description="Path of generated markdown file in R2")
+    markdown_file_size: Optional[int] = Field(None, description="Generated markdown file size in bytes")
+
     # Gemini integration
     gemini_document_name: Optional[str] = Field(
         None, 
@@ -96,7 +98,11 @@ class FileDocument(BaseModel):
     
     # Status (maps to Gemini Document State)
     status: FileStatus = Field(default=FileStatus.UPLOADING)
-    
+
+    # Derived content artifacts
+    summary: Optional[str] = Field(None, description="Short summary generated from markdown content")
+    table_of_contents: List[str] = Field(default_factory=list, description="Extracted table of contents headings")
+
     # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
