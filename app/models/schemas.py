@@ -450,6 +450,11 @@ class UpdateFileRequest(BaseSchema):
     display_name: str = Field(..., min_length=1, max_length=512, description="New display name for the file")
 
 
+class UpdateFileMetadataRequest(BaseSchema):
+    """Request body for PATCH /api/files/{file_id}/metadata."""
+    custom_metadata: Dict[str, List[str]] = Field(default_factory=dict, description="Updated custom metadata map")
+
+
 class FileDetailResponse(BaseSchema):
     """Response for GET /api/files/{file_id}."""
     file_id: str

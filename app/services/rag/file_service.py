@@ -11,7 +11,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable
+from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable, Literal
 
 from app.services.rag.llamaparse_ingest_service import get_llamaparse_ingest_service
 from app.services.rag.rag_ingest_service import get_rag_ingest_service
@@ -601,24 +601,39 @@ class FileService:
         pass
 
 
-    async def download_file(self, file_id: str, user_role: Optional[str] = None) -> tuple[BinaryIO, str, str]:
+    async def download_file(
+        self,
+        file_id: str,
+        user_role: Optional[str] = None,
+        file_format: Literal["original", "markdown"] = "original",
+    ) -> tuple[BinaryIO, str, str]:
         """
-        Download a file from Cloudflare R2.
+        Download a file artifact from Cloudflare R2.
         If user_role is provided, validates access permissions.
 
         Returns:
             tuple: (file_object, filename, mime_type)
         """
-        # Reuse get_file_by_id for database fetching and permission check
         file_doc = await self.get_file_by_id(file_id, user_role=user_role)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
+        if file_format == "markdown":
+            if not file_doc.markdown_storage_path:
+                raise NotFoundException("Markdown artifact for file", file_id)
+            storage_path = file_doc.markdown_storage_path
+            download_name = f"{Path(file_doc.display_name).stem}.md"
+            mime_type = "text/markdown"
+        else:
+            storage_path = file_doc.storage_path
+            download_name = file_doc.original_filename
+            mime_type = file_doc.mime_type
+
         try:
-            file_obj = await r2_storage.download_file(file_doc.storage_path)
-            return file_obj, file_doc.original_filename, file_doc.mime_type
+            file_obj = await r2_storage.download_file(storage_path)
+            return file_obj, download_name, mime_type
         except Exception as e:
-            logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
+            logger.error(f"Download failed for {file_id} ({file_format}): {e}", exc_info=True)
             raise StorageException(f"File download failed: {str(e)}")
 
 
@@ -660,6 +675,33 @@ class FileService:
 
         logger.info(f"File {file_id} deleted")
         return True
+
+    async def update_file_custom_metadata(self, file_id: str, new_custom_metadata: Dict[str, Any]) -> Optional[FileDocument]:
+        """Update custom metadata of a file and sync metadata counters when needed."""
+        file_doc_dict = await self.file_repo.find_by_id(file_id)
+        if not file_doc_dict:
+            raise NotFoundException("File", file_id)
+
+        normalized_metadata = new_custom_metadata or {}
+        is_valid, errors = await self.metadata_svc.validate_metadata(normalized_metadata)
+        if not is_valid:
+            raise ValidationException(f"Invalid custom metadata: {', '.join(errors)}")
+
+        old_metadata = file_doc_dict.get("custom_metadata") or {}
+        update_success = await self.file_repo.update_by_id(file_id, {"custom_metadata": normalized_metadata})
+
+        if not update_success:
+            return None
+
+        if file_doc_dict.get("status") == FileStatus.ACTIVE.value:
+            if old_metadata:
+                await self.metadata_svc.sync_metadata_counters(old_metadata, delta=-1)
+            if normalized_metadata:
+                await self.metadata_svc.sync_metadata_counters(normalized_metadata, delta=1)
+
+        file_doc_dict["custom_metadata"] = normalized_metadata
+        return _to_file_model(file_doc_dict)
+
 
     async def update_file_display_name(self, file_id: str, new_display_name: str) -> Optional[FileDocument]:
         """Update the display name of a file."""

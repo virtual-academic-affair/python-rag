@@ -23,6 +23,7 @@ from app.models.schemas import (
     SyncCheckResponse,
     SyncResponse,
     UpdateFileRequest,
+    UpdateFileMetadataRequest,
     FileParsePreviewResponse,
     FileParsePreviewPage,
     FileChunkPreviewResponse,
@@ -806,20 +807,87 @@ async def update_file(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.patch(
+    "/{file_id}/metadata",
+    response_model=FileDetailResponse,
+    summary="Update file metadata (labels/access scope)",
+)
+async def update_file_metadata(
+    file_id: str,
+    request: UpdateFileMetadataRequest,
+    _admin: Dict[str, Any] = Depends(require_admin),
+):
+    try:
+        file_svc = get_file_service()
+        normalized_metadata = convert_custom_metadata_to_snake(request.custom_metadata or {})
+        file_doc = await file_svc.update_file_custom_metadata(file_id, normalized_metadata)
+        if not file_doc:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        return FileDetailResponse(
+            file_id=str(file_doc.id),
+            store_id=file_doc.store_id,
+            original_filename=file_doc.original_filename,
+            display_name=file_doc.display_name,
+            gemini_document_name=file_doc.gemini_document_name,
+            file_size=file_doc.file_size,
+            mime_type=file_doc.mime_type,
+            storage_path=file_doc.storage_path,
+            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            file_url=get_download_url(file_doc.storage_path),
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            summary=file_doc.summary,
+            table_of_contents=file_doc.table_of_contents or [],
+            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
+            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
+        )
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating file metadata: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @router.get(
     "/{file_id}/download",
     summary="Download file",
 )
-async def download_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
+async def download_file(
+    file_id: str,
+    format: str = Query("original", description="Download format: original | markdown"),
+    _user: Dict[str, Any] = Depends(require_auth),
+):
     try:
+        allowed_formats = {"original", "markdown"}
+        requested_format = format.lower()
+        if requested_format not in allowed_formats:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid format. Allowed values: original, markdown",
+            )
+
         file_svc = get_file_service()
-        file_obj, filename, mime_type = await file_svc.download_file(file_id, user_role=_user.get("role", "student"))
+        file_obj, filename, mime_type = await file_svc.download_file(
+            file_id,
+            user_role=_user.get("role", "student"),
+            file_format=requested_format,
+        )
         file_data = file_obj.read()
         return StreamingResponse(
             BytesIO(file_data),
             media_type=mime_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except NotFoundException as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
