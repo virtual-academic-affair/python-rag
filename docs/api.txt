@@ -1,6 +1,6 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         AI SERVICE API DOCUMENTATION                         ║
-║                                  VERSION 3.1.0                               ║
+║                                  VERSION 4.6.0                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 BASE URL: http://localhost:8000
@@ -11,1387 +11,422 @@ REDOC: http://localhost:8000/redoc
 XÁC THỰC (AUTHENTICATION)
 ════════════════════════════════════════════════════════════════════════════════
 
-Các API quản lý (Store, File, Metadata write) yêu cầu JWT token với role admin.
-Token được xác thực qua gRPC call tới nest-api (AuthService.VerifyToken).
+Hệ thống bảo vệ API bằng JWT Token và phân quyền vai trò (RBAC). 
+Việc xác thực được thực hiện thông qua gRPC call tới NestJS Backend.
 
-Header bắt buộc:
+ROLE LEVELS:
+  - 🔒 admin: Toàn quyền truy cập, quản lý Metadata và Tệp tin.
+  - 🔒 lecture: CHỈ xem được các tệp có gắn nhãn `lecture`. (Không thấy tệp Student hay Nội bộ).
+  - 🔒 student: CHỈ xem được các tệp có gắn nhãn `student`. (Không thấy tệp Lecture hay Nội bộ).
+
+HEADER BẮT BUỘC:
   Authorization: Bearer <jwt_token>
 
-Token lấy từ nest-api (POST /auth/login hoặc GET /auth/google).
-Role phải là "admin" để gọi các API được bảo vệ.
-
-LỖI AUTH:
-  401 Unauthorized — Không có hoặc sai format Authorization header
-  403 Forbidden    — Token hợp lệ nhưng role không phải admin
-  503 Service Unavailable — Không thể kết nối tới nest-api gRPC
+LỖI THƯỜNG GẶP:
+  - 401 Unauthorized: Thiếu token hoặc token hết hạn.
+  - 403 Forbidden: Token hợp lệ nhưng Role không có quyền thực thi.
 
 ════════════════════════════════════════════════════════════════════════════════
 MỤC LỤC
 ════════════════════════════════════════════════════════════════════════════════
- 1. Health Check             (1 endpoint)
- 2. Email Classification     (2 endpoints)
- 3. Store Management APIs    (9 endpoints)   [🔒 Yêu cầu role admin]
- 4. Metadata Type APIs       (7 endpoints)   [🔒 Write yêu cầu admin | GET public]
- 5. File Management APIs     (11 endpoints) [🔒 Yêu cầu role admin]
- 6. Chat APIs                (2 endpoints)   [Public]
- 7. Common Error Responses
- 8. Auto Store Resolution
- 9. Email Draft Flow (Internal)
-10. RabbitMQ Message Format
+ 1. Health & Status            (2 endpoints)
+ 2. Email Classification       (2 endpoints)
+ 3. Metadata Type Management   (9 endpoints) [🔒 admin / 🔒 auth]
+ 4. File Management APIs       (9 endpoints) [🔒 admin / 🔒 auth]
+ 5. Chat & RAG Tooling         (3 endpoints) [🔒 auth]
+ 6. Real-time Notifications    (1 websocket) [🔒 auth]
+ 7. Appendix: Error Codes & Formatting
 
-TỔNG: 31 ENDPOINTS
+TỔNG: 26 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
-HƯỚNG DẪN TEST (TESTING GUIDE)
-════════════════════════════════════════════════════════════════════════════════
-
-Cấu trúc scripts/test/ (Modular Test Suite):
-  - common.sh          : Helpers & Cấu hình dùng chung.
-  - test_health.sh     : Test Health Check.
-  - test_classification.sh: Test Email Classification.
-  - test_stores.sh     : Test Store Management.
-  - test_metadata.sh   : Test Metadata Types.
-  - test_files.sh      : Test File Management.
-  - test_chat.sh       : Test Chat & Streaming.
-  - run_all.sh         : Master script chạy toàn bộ.
-
-CÁCH CHẠY TEST:
-  1. Chạy tất cả: bash scripts/test/run_all.sh
-  2. Chạy lẻ   : bash scripts/test/test_stores.sh
-  3. Tùy biến : AI_SERVICE_URL=http://... TOKEN=... bash scripts/test/run_all.sh
-
-
-════════════════════════════════════════════════════════════════════════════════
-                           1. HEALTH CHECK
+                            1. HEALTH & STATUS
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /health                                                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ:                                                                       │
-│   Kiểm tra trạng thái hoạt động của service và các kết nối bên ngoài.       │
+│ MÔ TẢ: Kiểm tra tình trạng sức khỏe của service và các kết nối phụ thuộc.    │
+│                                                                              │
+│ REQUEST: GET /health                                                         │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "3.1.0",                                                      │
+│     "version": "4.5.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true                                                 │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Kiểm tra kết nối Gemini API (gemini_client).                            │
-│   2. Kiểm tra kết nối MongoDB (Database pool).                               │
-│   3. Trả về "healthy" nếu cả 2 OK, ngược lại "degraded".                     │
-│                                                                              │
-│ GHI CHÚ: status có thể là "degraded" nếu một trong các kết nối bị lỗi.       │
+│   1. Thử gọi lệnh ping tới MongoDB.                                          │
+│   2. Thử khởi tạo Gemini client để kiểm tra API Key.                         │
+│   3. Trả về trạng thái "healthy" nếu tất cả kết nối OK.                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /                                                                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ:                                                                       │
-│   Root endpoint - kiểm tra service đang chạy.                               │
-│                                                                              │
-│ RESPONSE 200 OK:                                                             │
-│   { "message": "AI Service is running" }                                     │
-│                                                                              │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Trả về thông báo đơn giản xác nhận Web Service đang hoạt động.          │
+│ MÔ TẢ: Root endpoint xác nhận service đang chạy.                            │
+│ REQUEST: GET /                                                               │
+│ RESPONSE 200 OK: { "message": "AI Service is running" }                      │
+│ LUỒNG XỬ LÝ: Trả về thông báo tĩnh xác nhận web service đang lắng nghe.      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                       2. EMAIL CLASSIFICATION APIs
+                        2. EMAIL CLASSIFICATION
 ════════════════════════════════════════════════════════════════════════════════
 
-Service nhận email (qua RabbitMQ hoặc HTTP), phân loại và trả về label + payload.
-Có 4 label: classRegistration | task | inquiry | other
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/email/process                                                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Phân loại và trích xuất thông tin từ tiêu đề và nội dung email.       │
+│                                                                              │
+│ REQUEST EXAMPLE:                                                             │
+│   {                                                                          │
+│     "title": "Hỏi về quy trình tốt nghiệp",                                  │
+│     "content": "Chào thầy cô, khóa K62 khi nào làm đồ án?"                   │
+│   }                                                                          │
+│                                                                              │
+│ RESPONSE 200 OK:                                                             │
+│   {                                                                          │
+│     "label": "inquiry",                                                      │
+│     "inquiry": { "answer": "...", "sources": [...] }                         │
+│   }                                                                          │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Controller nhận title/content -> Gọi EmailWorkflowOrchestrator.         │
+│   2. AI phân loại email thành 1 trong 4 nhãn chuẩn.                          │
+│   3. Nếu nhãn là 'Inquiry', thực hiện RAG Search trên kho tài liệu.          │
+│   4. Gemini soạn thảo bản thảo phản hồi (Reply Draft) dựa trên context tìm được.│
+│   5. Trả về nhãn và dữ liệu bổ sung tương ứng với loại workflow.             │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-────────────────────────────────────────────────────────────────────────────────
-2.1. POST /process - Phân loại email thủ công
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Phân loại email từ HTTP request (không qua RabbitMQ).
-  Được NestJS gọi trực tiếp khi cần phân loại thủ công.
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Nhận title/content từ request body.
-  2. Gọi EmailWorkflowOrchestrator để điều phối:
-     a. LabelClassifierService kiểm tra keyword pre-check (tiết kiệm API).
-     b. Nếu không match, gọi Gemini AI phân loại theo 4 nhãn.
-     c. Dispatch tới service nghiệp vụ (ClassRegistration/Inquiry/Task/Other).
-     d. Nếu là 'inquiry', thực hiện RAG tìm kiếm tài liệu để soạn draft reply.
-  3. Trả về label đã phân loại và dữ liệu trích xuất/soạn thảo.
-
-REQUEST EXAMPLE:
-  {
-    "title": "Xin đăng ký môn học",
-    "content": "Em muốn đăng ký môn Toán cao cấp, mã môn MATH101..."
-  }
-
-RESPONSE 200 OK (label = classRegistration):
-  {
-    "messageId": 123,
-    "label": "classRegistration",
-    "extracted": {
-      "studentCode": "SV001",
-      "studentName": "Nguyễn Văn A",
-      "academicYear": 2024,
-      "note": "",
-      "messageId": 123,
-      "items": [
-        {
-          "action": "register",
-          "subjectName": "Toán cao cấp",
-          "subjectCode": "MATH101",
-          "className": "L01",
-          "slotInfo": "",
-          "isInCurriculum": true
-        }
-      ]
-    }
-  }
-
-RESPONSE 200 OK (label = inquiry):
-  {
-    "messageId": 123,
-    "label": "inquiry",
-    "inquiry": {
-      "answer": "Kính gửi...",
-      "question": "Câu hỏi của bạn",
-      "types": ["graduation"],
-      "filters": {
-        "academicYear": ["2024-2025"],
-        "cohort": ["k20"]
-      },
-      "sources": [
-        {
-          "citationId": 1,
-          "title": "Quy chế đào tạo 2026",
-          "text": "Đoạn văn liên quan...",
-          "url": "http://r2.../presigned-url",
-          "fileId": "67a5..."
-        }
-      ],
-      "messageId": 123
-    }
-  }
-
-RESPONSE 200 OK (label = task | other):
-  {
-    "messageId": 123,
-    "label": "task"
-  }
-
-WORKFLOW:
-  1. Nhận request với internal + title + content
-  2. LLM (Gemini) phân loại → classRegistration / task / inquiry / other
-  3. classRegistration: Extract thêm chi tiết đăng ký môn học
-  4. inquiry: 
-     a. Trích xuất metadata (Rule-based: Regex) cho `academicYear` và `cohort`.
-     b. Tự động hỗ trợ Tiếng Việt không dấu và các ký tự viết tắt (NH, NK, K).
-     c. Gọi RAG service để draft email reply (dùng default store).
-     d. **OR all logic**: Tự động mở rộng filter sang giá trị "all" nếu trích xuất được giá trị cụ thể.
-  5. Trả về response tương ứng với label
-
-────────────────────────────────────────────────────────────────────────────────
-2.2. POST /api/test/classification/ingested - Test từ RabbitMQ payload
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Test endpoint: mô phỏng xử lý một message từ RabbitMQ (pattern "ingested").
-  Dùng để debug pipeline mà không cần kết nối RabbitMQ thực.
-
-REQUEST EXAMPLE:
-  {
-    "pattern": "ingested",
-    "data": {
-      "messageId": 123,
-      "subject": "Xin đăng ký môn học",
-      "senderEmail": "student@example.com",
-      "senderName": "Nguyễn Văn A",
-      "content": "Em muốn đăng ký..."
-    }
-  }
-
-RESPONSE 200 OK:
-  {
-    "success": true,
-    "data": { ...same as /process response... },
-    "error": null
-  }
-
-RESPONSE 200 OK (lỗi):
-  {
-    "success": false,
-    "data": null,
-    "error": "Internal server error: ..."
-  }
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/email/test/ingested                                                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Debug xử lý RabbitMQ payload trực tiếp qua HTTP.                      │
+│                                                                              │
+│ REQUEST: { "pattern": "ingested", "data": { "subject": "...", "content": "..." }}│
+│                                                                              │
+│ RESPONSE 200 OK: { "success": true, "data": { ... } }                        │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Giả lập việc nhận một message từ queue 'email_ingest_queue'.             │
+│   2. Giải nén payload 'data' và truyền vào Orchestrator xử lý như email thực. │
+└──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        3. STORE MANAGEMENT APIs
+                        3. METADATA TYPE MANAGEMENT
 ════════════════════════════════════════════════════════════════════════════════
 
-🔒 XÁC THỰC BẮT BUỘC: Tất cả endpoint trong section này yêu cầu:
-   Header: Authorization: Bearer <jwt_token>  (role phải là "admin")
-Store là File Search store của Gemini API, dùng để lưu trữ documents cho RAG.
-Mỗi store có thể chứa nhiều documents và được sử dụng cho Chat / Email queries.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/metadata               [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tạo một loại nhãn metadata mới để phân loại tài liệu.                 │
+│                                                                              │
+│ REQUEST EXAMPLE:                                                             │
+│   {                                                                          │
+│     "key": "department",                                                     │
+│     "displayName": "Khoa đào tạo",                                           │
+│     "allowedValues": [                                                       │
+│       { "value": "cntt", "displayName": "CNTT", "color": "#3498DB" }         │
+│     ]                                                                        │
+│   }                                                                          │
+│                                                                              │
+│ RESPONSE 201: { "metadataId": "...", "key": "department", ... }              │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. MetadataService chuẩn hóa key về snake_case.                            │
+│   2. Kiểm tra key đã tồn tại trong DB chưa.                                  │
+│   3. Lưu định nghĩa vào MongoDB collection `metadata_types`.                 │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-────────────────────────────────────────────────────────────────────────────────
-3.1. POST /api/stores - Tạo Store mới
-────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/metadata                [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Liệt kê danh sách tất cả các loại nhãn metadata có trong hệ thống.    │
+│                                                                              │
+│ QUERY PARAMETERS:                                                            │
+│   - isActive: bool (optional) - Lọc nhãn đang hoạt động.                     │
+│   - keywords: string (optional) - Tìm kiếm tên nhãn.                         │
+│                                                                              │
+│ RESPONSE 200 OK: { "metadataTypes": [...], "total": 5 }                      │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Controller gọi Service lấy tất cả Metadata Types.                       │
+│   2. [MASKING]: Duyệt từng loại nhãn, lọc bỏ các `allowedValues` có          │
+│      `visibleRoles` không chứa role của User hiện tại.                       │
+│   3. [SECURITY]: Nếu User không phải Admin, ép buộc `isActive=true`.         │
+│   4. Trả về danh sách đã được lọc bảo mật.                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-MÔ TẢ:
-  Tạo một File Search store mới trên Gemini API và MongoDB.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/metadata/exists         [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Kiểm tra nhanh xem một Metadata Key đã tồn tại chưa.                  │
+│ QUERY PARAMETERS: key=string (Bắt buộc)                                      │
+│ RESPONSE 200: { "exists": true }                                             │
+│ LUỒNG XỬ LÝ: Truy vấn MongoDB tìm chính xác key đã normalize.                │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-REQUEST EXAMPLE:
-  {
-    "displayName": "Văn bản Đào tạo 2026",  // required, 1-512 chars
-    "setAsDefault": true                     // optional, default: false
-  }
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/metadata/{key}          [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy thông tin chi tiết một nhãn metadata theo Key.                    │
+│ RESPONSE 200 OK: { "key": "...", "allowedValues": [...], ... }               │
+│ LUỒNG XỬ LÝ: Áp dụng logic lọc bảo mật (Masking) tương tự như API List.      │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-RESPONSE 201 Created:
-  {
-    "storeId": "67a5f2c8abc123def456789",
-    "storeName": "fileSearchStores/van-ban-dao-tao-2026-abc123",
-    "displayName": "Văn bản Đào tạo 2026",
-    "fileCount": 0,
-    "totalSize": 0,
-    "isDefault": true,
-    "createdAt": "2026-03-11T10:30:00.000000",
-    "updatedAt": "2026-03-11T10:30:00.000000"
-  }
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/metadata/{key}        [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Cập nhật tên hiển thị, mô tả hoặc trạng thái của nhãn.               │
+│ REQUEST: { "displayName": "Tên mới", "isActive": false }                      │
+│ RESPONSE 200 OK: MetadataType sau khi cập nhật.                              │
+│ LUỒNG XỬ LÝ: Tìm nhãn theo key -> Cập nhật các trường cho phép -> Lưu DB.    │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-RESPONSE 409 Conflict:
-  { "detail": "Store name 'Văn bản Đào tạo 2026' already exists" }
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/metadata/{key}/values  [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thêm một giá trị hợp lệ mới vào danh sách `allowedValues` của nhãn.   │
+│ REQUEST: { "value": "ctsv", "displayName": "Công tác SV", "color": "#000" }  │
+│ RESPONSE 200 OK: MetadataType với mảng values mới.                           │
+│ LUỒNG XỬ LÝ: Kiểm tra key -> Kiểm tra value trùng chưa -> Push vào array.    │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-WORKFLOW:
-  1. Validate displayName
-  2. Check duplicate trong MongoDB
-  3. Generate store_name từ displayName + random suffix
-  4. Gọi Gemini API tạo file search store
-  5. Nếu set_as_default=true: unset các store khác, set store này là default.
-  6. Lưu thông tin vào MongoDB (collection file_search_stores).
-  7. Trả về thông tin store vừa tạo.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/metadata/{key}/values/{value} [🔒 ADMIN]                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Sửa thông tin hiển thị hoặc phân quyền của một giá trị nhãn.          │
+│ REQUEST: { "visibleRoles": ["lecture"] }                                     │
+│ RESPONSE 200 OK: MetadataType đã cập nhật.                                   │
+│ LUỒNG XỬ LÝ: Dùng array filters của MongoDB để update phần tử trong mảng.    │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-────────────────────────────────────────────────────────────────────────────────
-3.2. GET /api/stores - Liệt kê Stores
-────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/metadata/{key}/values/{value} [🔒 ADMIN]                         │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa một giá trị khỏi nhãn metadata.                                   │
+│ RESPONSE 200 OK: MetadataType sau khi xóa.                                   │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Kiểm tra `totalFiles` của giá trị này trong DB.                         │
+│   2. Nếu > 0: Reject (409 Conflict) vì đang có tệp tin sử dụng nhãn này.      │
+│   3. Nếu = 0: Xóa phần tử khỏi mảng `allowedValues` của document.            │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-MÔ TẢ:
-  Liệt kê tất cả stores với phân trang.
-  Dùng is_default=true để lấy default store.
-
-QUERY PARAMETERS:
-  - isDefault: bool (optional) - Lọc theo default store
-  - page: int (optional, default: 1)
-  - limit: int (optional, default: 50, max: 100)
-
-REQUEST EXAMPLE:
-  GET /api/stores?isDefault=true
-  GET /api/stores?page=1&limit=10
-
-RESPONSE 200 OK:
-  {
-    "stores": [
-      {
-        "storeId": "67a5f2c8abc123def456789",
-        "storeName": "fileSearchStores/van-ban-dao-tao-2026-abc123",
-        "displayName": "Văn bản Đào tạo 2026",
-        "fileCount": 42,
-        "totalSize": 52428800,
-        "isDefault": true,
-        "createdAt": "2026-03-11T10:30:00.000000",
-        "updatedAt": "2026-03-11T10:30:00.000000"
-      }
-    ],
-    "total": 3,
-    "page": 1,
-    "limit": 50
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Nếu query isDefault=true, tìm store có is_default: true trong MongoDB.
-  3. Ngược lại, thực hiện truy vấn phân trang (skip/limit) trong DB.
-  4. Trả về danh sách kết quả.
-
-
-────────────────────────────────────────────────────────────────────────────────
-3.4. GET /api/stores/{storeId} - Lấy chi tiết Store
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Lấy thông tin chi tiết của một store theo MongoDB ObjectId.
-
-RESPONSE 200 OK: (cùng format StoreDetailResponse)
-
-RESPONSE 404 Not Found:
-  { "detail": "Store 67a5... not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Truy vấn MongoDB theo storeId.
-  3. Trả về chi tiết store hoặc lỗi 404.
-
-────────────────────────────────────────────────────────────────────────────────
-3.5. PATCH /api/stores/{storeId} - Cập nhật Store
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Cập nhật displayName hoặc set làm default store.
-
-REQUEST EXAMPLE:
-  {
-    "displayName": "Tên mới",   // optional
-    "isDefault": true           // optional
-  }
-
-RESPONSE 200 OK: (StoreDetailResponse đã cập nhật)
-
-RESPONSE 404 Not Found:
-  { "detail": "Store not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Cập nhật displayName/isDefault trong MongoDB.
-  3. Nếu set as default, tự động cập nhật lại các store khác trong DB.
-  4. Trả về dữ liệu sau khi update.
-
-────────────────────────────────────────────────────────────────────────────────
-3.6. DELETE /api/stores/{storeId} - Xóa Store
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa một store (full delete: Gemini + R2 + MongoDB).
-
-QUERY PARAMETERS:
-  - force: bool (optional, default: false)
-    + false: Từ chối nếu store còn files
-    + true: Xóa store cùng toàn bộ files
-
-RESPONSE 204 No Content
-
-RESPONSE 400 Bad Request:
-  { "detail": "Store still has files. Use force=true to delete anyway." }
-
-RESPONSE 404 Not Found:
-  { "detail": "Store not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Nếu force=false: Kiểm tra store có chứa file không. Nếu có, báo lỗi 400.
-  3. Nếu force=true: Thực hiện xóa hết file trong store (Gemini + R2 + DB) trước.
-  4. Gọi Gemini API xóa store trên cloud.
-  5. Xóa bản ghi trong MongoDB.
-
-────────────────────────────────────────────────────────────────────────────────
-3.7. DELETE /api/stores/all - Xóa tất cả Stores
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa toàn bộ stores (full delete: Gemini + R2 + MongoDB).
-  ⚠️ NGUY HIỂM: Không thể hoàn tác!
-
-RESPONSE 200 OK:
-  {
-    "deletedCount": 3,
-    "message": "Deleted 3 stores (full delete)"
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Duyệt danh sách tất cả store trong MongoDB.
-  2. Thực hiện xóa triệt để từng store (Gemini API + R2 files + DB records).
-  3. Trả về tổng số lượng store đã xóa thành công.
-
-
-────────────────────────────────────────────────────────────────────────────────
-3.9. POST /api/stores/{storeId}/sync - Đồng bộ thống kê Store
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Cập nhật file_count và total_size từ Gemini API vào MongoDB.
-
-RESPONSE 200 OK: (StoreDetailResponse với thống kê đã cập nhật)
-
-RESPONSE 404 Not Found:
-  { "detail": "Store not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Gọi Gemini API lấy thông số thực tế (active_documents_count, size_bytes).
-  3. Cập nhật file_count và total_size tương ứng vào MongoDB.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/metadata/{key}       [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xoá hoàn toàn một định nghĩa nhãn metadata.                           │
+│ RESPONSE 204: No Content.                                                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Kiểm tra nhãn có phải nhãn hệ thống (isSystem=true) không -> Chặn xóa.   │
+│   2. Kiểm tra tổng tệp (totalFiles) của nhãn -> Nếu > 0 reject xóa.          │
+│   3. Thực hiện Hard Delete record trong MongoDB.                             │
+└──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        4. METADATA TYPE APIs
+                        4. FILE MANAGEMENT
 ════════════════════════════════════════════════════════════════════════════════
 
-🔒 XÁC THỰC:
-   - GET /api/metadata                        → Authentication: Required (any valid user)
-   - GET /api/metadata/{key}                  → Authentication: Required (any valid user)
-   - POST /api/metadata                       → Yêu cầu role admin
-   - PATCH /api/metadata/{key}                → Yêu cầu role admin
-   - POST /api/metadata/{key}/values          → Yêu cầu role admin
-   - PATCH /api/metadata/{key}/values/{value} → Yêu cầu role admin
-   - DELETE /api/metadata/{key}               → Yêu cầu role admin
-   - DELETE /api/metadata/{key}/values/{value}→ Yêu cầu role admin
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files                  [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Upload tệp tin gốc và kích hoạt quy trình bóc tách RAG tự động.       │
+│                                                                              │
+│ REQUEST (Multipart):                                                         │
+│   - file: <binary>                                                           │
+│   - displayName: "Văn bản A"                                                 │
+│   - customMetadata: string JSON (vd: '{"cohort":["k20"]}')                   │
+│                                                                              │
+│ RESPONSE 201: { "fileId": "67...", "status": "uploading", ... }              │
+│   - Bao gồm: tableOfContents (list phẳng), summary (tóm tắt văn bản).        │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. FileService.upload_file_quick: Lưu tạm -> Upload R2 -> Tạo Mongo record.│
+│   2. Trả về kết quả ngay lập tức kèm trạng thái "uploading".                 │
+│   3. Kích hoạt BackgroundTask chạy process_file_background.                  │
+│   4. Background: LlamaParse bóc tách -> PageIndex sinh Tree -> Qdrant Embed. │
+│   5. Hoàn tất: Update status="ready" và sync bộ đếm Metadata.                │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-Metadata Type là định nghĩa các trường metadata có thể gắn vào file khi upload.
-Được dùng để filter documents trong RAG (Gemini File Search filter string).
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/parse-preview    [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống).   │
+│ REQUEST: - file: <binary>                                                    │
+│ RESPONSE: { "pages": [{"pageIndex": 0, "markdown": "..."}] }                 │
+│ LUỒNG XỬ LÝ: Gửi tệp tới LlamaParse API và trả về kết quả thô ngay lập tức.  │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-GHI CHÚ VỀ CHUẨN HÓA (CASE NORMALIZATION):
-  - Hệ thống tự động chuẩn hóa metadata keys và list string values về snake_case trong DB.
-  - API hỗ trợ nhận cả camelCase và snake_case cho key và value (input flexibility).
-  - Kết quả trả về từ API sẽ duy trì camelCase cho keys để đồng bộ project.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/chunk-preview    [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks).       │
+│ RESPONSE: { "chunkCount": 25, "chunks": [...] }                              │
+│ LUỒNG XỬ LÝ: Gọi LlamaParse sau đó chạy logic ChunkingService cục bộ.        │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-────────────────────────────────────────────────────────────────────────────────
-4.1. POST /api/metadata - Tạo Metadata Type
-────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/files                   [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Liệt kê tệp tin đính kèm bộ lọc (Dành cho Student/Lecture).           │
+│                                                                              │
+│ QUERY PARAMETERS:                                                            │
+│   - fileStatus: string (ready|processing|failed)                             │
+│   - metadataFilter: JSON string (VD: {"cohort":["k63"]})                     │
+│   - keywords: string (Tìm theo tên tệp)                                      │
+│   - page/limit: Phân trang (mặc định 1/50)                                   │
+│                                                                              │
+│ RESPONSE 200 OK: { "files": [...], "total": 120 }                            │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Phân tích JWT Rule -> Nếu không phải Admin: ép thêm filter accessScope. │
+│   2. Chú ý: Tệp không có nhãn accessScope sẽ bị ẩn đối với Student/Lecture.  │
+│   3. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
+│   4. Truy vấn MongoDB trả về danh sách tệp Metadata Masked.                  │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-MÔ TẢ:
-  Tạo một metadata field type mới.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/files/admin             [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Liệt kê tệp tin dành cho quản trị viên (Thấy toàn bộ tệp internal).   │
+│ LUỒNG XỬ LÝ: Tương tự API /files nhưng không áp dụng Filter bảo mật, cho     │
+│ phép xem các tệp có access_scope=[].                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-REQUEST EXAMPLE:
-  {
-    "key": "department",              // required, unique
-    "displayName": "Phòng ban",       // required
-    "description": "Phòng ban phụ trách tài liệu",
-    "allowedValues": [
-      {
-        "value": "dao_tao",
-        "displayName": "Đào tạo",
-        "isActive": true,
-        "color": "#3498DB",
-        "visibleRoles": ["lecture", "student"]
-      },
-      {
-        "value": "khcn",
-        "displayName": "KHCN",
-        "isActive": true,
-        "color": "#2ECC71",
-        "visibleRoles": ["lecture", "student"]
-      },
-      {
-        "value": "all",
-        "displayName": "Tất cả",
-        "isActive": true,
-        "color": "#95A5A6",
-        "visibleRoles": ["admin", "lecture", "student"]
-      }
-    ]
-  }
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/batch            [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Upload đồng thời nhiều tệp tin.                                       │
+│ REQUEST: - files: [binary], - displayNames: JSON, - metadataList: JSON       │
+│ RESPONSE: { "total": 5, "successful": 4, "failed": 1, "results": [...] }     │
+│ LUỒNG XỬ LÝ: Chạy vòng lặp gọi hàm upload đơn lẻ cho từng thành phần.        │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-GHI CHÚ:
-  - hasAllValue tự động tính từ allowedValues: true nếu allowedValues chứa value="all"
-  - Để filter builder tự thêm OR key="all", hãy thêm AllowedValue với value="all" vào danh sách
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/files/{fileId}          [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy thông tin chi tiết một tệp tin.                                   │
+│ RESPONSE: FileDetailResponse kèm Presigned URLs, tableOfContents và summary. │
+│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2 thời hạn 3600 giây.         │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-GHI CHÚ:
-  - isActive mặc định là true (không cần truyền khi tạo)
-  - isSystem mặc định là false (không cần truyền khi tạo)
-  - color chỉ có ở allowedValues, không có ở metadata type level
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/files/{fileId}        [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Đổi tên hiển thị (displayName) của tệp tin.                           │
+│ REQUEST: { "displayName": "Tên mới" }                                        │
+│ RESPONSE: FileDetail đã cập nhật.                                            │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-RESPONSE 201 Created:
-  {
-    "metadataId": "67a5f2c8abc123def456790",
-    "key": "department",
-    "displayName": "Phòng ban",
-    "description": "Phòng ban phụ trách tài liệu",
-    "allowedValues": [
-      {
-        "value": "dao_tao",
-        "displayName": "Đào tạo",
-        "isActive": true,
-        "color": "#3498DB",
-        "visibleRoles": ["lecture", "student"],
-        "totalFiles": 10
-      }
-    ],
-    "totalFiles": 25,
-    "isActive": true,
-    "isSystem": false,
-    "createdAt": "2026-03-11T10:30:00.000000",
-    "updatedAt": "2026-03-11T10:30:00.000000"
-  }
-
-RESPONSE 409 Conflict:
-  { "detail": "Metadata type 'department' already exists" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Kiểm tra trùng lặp key trong MongoDB.
-  3. Lưu định nghĩa metadata mới (kèm allowedValues nếu có) vào DB.
-
-────────────────────────────────────────────────────────────────────────────────
-4.2. GET /api/metadata - Liệt kê Metadata Types
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Liệt kê tất cả metadata type definitions.
-  Kết quả được sắp xếp ưu tiên Metadata Hệ thống (`isSystem=true`) lên đầu, sau đó theo thời gian tạo.
-  Authentication: Required (any valid user)
-
-QUERY PARAMETERS:
-  - isActive: bool (optional) - Lọc theo trạng thái isActive của metadata type.
-  - keywords: string (optional) - Tìm kiếm theo displayName của cả key và value.
-
-RESPONSE 200 OK:
-  {
-    "metadataTypes": [
-      {
-        "metadataId": "67a5f2c8abc123def456790",
-        "key": "department",
-        "displayName": "Phòng ban",
-        ...
-      }
-    ],
-    "total": 5
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth (bất kỳ user nào đã login).
-  2. Nếu user không phải Admin: ép buộc isActive=true. Chỉ lấy Metadata Key đang hoạt động.
-  3. Lọc Allowed Values: Nếu user không phải Admin, chỉ lấy các giá trị có isActive=true.
-  4. Nếu user là Admin: cho phép dùng query isActive (true/false/không truyền).
-  5. Nếu có keywords, tìm kiếm case-insensitive trong displayName của MetadataType và AllowedValue.
-  4. Lọc lấy toàn bộ metadata types từ MongoDB.
-
-
-────────────────────────────────────────────────────────────────────────────────
-4.3. GET /api/metadata/exists - Kiểm tra metadata key tồn tại
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Kiểm tra xem một metadata key đã tồn tại trong hệ thống hay chưa.
-
-🔒 XÁC THỰC:
-   Header: Authorization: Bearer <jwt_token> (Role: admin)
-
-QUERY PARAMETERS:
-  - key: string (required) - Key cần kiểm tra.
-
-RESPONSE 200 OK:
-  {
-    "exists": true
-  }
-
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Normalize key sang snake_case.
-  3. Tìm kiếm trong MongoDB xem có metadata type nào trùng key hay chưa.
-  4. Trả về true nếu tìm thấy, false nếu không.
-
-────────────────────────────────────────────────────────────────────────────────
-4.4. GET /api/metadata/{key} - Lấy Metadata Type theo key
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Lấy thông tin chi tiết của một metadata type theo key.
-  Authentication: Required (any valid user)
-
-RESPONSE 200 OK: (MetadataTypeResponse)
-
-RESPONSE 404 Not Found:
-  { "detail": "Metadata type 'department' not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Tìm metadata type trong MongoDB theo key.
-
-────────────────────────────────────────────────────────────────────────────────
-4.5. PATCH /api/metadata/{key} - Cập nhật Metadata Type
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Cập nhật metadata type. Không thể thay đổi key, isSystem, hoặc allowed_values bằng API này (sử dụng APIs riêng cho values).
-  LƯU Ý: Đối với System Metadata (`isSystem=true`), KHÔNG thể cập nhật trạng thái `isActive`.
-
-REQUEST EXAMPLE:
-  {
-    "displayName": "Tên mới",      // optional
-    "description": "Mô tả mới",    // optional
-    "isActive": true               // optional
-  }
-
-RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Validate: Không cho phép đổi key hoặc isSystem.
-  3. Cập nhật các trường thông tin chung vào MongoDB.
-
-────────────────────────────────────────────────────────────────────────────────
-4.6. POST /api/metadata/{key}/values - Thêm Metadata Value
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Thêm một allowed_value mới vào metadata type có sẵn.
-  LƯU Ý: Đối với System Metadata (`isSystem=true`), cấu hình `accessScope` KHÔNG được phép thêm giá trị mới.
-
-REQUEST EXAMPLE:
-  {
-    "value": "ctsv",                       // required
-    "displayName": "CTSV",                 // required
-    "isActive": true,                      // required/default true
-    "color": "#E74C3C",                    // optional
-    "visibleRoles": ["student"]   // optional, list of 'lecture' or 'student'. Empty = Admin only.
-  }
-
-RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
-RESPONSE 409 Conflict: Nếu value đã tồn tại.
-
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Check xem key tồn tại không.
-  3. Push giá trị mới vào mảng allowedValues.
-
-────────────────────────────────────────────────────────────────────────────────
-4.7. PATCH /api/metadata/{key}/values/{value} - Cập nhật Metadata Value
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Cập nhật một allowed_value trong metadata type (màu, tên hiển thị, trạng thái, role hiển thị). Value (khóa) không thể đổi.
-  LƯU Ý (System Metadata):
-  - `accessScope`: KHÔNG thể cập nhật `isActive`.
-  - `academicYear` / `cohort`: KHÔNG thể cập nhật `isActive` cho giá trị `all`.
-
-REQUEST EXAMPLE:
-  {
-    "displayName": "Công tác Sinh viên",   // optional
-    "isActive": false,                     // optional
-    "color": "#000000",                    // optional
-    "visibleRoles": []              // optional, empty = Admin only
-  }
-
-RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
-RESPONSE 404 Not Found: Nếu value không tồn tại.
-
-────────────────────────────────────────────────────────────────────────────────
-4.8. DELETE /api/metadata/{key} - Xóa Metadata Type (Hard Delete)
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Hard delete: xóa hoàn toàn metadata type khỏi hệ thống.
-  CHỈ cho phép xóa nếu số lượng file đang dùng tag này (totalFiles) bằng 0.
-  Không thể xóa nếu isSystem=true.
-
-RESPONSE 204 No Content:
-  (Thành công, không có body)
-RESPONSE 409 Conflict:
-  { "detail": "Cannot delete metadata type 'department' because it is in use by 5 files." }
-
-RESPONSE 403 Forbidden:
-    { "detail": "Cannot delete system metadata type: 'accessScope'. 'accessScope' is protected." }
-
-RESPONSE 404 Not Found:
-  { "detail": "Metadata type 'department' not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Kiểm tra isSystem: Chặn xóa metadata hệ thống (403).
-  3. Kiểm tra totalFiles: Chặn xóa nếu có file đang sử dụng metadata này (409).
-  4. Hard delete bản ghi khỏi MongoDB.
-
-────────────────────────────────────────────────────────────────────────────────
-4.9. DELETE /api/metadata/{key}/values/{value} - Xóa một giá trị metadata
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa cứng một giá trị khỏi danh sách allowed_values.
-  Chỉ có thể xóa nếu totalFiles của giá trị này bằng 0.
-  LƯU Ý (System Metadata):
-  - `accessScope`: Cấm xóa bất kỳ giá trị nào.
-  - `academicYear` / `cohort`: Cấm xóa giá trị `all`.
-  Nếu giá trị đang được sử dụng bởi file nào đó, trả về 409 Conflict.
-
-RESPONSE 200 OK: (MetadataTypeResponse đã cập nhật)
-
-RESPONSE 409 Conflict:
-  { "detail": "Cannot delete value 'xxx' because it is still used by N files." }
-
-RESPONSE 404 Not Found:
-  { "detail": "Value 'xxx' not found in metadata type 'yyy'" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Kiểm tra total_files của giá trị metadata cụ thể.
-  3. Nếu total_files > 0: Từ chối xóa (409).
-  4. Thực hiện xóa giá trị đó khỏi mảng allowedValues trong DB.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/files/{fileId}       [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
+│ RESPONSE 204: No Content.                                                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Qdrant: Xóa toàn bộ Vector points mang file_id tương ứng.               │
+│   2. R2: Xóa binary file gốc và binary file markdown bóc tách.                │
+│   3. Metadata Service: Gọi sync để TRỪ bộ đếm totalFiles của các tag cũ.     │
+│   4. MongoDB: Xóa bản ghi tệp và bản ghi TOC Tree.                           │
+└──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        5. FILE MANAGEMENT APIs
+                        5. CHAT & RAG TOOLING
 ════════════════════════════════════════════════════════════════════════════════
 
-🔒 XÁC THỰC BẮT BUỘC: Tất cả endpoint trong section này yêu cầu:
-   Header: Authorization: Bearer <jwt_token>  (role phải là "admin")
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/chat/query             [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Hỏi đáp thông minh đồng bộ trên kho tài liệu bóc tách.                │
+│                                                                              │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "question": "Quy trình xin thôi học?",                                   │
+│     "chatHistory": [],                                                       │
+│     "metadataFilter": {"academicYear": ["2025"]}                             │
+│   }                                                                          │
+│                                                                              │
+│ RESPONSE 200 OK:                                                             │
+│   {                                                                          │
+│     "answer": "Theo quyết định số...",                                       │
+│     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
+│     "processingTimeMs": 2500                                                 │
+│   }                                                                          │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. RetrievalService: Vector search lấy Top-30 chunks (Coarse Search).      │
+│   2. PageIndex Semantic Reranking: Tính toán DocScore từng File dựa trên     │
+│      mẫu 30 chunks này để chọn ra Top-5 Files tốt nhất (Fine Selection).     │
+│   3. Build Context: Kết hợp descriptions của Files tìm được và lịch sử chat. │
+│   4. Agentic Loop: LLM quyết định dùng Tools (PageIndex) để đọc sâu tài liệu.│
+│   5. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-Files được lưu trong R2 (binary) và indexed trong Gemini File Search.
-🔒 XÁC THỰC:
-   - GET /api/files                  → Authentication: Required (any valid user)
-   - GET /api/files/{fileId}        → Authentication: Required (any valid user)
-   - GET /api/files/{fileId}/download → Authentication: Required (any valid user)
-   - GET /api/files/check-sync       → Yêu cầu role admin
-   - Các API khác (Upload, Batch, Sync, Delete) → Yêu cầu role admin
-────────────────────────────────────────────────────────────────────────────────
-5.1. POST /api/files - Upload File
-────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/chat/stream            [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Hỏi đáp RAG thời gian thực qua Web Stream (SSE).                      │
+│                                                                              │
+│ RESPONSE (Event Stream):                                                     │
+│   - Từng từ: data: {"chunk": "token", "done": false}                         │
+│   - Kết thúc: data: {"done": true, "sources": [...]}                         │
+│                                                                              │
+│ LUỒNG XỬ LÝ: Tương tự `/query` nhưng response được chunking ngay lập tức.    │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-MÔ TẢ:
-  Upload file lên R2 và Gemini File Search (luôn đồng bộ - chờ Gemini hoàn thành).
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/chat/retrieve-preview  [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xem trước các đoạn văn bản (Chunks) mà RAG tìm được cho câu hỏi.      │
+│                                                                              │
+│ REQUEST: { "question": "...", "topK": 5, "minScore": 0.3 }                   │
+│                                                                              │
+│ RESPONSE: { "items": [{"rank": 1, "score": 0.85, "text": "...", ...}] }      │
+│                                                                              │
+│ LUỒNG XỬ LÝ: Thực thi Vector Search nguyên bản trên Qdrant và trả về metadata.│
+└──────────────────────────────────────────────────────────────────────────────┘
 
-YÊU CẦU METADATA (BẮT BUỘC):
-  - access_scope: phải có (chỉ nhận "private", "student", "lecture"). Khi có "private" thì không được nhận "student"/"lecture", và ngược lại nếu có "student"/"lecture" thì không được nhận "private".
-  - academicYear HOẶC cohort: phải có ít nhất một trong hai
-
-REQUEST (multipart/form-data):
-  - file: <binary>                                                        // required
-  - storeId: "67a5f2c8abc123def456789"                                   // optional
-  - displayName: "Quy chế đào tạo 2026"                                 // optional
-  - customMetadata: '{"accessScope":["student"],"academicYear":["2024-2025"]}' // required
-
-RESPONSE 201 Created:
-  {
-    "fileId": "67a5f2c8abc123def456791",
-    "storeId": "67a5f2c8abc123def456789",
-    "originalFilename": "document.pdf",
-    "displayName": "Quy chế đào tạo 2026",
-    "fileSize": 1048576,
-    "mimeType": "application/pdf",
-    "status": "active",
-    "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
-    "customMetadata": {"accessScope": ["student"], "academicYear": ["2024-2025"]},
-    "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
-    "createdAt": "2026-03-11T10:30:00.000000",
-    "message": "File uploaded successfully"
-  }
-
-RESPONSE 400 Bad Request:
-  { "detail": "File type not allowed. Allowed: .pdf, .docx, .doc, .txt, .md, .html, .xlsx, .xls, .pptx, .csv, .rtf" }
-  { "detail": "File size exceeds maximum of 20 MB" }
-  { "detail": "Invalid custom_metadata JSON format" }
-  { "detail": "Metadata 'access_scope' is required." }
-  { "detail": "Must include at least one of 'academicYear' or 'cohort'." }
-
-RESPONSE 409 Conflict:
-  { "detail": "A file with this name already exists in the store" }
-
-WORKFLOW:
-  1. Validate file type và size
-  2. Resolve store (param → default store → error)
-  3. Validate metadata: accessScope bắt buộc, phải có academicYear hoặc cohort
-  4. Validate từng metadata value với registered metadata types
-  5. Lưu temporary file
-  6. Upload lên R2
-  7. Upload Gemini (đồng bộ), đợi hoàn thành, return với status='active'
-
-ROLLBACK:
-  Nếu lỗi: Gemini → R2 → MongoDB (theo thứ tự ngược)
-
-────────────────────────────────────────────────────────────────────────────────
-5.2. GET /api/files - Liệt kê Files
-────────────────────────────────────────────────────────────────────────────────
-
-QUERY PARAMETERS:
-  - page           : (optional, int, default: 1)
-  - limit          : (optional, int, default: 50)
-  - fileStatus     : (optional, str) Filter by file status (active, processing, failed)
-  - keywords       : (optional, str) Search by display_name (partial match)
-  - metadataFilter : (optional, str/JSON) JSON filter string. 
-    + **Multiple Values (OR - BẮT BUỘC)**: `{"cohort": ["K65", "K66"]}`, `{"academicYear": ["2024-2025"]}`
-    + **Lưu ý**: Endpoint filter BẮT BUỘC phải truyền mảng (list) cho các value, nếu truyền Single Value (ví dụ: `{"cohort": "K65"}`) sẽ báo lỗi HTTP 400.
-    + **Multiple Keys (AND)**: `{"cohort": ["K65"], "academicYear": ["2024-2025"]}`
-    + **'all' value logic**: Tự động hỗ trợ giá trị "all" nếu được định nghĩa trong Metadata Type.
-
-REQUEST EXAMPLE (Auth Required):
-  GET /api/files?page=1&limit=20&metadataFilter={"cohort":["K65","K66"]}
-
-LƯU Ý: Endpoint này luôn lấy danh sách file từ store mặc định (default store).
-
-RESPONSE 200 OK:
-  {
-    "files": [
-      {
-        "fileId": "67a5f2c8abc123def456791",
-        "storeId": "67a5f2c8abc123def456789",
-        "originalFilename": "document.pdf",
-        "displayName": "Quy chế đào tạo 2026",
-        "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
-        "fileSize": 1048576,
-        "mimeType": "application/pdf",
-        "storagePath": "xxx/2026/03/document.pdf",
-        "status": "active",
-        "customMetadata": {"department": ["dao_tao"]},
-        "fileUrl": "https://hcmus.app/store-xxx/2026/03/document.pdf",
-        "createdAt": "2026-03-11T10:30:00.000000",
-        "updatedAt": "2026-03-11T10:30:00.000000"
-      }
-    ],
-    "limit": 50
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Lấy storeId mặc định qua resolve_store(None).
-  3. Parse query filters: fileStatus, metadataFilter, keywords.
-  4. Lọc MongoDB: Hỗ trợ query theo mảng hoặc giá trị đơn qua $in.
-  5. Trả về danh sách file kèm metadata dạng camelCase.
-  6. Đã tích hợp filter `visibleRoles`: mọi user khi lấy file list/detail chỉ nhận được những metadata field phù hợp với ROLE của mình (key sẽ bị xóa nếu user không thuộc `visibleRoles` của allowedValues). **ADMIN có quyền xem tất cả metadata bất kể cấu hình này.**
-
-
-────────────────────────────────────────────────────────────────────────────────
-5.3. GET /api/files/admin - Liệt kê Files (Admin)
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Admin có thể liệt kê file từ bất kỳ store nào hoặc xem tất cả file từ mọi store.
-
-QUERY PARAMETERS:
-  - storeId        : (optional, str) Filter theo store (ví dụ: fileSearchStores/xxx)
-  - fileStatus     : (optional, str) active|processing|failed
-  - metadataFilter : (optional, json) {"academicYear": ["2024-2025"], ...}
-  - keywords       : (optional, str) Search theo displayName
-  - page, limit    : Pagination
-
-RESPONSE 200 OK:
-  Giống GET /api/files nhưng không lọc theo default store nếu storeId=None.
-
-
-────────────────────────────────────────────────────────────────────────────────
-5.3. GET /api/files/admin - Liệt kê Files (Admin)
------------------------------------------------
-**Description:** Admin list files across all stores or filtered by storeId.
-**Method:** GET
-**Authentication:** Required (Admin)
-
-**Query Parameters:** (Tương tự `GET /api/files`)
-- `storeId` (optional): Filter theo store. Nếu không truyền, admin sẽ thấy file của MỌI store.
-- `fileStatus` (optional): Tình trạng file.
-- `metadataFilter` (optional): JSON string.
-- `keywords` (optional): Tìm trong displayName.
-- `page`, `limit`
-
-**Response:**
-  Giống GET /api/files nhưng không lọc theo default store nếu storeId=None.
------------------------------------------------
-
-5.4. GET /api/files/{fileId} - Lấy chi tiết File
-────────────────────────────────────────────────────────────────────────────────
-
-RESPONSE 200 OK: (FileDetailResponse)
-
-RESPONSE 404 Not Found:
-  { "detail": "File 67a5... not found" }
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Truy vấn MongoDB theo fileId.
-  3. Áp dụng filter `visibleRoles`: loại bỏ các key trong `customMetadata` nếu role của user không nằm trong `visibleRoles` của giá trị đó. **Admin bypass filter này.**
-  4. Trả về chi tiết file kèm metadata đã lược bỏ các field không được phép, hoặc lỗi 404.
-
-────────────────────────────────────────────────────────────────────────────────
-5.5. GET /api/files/{fileId}/download - Download File
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Download file binary từ R2 storage.
-
-RESPONSE 200 OK:
-  Content-Type: application/pdf (hoặc mime type tương ứng)
-  Content-Disposition: attachment; filename="document.pdf"
-  <binary stream>
-
-RESPONSE 404 Not Found:
-  { "detail": "File not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_auth.
-  2. Lấy thông tin file từ MongoDB để biết storagePath.
-  3. Stream dữ liệu từ Cloudflare R2 về cho client.
-
-────────────────────────────────────────────────────────────────────────────────
-5.6. DELETE /api/files/{fileId} - Xóa File
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa file (hard delete: R2 + Gemini + MongoDB).
-
-RESPONSE 204 No Content
-
-RESPONSE 404 Not Found:
-  { "detail": "File not found" }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Lấy thông tin file từ MongoDB.
-  3. Xóa file trên Gemini File Search API.
-  4. Xóa file trên Cloudflare R2.
-  5. Xóa bản ghi trong MongoDB.
-  6. Cập nhật lại total_files trong Metadata Type.
-
-────────────────────────────────────────────────────────────────────────────────
-5.7. PATCH /api/files/{fileId} - Cập nhật thông tin File
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Cập nhật thông tin cơ bản của file (hiện tại hỗ trợ displayName) trong Database. Không cập nhật/đồng bộ tên hiển thị sang Gemini File Search.
-
-REQUEST EXAMPLE:
-  {
-    "displayName": "Tên Hiển Thị Mới Của File" 
-  }
-
-RESPONSE 200 OK: (FileDetailResponse đã cập nhật)
-
-RESPONSE 404 Not Found: Nếu file không tồn tại.
-
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Tìm kiếm file theo ID trong MongoDB.
-  3. Cập nhật displayName cho bản ghi file trong DB và trả về dict.
-
-────────────────────────────────────────────────────────────────────────────────
-5.8. POST /api/files/batch - Batch Upload Files
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Upload nhiều files cùng lúc (multipart/form-data).
-
-REQUEST (multipart/form-data):
-  - files: <binary[]>                                              // required, multiple
-  - storeId: "67a5f2c8abc123def456789"                           // optional
-  - displayNames: '["Tên 1", null, "Tên 3"]'                    // optional, JSON array
-  - metadataList: '[{"department":"dt"}, {}, {"cat":"policy"}]'  // optional, JSON array
-
-RESPONSE 201 Created:
-  {
-    "total": 3,
-    "successful": 2,
-    "failed": 1,
-    "results": [
-      {
-        "originalFilename": "doc1.pdf",
-        "success": true,
-        "fileId": "67a5...",
-        "storeId": "67a5...",
-        "displayName": "Tên 1",
-        "error": null
-      },
-      {
-        "originalFilename": "doc2.pdf",
-        "success": false,
-        "fileId": null,
-        "error": "File type not allowed"
-      }
-    ]
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Duyệt qua từng file trong danh sách gửi lên.
-  3. Thực hiện luồng upload (R2 + Gemini + DB + Metadata Update) cho mỗi file.
-  4. Trả về tổng hợp kết quả thành công/thất bại.
-
-────────────────────────────────────────────────────────────────────────────────
-5.9. DELETE /api/files/all - Xóa toàn bộ files
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Xóa toàn bộ files trong store (R2 + Gemini + MongoDB).
-  ⚠️ NGUY HIỂM: Không thể hoàn tác!
-
-QUERY PARAMETERS:
-  - storeId: string (optional) - ID của store cần xóa file (dùng default nếu bỏ qua)
-
-RESPONSE 200 OK:
-  {
-    "deletedCount": 42,
-    "message": "Deleted 42 files from store 67a5..."
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Lấy danh sách tất cả file thuộc store cụ thể (hoặc default store).
-  3. Thực hiện xóa triệt để từng file (Gemini + R2 + MongoDB).
-
-
-────────────────────────────────────────────────────────────────────────────────
-5.11. GET /api/files/check-sync - Kiểm tra đồng bộ
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  So sánh trạng thái file giữa MongoDB, R2 và Gemini.
-  Trả về danh sách các file bị lệch sync cùng loại vấn đề.
-
-RESPONSE 200 OK:
-  {
-    "isSynced": false,
-    "totalDb": 42,
-    "totalR2": 41,
-    "totalGemini": 40,
-    "syncedCount": 39,
-    "issues": [
-      {
-        "fileId": "67a5...",
-        "originalFilename": "document.pdf",
-        "storagePath": "xxx/document.pdf",
-        "geminiDocumentName": null,
-        "issue": "missing_in_gemini"
-      }
-    ]
-  }
-
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Lấy danh sách file IDs từ: MongoDB, R2 (storage layer) và Gemini (File Search store).
-  3. So sánh chéo để phát hiện file bị thiếu/thừa giữa 3 hệ thống.
-  4. Trả về chi tiết các vấn đề lệch sync.
- 
-ISSUE TYPES:
-  missing_in_gemini — File có trong DB + R2 nhưng không có trong Gemini
-  missing_in_r2  — File có trong DB (có gemini_document_name) nhưng không có trong R2
-  in_db_only        — File có trong DB nhưng thiếu cả storage_path lẫn gemini_document_name
-  in_r2_only     — Object trong R2 không có record trong DB
-  in_gemini_only    — Document trong Gemini không có record trong DB
-
-────────────────────────────────────────────────────────────────────────────────
-5.12. POST /api/files/sync - Đồng bộ files
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Tự động giải quyết tất cả vấn đề sync được phát hiện.
-
-SYNC RULES:
-  missing_in_gemini (có DB + R2): Re-upload file từ R2 lên Gemini
-  Các loại khác (in_db_only, missing_in_r2, in_r2_only, in_gemini_only):
-    → Xóa record/object bị thừa
-
-RESPONSE 200 OK:
-  {
-    "totalIssues": 3,
-    "uploadedToGemini": 1,
-    "deleted": 2,
-    "failed": 0,
-    "results": [
-      {
-        "fileId": "67a5...",
-        "originalFilename": "document.pdf",
-        "storagePath": "xxx/document.pdf",
-        "geminiDocumentName": "fileSearchStores/xxx/documents/yyy",
-        "action": "upload_to_gemini",
-        "success": true,
-    ]
-  }
- 
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Guard: require_admin.
-  2. Chạy check_sync để tìm các issues.
-  3. Xử lý repair:
-     - missing_in_gemini: Re-upload từ R2 lên Gemini.
-     - Các lỗi khác: Xóa các phần thừa (record DB, object R2 hoặc Gemini doc).
-  4. Trả về kết quả thực hiện sync.
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                             6. CHAT APIs
+                        6. REAL-TIME NOTIFICATIONS
 ════════════════════════════════════════════════════════════════════════════════
 
-Chat APIs sử dụng Gemini RAG với Gemini File Search để trả lời câu hỏi.
-Session history do NestJS quản lý và gửi kèm trong mỗi request.
-
-────────────────────────────────────────────────────────────────────────────────
-6.1. POST /api/chat/query - Chat query (không streaming)
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Trả lời câu hỏi dựa trên RAG (đợi đến khi có toàn bộ câu trả lời).
-
-AUTH REQUIRED:
-  Header: Authorization: Bearer <token>
-
-REQUEST EXAMPLE:
-  {
-    "question": "Điều kiện tốt nghiệp là gì?",
-    "chatHistory": [
-      {
-        "role": "user",
-        "content": "Câu hỏi trước",
-        "timestamp": "2026-03-11T10:00:00"
-      },
-      {
-        "role": "assistant",
-        "content": "Câu trả lời trước",
-        "timestamp": "2026-03-11T10:00:05"
-      }
-    ],
-    "metadataFilter": {                     // optional, filter theo metadata
-      "department": ["dao_tao"],
-      "accessScope": ["student"]
-    }
-  }
-
-RESPONSE 200 OK:
-  {
-    "answer": "Để tốt nghiệp, sinh viên cần...",
-    "sources": [
-      {
-        "title": "Quy chế đào tạo 2026",
-        "text": "Điều 15: Điều kiện tốt nghiệp...",
-        "url": "http://localhost:9000/presigned-url/...",
-        "fileId": "67a5..."
-      }
-    ],
-    "tokenUsage": {
-      "prompt_tokens": 1234,
-      "candidates_tokens": 256,
-      "total_tokens": 1490
-    },
-    "processingTimeMs": 2340
-  }
-
-RESPONSE 400 Bad Request:
-  { "detail": "No store available. Please create a store first." }
-
-WORKFLOW:
-  1. Resolve default store (nếu bỏ trống storeId → gọi default store → error)
-  2. Bắt buộc require_auth() → Lấy role từ JWT Header
-  3. Enforce accessScope theo Auth Role:
-     - student: Only "student" scope
-     - lecture: Only "lecture" scope
-     - admin: All scopes
-  4. Gọi Gemini generate_content với File Search tool
-  5. Extract sources từ grounding metadata
-  6. Lấy presigned URLs cho mỗi source từ R2
-  7. Return answer + sources + token_usage
-
-────────────────────────────────────────────────────────────────────────────────
-6.2. POST /api/chat/stream - Chat streaming (SSE)
-────────────────────────────────────────────────────────────────────────────────
-
-MÔ TẢ:
-  Trả lời câu hỏi theo dạng streaming (Server-Sent Events).
-  Mỗi chunk text được gửi ngay khi có, giúp hiển thị progressive response.
-
-AUTH REQUIRED:
-  Header: Authorization: Bearer <token>
-
-REQUEST: (giống /api/chat/query)
-
-RESPONSE: Server-Sent Events stream
-Content-Type: text/event-stream
-
-  // Các text chunk:
-  data: {"chunk": "Để tốt ", "done": false}
-  data: {"chunk": "nghiệp, sinh viên ", "done": false}
-  data: {"chunk": "cần hoàn thành...", "done": false}
-
-  // Message cuối cùng:
-  data: {
-    "done": true,
-    "sources": [...],
-    "tokenUsage": {...},
-    "processingTimeMs": 2340
-  }
-
-LUỒNG XỬ LÝ (WORKFLOW):
-  1. Resolve default store.
-  2. Convert metadataFilter sang định dạng Gemini.
-  3. Gọi Gemini stream_chat_response (RAG enabled).
-  4. Stream các text chunks về cho client qua SSE.
-  5. Gửi sources và token usage trong chunk cuối cùng.
- 
-  // Nếu lỗi:
-  data: {"error": "No store available", "done": true}
-
-SỬ DỤNG:
-  - NestJS kết nối endpoint này, forward stream lên WebSocket cho client
-  - Nginx phải tắt buffering: X-Accel-Buffering: no
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ WS /api/files/progress/{clientId} [🔒 AUTH]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: WebSocket theo dõi tiến trình upload và xử lý file thời gian thực.    │
+│                                                                              │
+│ LUỒNG XỬ LÝ:                                                                 │
+│   1. Client kết nối với clientId duy nhất (trùng clientId lúc gọi POST file).│
+│   2. Hệ thống đẩy JSON status updates theo từng bước:                        │
+│      - {"step": "db_creating", "message": "...", "file_id": "..."}           │
+│      - {"step": "parsing_markdown", ...}                                     │
+│      - {"step": "ready", ...}                                                │
+│   3. Socket tự động đóng khi hoàn tất hoặc lỗi.                              │
+└──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                       7. COMMON ERROR RESPONSES
+                        7. APPENDIX: ERROR CODES
 ════════════════════════════════════════════════════════════════════════════════
 
-400 Bad Request:
-  { "detail": "Validation error message" }
+- 400 Bad Request: Lỗi tham số (ValidationException).
+- 401 Unauthorized: JWT token không hợp lệ (gRPC Auth reject).
+- 403 Forbidden: Sai Role người dùng (ForbiddenException).
+- 404 Not Found: Dữ liệu không tồn tại trong DB.
+- 409 Conflict: Dữ liệu đã tồn tại hoặc đang bị ràng buộc (Metadata in use).
+- 500 Internal Error: Lỗi hạ tầng (Qdrant, MongoDB, R2, Gemini API).
 
-401 Unauthorized:
-  { "detail": "Authorization header is missing or has invalid format" }
-  { "detail": "gRPC auth error: <message>" }
-
-403 Forbidden:
-  { "detail": "Admin role required" }
-
-404 Not Found:
-  { "detail": "Resource not found" }
-
-409 Conflict:
-  { "detail": "Duplicate resource" }
-
-500 Internal Server Error:
-  { "detail": "Internal server error: ..." }
-
-503 Service Unavailable:
-  { "detail": "Unable to reach authentication service" }
-
-422 Unprocessable Entity (Pydantic validation):
-  {
-    "detail": [
-      {
-        "loc": ["body", "question"],
-        "msg": "field required",
-        "type": "value_error.missing"
-      }
-    ]
-  }
-
-
-════════════════════════════════════════════════════════════════════════════════
-                         8. AUTO STORE RESOLUTION
-════════════════════════════════════════════════════════════════════════════════
-
-Các endpoint FILES, CHAT, EMAIL DRAFT đều hỗ trợ auto store resolution:
-
-  Priority:
-    1. storeId trong request (nếu có)
-    2. Default store từ database (isDefault=true)
-    3. Raise 400 nếu không tìm thấy store nào
-
-  Cách thiết lập default store:
-    - Khi tạo store: POST /api/stores với "setAsDefault": true
-    - Cập nhật sau: PATCH /api/stores/{storeId} với "isDefault": true
-
-
-════════════════════════════════════════════════════════════════════════════════
-                      9. EMAIL DRAFT FLOW (INTERNAL)
-════════════════════════════════════════════════════════════════════════════════
-
-Email draft KHÔNG phải là API endpoint.
-Được gọi nội bộ bởi EmailWorkflowOrchestrator khi email được phân loại là "inquiry".
-
-FLOW:
-  RabbitMQ → Consumer → Orchestrator → LLM classify → inquiry?
-                                                          ↓ yes
-                                               InquiryService.process()
-                                                          ↓
-                                               email_draft_service
-                                                          ↓
-                                               Gemini RAG (default store)
-                                                          ↓
-                                               draft_subject + draft_body + sources
-                                                          ↓
-                                        (nếu có messageId) gRPC → nest-api
-                                                EmailService.CreateDraft(
-                                                  messageId, draftSubject, draftBody)
-                                                          ↓
-                                               InquiryResponse trả về /process
-
-GHI CHÚ gRPC CreateDraft:
-  - Gọi gRPC tới nest-api (GRPC_URL, port 5000) để tạo Gmail draft
-  - Nếu nest-api trả UNIMPLEMENTED → bỏ qua (log warning), không crash
-  - messageId = null (khi gọi từ /process HTTP) → không gọi gRPC, chỉ trả draft text
-  - Proto: app/proto/inquiry.proto, package app_server, InquiryService.Create
-  - Client: app/services/integrations/grpc_client.py (GrpcClient)
-
-Để test email draft: Dùng POST /api/test/classification/ingested
-với subject + content là nội dung inquiry.
-
-
-════════════════════════════════════════════════════════════════════════════════
-                      9b. gRPC CLIENTS (PYTHON-RAG → NEST-API)
-════════════════════════════════════════════════════════════════════════════════
-
-python-rag gọi nest-api qua gRPC theo hai luồng:
-
-1. XÁC THỰC JWT (AuthService.VerifyToken)
-   Proto:   app/proto/auth.proto    (package app_server)
-   Stub:    app/proto/auth_pb2_grpc.py (AuthServiceStub — client only)
-   Client:  app/services/integrations/grpc_client.py (GrpcClient)
-   Dùng khi: Mọi request tới endpoint cần auth (require_auth / require_admin)
-   Env:     GRPC_URL (default: localhost:5000)
-
-   Quy trinh:
-     Authorization: Bearer <token>
-       → _extract_token() tách token
-       → GrpcNestAuthClient.verify_token(token)
-       → gRPC VerifyTokenRequest(token=token)
-       → VerifyTokenResponse.payload (map<string,string>)
-       → {sub, email, role, ...}
-     require_admin: kiểm thêm role == "admin" → 403 nếu không phải
-
-2. TẠO GMAIL DRAFT (InquiryService.Create)
-   Proto:   app/proto/inquiry.proto   (package app_server)
-   Stub:    app/proto/inquiry_pb2_grpc.py (InquiryServiceStub — client only)
-   Client:  app/services/integrations/grpc_client.py (GrpcClient)
-   Dùng khi: Sau khi Gemini soạn xong draft cho email inquiry
-   Env:     GRPC_URL (dùng chung với auth)
-
-   Request:  CreateEmailDraftRequest { messageId, draftSubject, draftBody }
-   Response: CreateEmailDraftResponse { success }
-   Graceful: Nếu nest-api trả UNIMPLEMENTED → log warning, trả False (không crash)
-
-nest-api yêu cầu:
-  - Chạy với START_GRPC=true
-  - Port gRPC: 5000 (mặc định)
-
-
-════════════════════════════════════════════════════════════════════════════════
-                      10. RABBITMQ MESSAGE FORMAT
-════════════════════════════════════════════════════════════════════════════════
-
-NestJS (nest-api) publish message lên queue với pattern "ingested":
-
-QUEUE NAME: Cấu hình qua RABBITMQ_INGEST_QUEUE (mặc định: "email_ingest_queue")
-            nest-api dùng env RABBITMQ_QUEUE (mặc định: "email_ingest_queue")
-
-MESSAGE FORMAT (NestJS RMQ transport):
-  {
-    "pattern": "ingested",
-    "data": {
-      "messageId": 123,           // int - ID trong DB của nest-api
-      "subject": "Tiêu đề email", // string | null
-      "senderEmail": "a@b.com",   // string | null (nullable trong Message entity)
-      "senderName": "Nguyễn A",   // string | null (nullable trong Message entity)
-      "content": "Nội dung..."    // string
-    }
-  }
-
-python-rag consumer (RabbitMQ queue):
-  - Nhận message → validate với IngestMessage schema
-  - NẾU lỗi schema: basic_ack (bỏ qua, tránh poison loop)
-  - NẾU xử lý thành công: basic_ack
-  - NẾU xử lý thất bại: basic_nack + requeue=True (retry)
-  - Timeout xử lý: 120 giây
-  - Auto reconnect với exponential backoff (tối đa 10 lần, delay tối đa 60s)
-
-METADATA FILTER FORMAT (dùng trong Chat và File Search):
-
-  JSON format (request bắt buộc sử dụng mảng cho value):
-    {
-      "department": ["dao_tao"],
-      "access_scope": ["student"]
-    }
-
-  Gemini filter string (sau khi convert):
-    'department="dao_tao" AND accessScope="student"'
-
-  List values (OR điều kiện - cùng key):
-    Request: { "cohort": ["K20", "K21"] }
-    Gemini/MongoDB:  '(cohort="K20" OR cohort="K21")'
-    
-  Multiple keys (AND điều kiện - khác key):
-    Request: { "academicYear": ["2024"], "department": ["dao_tao"] }
-    Gemini/MongoDB: 'academicYear="2024" AND department="dao_tao"'
-
-  hasAllValue=true (metadata type có AllowedValue với value="all"):
-    Request: { "department": ["dao_tao"] }
-    Gemini:  '(department="dao_tao" OR department="all")'
-
-Role-based accessScope (trong /api/chat/query và /api/chat/stream):
-  - Hệ thống lấy role của người dùng qua JWT Auth Header (Authorization: Bearer <token>)
-  - role="student": accessScope chỉ truy xuất được ["student"]
-  - role="lecture": accessScope chỉ truy xuất được ["lecture"]
-  - role="admin": thấy tất cả (bao gồm ["private"])
+--------------------------------------------------------------------------------
+Hoàn tất bản Đặc tả API chi tiết v4.6.0 (Full Compliance).
+--------------------------------------------------------------------------------

@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     QDRANT_TOP_K: int = 6
     QDRANT_MIN_SCORE: float = 0.2
     QDRANT_VECTOR_SIZE: int = 3072
+    
+    # PageIndex configuration
+    PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
 
 
 

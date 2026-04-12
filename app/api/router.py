@@ -21,25 +21,17 @@ async def root():
     return {"message": "AI Service is running"}
 
 
-# ====================================
-# CLASSIFICATION ENDPOINTS
-# ====================================
+from app.modules.email.router import router as email_router
+from app.modules.chat.router import router as chat_router
+from app.modules.files.router import router as files_router
+from app.modules.files.ws import router as files_ws
+from app.modules.metadata.router import router as metadata_router
 
-from app.api.endpoints import classification
+# Registration
+api_router.include_router(email_router, prefix="/api/email")
+api_router.include_router(chat_router, prefix="/api")
+api_router.include_router(files_router, prefix="/api")
+api_router.include_router(metadata_router, prefix="/api")
+api_router.include_router(files_ws, prefix="/api")
 
-api_router.include_router(classification.router)
-logger.info("✅ Classification routes included")
-
-
-# ====================================
-# RAG ENDPOINTS
-# ====================================
-
-from app.api.endpoints import chat, files, stores, metadata, file_progress_ws
-
-api_router.include_router(chat.router, prefix="/api", tags=["Chat"])
-api_router.include_router(files.router, prefix="/api", tags=["Files"])
-api_router.include_router(stores.router, prefix="/api", tags=["Stores"])
-api_router.include_router(metadata.router, prefix="/api", tags=["Metadata"])
-api_router.include_router(file_progress_ws.router, prefix="/api", tags=["Files"])
-logger.info("✅ RAG endpoints included (chat, files, stores, metadata, file_progress_ws)")
+logger.info("✅ All modular routers included (email, chat, files, metadata)")

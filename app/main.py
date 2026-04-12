@@ -10,13 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
-from app.models.schemas import ErrorResponse, HealthCheckResponse
+from app.modules.files.schemas import ErrorResponse, HealthCheckResponse
 from app.core.config import settings
-from app.services.integrations.grpc_client import (
-    GrpcClient,
-    GrpcClientConfig,
-)
-from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
+from app.modules.email.orchestrator import EmailWorkflowOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -73,7 +69,7 @@ async def lifespan(_: FastAPI):
 
     # 2. Initialize R2 storage
     try:
-        from app.storage.r2_client import r2_storage
+        from app.integrations.storage.client import r2_storage
         # R2 client initializes on import, test connection
         if settings.R2_DISABLED:
             logger.warning("⚠️  R2 disabled. Continuing without storage.")
@@ -87,7 +83,7 @@ async def lifespan(_: FastAPI):
     # 3. Initialize RabbitMQ service
     if settings.RABBITMQ_ENABLED:
         try:
-            from app.services.messaging.rabbitmq_service import get_rabbitmq_service
+            from app.integrations.rabbitmq.client import get_rabbitmq_service
             rabbitmq_service = get_rabbitmq_service()
             logger.info("✅ RabbitMQ service initialized")
         except Exception as e:
@@ -97,28 +93,14 @@ async def lifespan(_: FastAPI):
         logger.info("🐰 RabbitMQ disabled via config")
         rabbitmq_service = None
 
-    host, port = settings.GRPC_URL.split(":", 1)
-    grpc_client = GrpcClient(
-        GrpcClientConfig(
-            enabled=settings.GRPC_ENABLED,
-            host=host,
-            port=int(port),
-            timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
-        )
-    )
-
-    classifier = EmailWorkflowOrchestrator(
-        api_key=settings.GOOGLE_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=settings.LLM_TEMPERATURE,
-        grpc_client=grpc_client,
-    )
-    email_orchestrator = classifier
-    logger.info(f"Email Workflow Orchestrator initialized with model: {settings.LLM_MODEL}")
+    # 4. Initialize gRPC and Orchestrator
+    # GrpcClient is now used as a singleton wrapper via get_grpc_client
+    email_orchestrator = EmailWorkflowOrchestrator()
+    logger.info("Email Workflow Orchestrator initialized")
 
     if rabbitmq_service is not None:
         try:
-            from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
+            from app.modules.email.consumer import start_email_ingest_consumer
             loop = asyncio.get_running_loop()
             start_email_ingest_consumer(email_orchestrator, loop=loop)
             logger.info("Email ingest consumer started")
@@ -127,7 +109,7 @@ async def lifespan(_: FastAPI):
     
     # 6. Test Gemini API
     try:
-        from app.services.rag.gemini_client import gemini_client
+        from app.integrations.llm.gemini import gemini_client
         logger.info("✅ Gemini service initialized")
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
@@ -245,7 +227,7 @@ async def health_check():
     mongodb_connected = False
     
     try:
-        from app.services.rag.gemini_client import gemini_client
+        from app.integrations.llm.gemini import gemini_client
         gemini_connected = gemini_client.client is not None
     except Exception:
         pass

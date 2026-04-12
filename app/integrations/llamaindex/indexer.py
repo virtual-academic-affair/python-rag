@@ -1,0 +1,130 @@
+"""
+LlamaIndex integration for generating embeddings and indexing into Qdrant.
+"""
+
+from typing import Any, List, Optional
+import hashlib
+from llama_index.embeddings.gemini import GeminiEmbedding
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qm
+
+from app.core.config import settings
+
+from google import genai
+from google.genai import types
+
+class LlamaIndexIndexer:
+    """Handles embedding chunks and indexing them into Qdrant using LlamaIndex constructs."""
+    
+    def __init__(self):
+        self._genai_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        self._embed_model_name = "models/gemini-embedding-001"
+        self._qdrant_client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY or None,
+            timeout=30,
+        )
+        
+    async def ensure_collection(self) -> None:
+        """Create the collection in Qdrant if it does not exist."""
+        collections = self._qdrant_client.get_collections().collections
+        names = {c.name for c in collections}
+        if settings.QDRANT_COLLECTION_NAME not in names:
+            self._qdrant_client.create_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                vectors_config=qm.VectorParams(
+                    size=settings.QDRANT_VECTOR_SIZE,
+                    distance=qm.Distance.COSINE,
+                ),
+            )
+        
+        # Always attempt to create payload indexes if missing
+        for field in ["file_id", "metadata.access_scope"]:
+            try:
+                self._qdrant_client.create_payload_index(
+                    collection_name=settings.QDRANT_COLLECTION_NAME,
+                    field_name=field,
+                    field_schema=qm.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+
+    def _stable_point_id(self, chunk_id: str) -> str:
+        """Qdrant accepts UUID or unsigned integer. Using a uuid format derived from chunk_id."""
+        h = hashlib.md5(chunk_id.encode("utf-8")).hexdigest()
+        return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+    async def ingest_chunks(self, chunks_data: List[dict]) -> int:
+        """
+        Embed and ingest chunks into Qdrant.
+        
+        Args:
+            chunks_data: List of dicts representing chunks (with chunk_id, text, metadata)
+        Returns:
+            Number of points successfully ingested to Qdrant
+        """
+        await self.ensure_collection()
+        
+        # Batch collect texts to embed
+        texts = [c.get("text", "") for c in chunks_data]
+        if not texts:
+            return 0
+            
+        import asyncio
+        response = await asyncio.to_thread(
+            self._genai_client.models.embed_content,
+            model=self._embed_model_name,
+            contents=texts,
+            config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
+        )
+        embeddings = [e.values for e in response.embeddings]
+        
+        points = []
+        for i, chunk in enumerate(chunks_data):
+            payload = {
+                "file_id": chunk.get("file_id"),
+                "file_name": chunk.get("file_name"),
+                "chunk_index": chunk.get("chunk_index"),
+                "text": chunk.get("text", ""),
+                "section_path": chunk.get("section_path"),
+                "metadata": chunk.get("metadata", {}),
+            }
+
+            point_id = self._stable_point_id(chunk["chunk_id"])
+            points.append(qm.PointStruct(
+                id=point_id,
+                vector=embeddings[i],
+                payload=payload
+            ))
+
+        self._qdrant_client.upsert(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            points=points,
+            wait=True,
+        )
+        return len(points)
+        
+    async def delete_by_file_id(self, file_id: str) -> None:
+        """
+        Delete all chunks associated with a file_id from Qdrant.
+        """
+        await self.ensure_collection()
+        self._qdrant_client.delete(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            points_selector=qm.Filter(
+                must=[
+                    qm.FieldCondition(
+                        key="file_id",
+                        match=qm.MatchValue(value=file_id)
+                    )
+                ]
+            )
+        )
+
+_llama_index_indexer_instance: Optional[LlamaIndexIndexer] = None
+
+def get_llama_index_indexer() -> LlamaIndexIndexer:
+    global _llama_index_indexer_instance
+    if _llama_index_indexer_instance is None:
+        _llama_index_indexer_instance = LlamaIndexIndexer()
+    return _llama_index_indexer_instance
