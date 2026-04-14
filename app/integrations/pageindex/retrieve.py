@@ -1,4 +1,5 @@
 import json
+import os
 import PyPDF2
 
 try:
@@ -56,23 +57,43 @@ def _get_pdf_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
 def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
     """
     For Markdown documents, 'pages' are line numbers.
-    Find nodes whose line_num falls within [min(page_nums), max(page_nums)] and return their text.
+    Prefer reading directly from the .md file at doc_info['path'].
     """
-    min_line, max_line = min(page_nums), max(page_nums)
+    path = doc_info.get('path')
+    if not path or not os.path.exists(path):
+        # Fallback to structure text if file is missing (unexpected)
+        min_line, max_line = min(page_nums), max(page_nums)
+        results = []
+        seen = set()
+
+        def _traverse(nodes):
+            for node in nodes:
+                ln = node.get('line_num')
+                if ln and min_line <= ln <= max_line and ln not in seen:
+                    seen.add(ln)
+                    results.append({'page': ln, 'content': node.get('text', '')})
+                if node.get('nodes'):
+                    _traverse(node['nodes'])
+
+        _traverse(doc_info.get('structure', []))
+        return sorted(results, key=lambda x: x['page'])
+
+    # Standard path: Read requested lines from file
     results = []
-    seen = set()
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            for p in page_nums:
+                # p is 1-indexed line number
+                if 1 <= p <= len(lines):
+                    results.append({
+                        'page': p,
+                        'content': lines[p-1].rstrip('\n')
+                    })
+    except Exception as e:
+        # Final fallback to traverse structure if file read fails
+        pass
 
-    def _traverse(nodes):
-        for node in nodes:
-            ln = node.get('line_num')
-            if ln and min_line <= ln <= max_line and ln not in seen:
-                seen.add(ln)
-                results.append({'page': ln, 'content': node.get('text', '')})
-            if node.get('nodes'):
-                _traverse(node['nodes'])
-
-    _traverse(doc_info.get('structure', []))
-    results.sort(key=lambda x: x['page'])
     return results
 
 

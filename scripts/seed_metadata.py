@@ -13,12 +13,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.models.database import AllowedValue
-from app.services.rag.metadata_service import MetadataService
-from app.core.config import Settings
+from app.modules.metadata.models import AllowedValue
+from app.modules.metadata.service import get_metadata_service
+from app.core.config import settings
 from app.core.database import Database
 from app.core.exceptions import ConflictException
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 logging.basicConfig(
@@ -94,9 +94,8 @@ SYSTEM_METADATA_TYPES = [
 
 async def seed_system_metadata():
     """Seed 3 system metadata types."""
-    settings = Settings()
     await Database.connect()
-    metadata_service = MetadataService()
+    metadata_service = get_metadata_service()
     
     logger.info("=" * 60)
     logger.info("SEEDING SYSTEM METADATA TYPES (Phase 4)")
@@ -121,7 +120,7 @@ async def seed_system_metadata():
                     # v could be an AllowedValue object or a dict
                     val_dict = v.to_dict() if hasattr(v, "to_dict") else dict(v)
                     # ensure value is snake_cased just like in MetadataService
-                    from app.services.rag.utils.file_utils import to_snake
+                    from app.modules.files.utils import to_snake
                     val_dict["value"] = to_snake(val_dict["value"])
                     update_values.append(val_dict)
 
@@ -133,7 +132,7 @@ async def seed_system_metadata():
                         "description": meta_def["description"],
                         "allowed_values": update_values,
                         "is_system": True,
-                        "updated_at": datetime.now()
+                        "updated_at": datetime.now(timezone.utc)
                     }}
                 )
                 logger.info(f"✅ Updated system metadata: {key}")

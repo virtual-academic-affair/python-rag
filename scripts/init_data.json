@@ -1,87 +1,69 @@
 {
-  "default_store": {
-    "displayName": "AI Service Store",
-    "setAsDefault": true
-  },
   "metadata_types": [
     {
       "key": "department",
-      "displayName": "Phòng ban",
-      "description": "Phòng ban quản lý tài liệu",
-      "allowedValues": [
-        {"value": "dao_tao", "displayName": "Đào tạo", "isActive": true, "color": "#3498DB", "visibleRoles": ["lecture", "student"]},
-        {"value": "khcn", "displayName": "KHCN", "isActive": true, "color": "#9B59B6", "visibleRoles": ["lecture", "student"]},
-        {"value": "ctsv", "displayName": "CTSV", "isActive": true, "color": "#E67E22", "visibleRoles": ["lecture", "student"]},
-        {"value": "htqt", "displayName": "HTQT", "isActive": true, "color": "#1ABC9C", "visibleRoles": ["lecture", "student"]},
-        {"value": "hanh_chinh", "displayName": "Hành chính", "isActive": true, "color": "#E74C3C", "visibleRoles": ["lecture", "student"]},
-        {"value": "tai_chinh", "displayName": "Tài chính", "isActive": true, "color": "#F39C12", "visibleRoles": ["lecture", "student"]},
-        {"value": "inactive_val", "displayName": "Giá trị bị tắt", "isActive": false, "color": "#7F8C8D", "visibleRoles": ["lecture", "student"]},
-        {"value": "all", "displayName": "Tất cả phòng ban", "isActive": true, "color": "#95A5A6", "visibleRoles": ["lecture", "student"]}
+      "display_name": "Khoa/Phòng",
+      "description": "Bộ phận quản lý tài liệu (VD: Đào tạo, Công tác sinh viên)",
+      "allowed_values": [
+        { "value": "daotao", "display_name": "Phòng Đào tạo" },
+        { "value": "ctsv", "display_name": "Phòng CTSV" },
+        { "value": "khcn", "display_name": "Phòng KHCN" }
       ]
     },
     {
-      "key": "inactive_metadata",
-      "displayName": "Metadata bị tắt",
-      "description": "Dùng để test filter isActive",
-      "is_active": false,
-      "allowedValues": [
-        {"value": "v1", "displayName": "Value 1", "isActive": true, "visibleRoles": ["lecture", "student"]}
-      ]
+       "key": "inactive_metadata",
+       "display_name": "Metadata không dùng",
+       "description": "Để test việc lọc metadata không hoạt động",
+       "is_active": false,
+       "allowed_values": [
+         { "value": "test", "display_name": "Test" }
+       ]
     }
   ],
   "files": [
     {
-      "filename": "test 1.pdf",
+      "filename": "quy_che_dao_tao.txt",
       "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
-        "accessScope": ["student"],
-        "academicYear": ["2024-2025"],
-        "department": ["dao_tao"]
+        "department": ["daotao"],
+        "academic_year": ["2024-2025"],
+        "access_scope": ["student"]
       }
     },
     {
-      "filename": "test 2.pdf",
+      "filename": "huong_dan_dang_ky.txt",
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
-        "accessScope": ["student"],
-        "academicYear": ["2025-2026"],
-        "department": ["dao_tao"]
+        "department": ["daotao"],
+        "academic_year": ["2024-2025"],
+        "access_scope": ["student"]
       }
     },
     {
-      "filename": "test 3.pdf",
+      "filename": "quy_dinh_hoc_bong.txt",
       "displayName": "Quy định học bổng sinh viên",
       "metadata": {
-        "accessScope": ["student"],
-        "academicYear": ["2023-2024"],
-        "department": ["ctsv"]
+        "department": ["ctsv"],
+        "academic_year": ["all"],
+        "access_scope": ["student"]
       }
     },
     {
-      "filename": "test 4.pdf",
-      "displayName": "Thông tin hợp tác quốc tế",
-      "metadata": {
-        "accessScope": ["private"],
-        "cohort": ["k22"],
-        "department": ["htqt"]
-      }
-    },
-    {
-      "filename": "test_document.txt",
+      "filename": "quy_che_nghien_cuu_khoa_hoc.txt",
       "displayName": "Quy chế nghiên cứu khoa học",
       "metadata": {
-        "accessScope": ["student"],
-        "academicYear": ["all"],
-        "department": ["khcn"]
+        "department": ["khcn"],
+        "academic_year": ["all"],
+        "access_scope": ["lecture"]
       }
     },
     {
-      "filename": "test_document_2.txt",
+      "filename": "huong_dan_sinh_hoat_cong_dan.txt",
       "displayName": "Hướng dẫn sinh hoạt công dân",
       "metadata": {
-        "accessScope": ["student"],
-        "academicYear": ["2024-2025"],
-        "department": ["ctsv"]
+        "department": ["ctsv"],
+        "academic_year": ["all"],
+        "access_scope": ["student"]
       }
     }
   ]

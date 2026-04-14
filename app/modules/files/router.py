@@ -3,7 +3,7 @@ File Management Endpoints - Handle file uploads and downloads.
 Refactored to use FileService with MongoDB + R2, without Gemini.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -21,19 +21,17 @@ from app.modules.files.schemas import (
     BatchFileUploadResult,
     BulkDeleteResponse,
     UpdateFileRequest,
-    FileParsePreviewResponse,
-    FileParsePreviewPage,
-    FileChunkPreviewResponse,
-    FileChunkPreviewItem,
 )
 from app.modules.files.service import get_file_service
 from app.modules.files.notifier import get_file_status_notifier
 from app.integrations.llamaparse.client import get_llamaparse_client
-from app.modules.ingestion.chunking import get_chunking_service
-from app.modules.ingestion.service import get_ingestion_service
-from app.modules.files.utils import (
+from app.pipelines.ingestion.chunking import get_chunking_service
+from app.pipelines.ingestion.service import get_ingestion_service
+from app.core.converters import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
+)
+from app.modules.files.utils import (
     get_download_url,
 )
 
@@ -51,6 +49,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["Files"])
 
 
+async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any], progress_cb=None):
+    file_svc = get_file_service()
+    await file_svc.process_file_background(
+        file_id=file_id,
+        file_path=bg_file_path,
+        display_name=bg_display_name,
+        custom_metadata=bg_metadata,
+        progress_callback=progress_cb
+    )
+
 @router.post(
     "",
     response_model=FileUploadResponse,
@@ -67,15 +75,6 @@ async def upload_file(
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """Upload sync-to-R2 then continue parse/vector steps in background."""
-
-    async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any], progress_cb=None):
-        await file_svc.process_file_background(
-            file_id=file_id,
-            file_path=bg_file_path,
-            display_name=bg_display_name,
-            custom_metadata=bg_metadata,
-            progress_callback=progress_cb
-        )
 
     temp_file_path = None
     file_svc = get_file_service()
@@ -158,108 +157,7 @@ async def upload_file(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
 
 
-@router.post(
-    "/parse-preview",
-    response_model=FileParsePreviewResponse,
-    summary="Parse PDF to markdown preview (Sprint 1)",
-    description="Parse an uploaded PDF using LlamaParse and return normalized markdown pages.",
-)
-async def parse_pdf_preview(
-    file: UploadFile = File(..., description="PDF file to parse"),
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    """Preview LlamaParse output before indexing/chunking."""
-    temp_file_path = None
-    try:
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only .pdf files are supported")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", mode="wb") as temp_file:
-            contents = await file.read()
-            temp_file.write(contents)
-            temp_file_path = temp_file.name
-
-        parser_svc = get_llamaparse_client()
-        pages = await parser_svc.parse_pdf_to_markdown(temp_file_path)
-
-        return FileParsePreviewResponse(
-            filename=file.filename,
-            page_count=len(pages),
-            pages=[FileParsePreviewPage(page_index=p.page_index, markdown=p.markdown) for p in pages],
-        )
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Parse preview failed: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-    finally:
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup parse-preview temp file: {cleanup_error}")
-
-
-@router.post(
-    "/chunk-preview",
-    response_model=FileChunkPreviewResponse,
-    summary="Parse + chunk PDF preview (Sprint 2)",
-    description="Parse uploaded PDF with LlamaParse and preview section-aware chunks.",
-)
-async def chunk_pdf_preview(
-    file: UploadFile = File(..., description="PDF file to parse and chunk"),
-    chunk_size_chars: int = Form(1800, alias="chunkSizeChars"),
-    chunk_overlap_chars: int = Form(250, alias="chunkOverlapChars"),
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    temp_file_path = None
-    try:
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only .pdf files are supported")
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", mode="wb") as temp_file:
-            contents = await file.read()
-            temp_file.write(contents)
-            temp_file_path = temp_file.name
-
-        parser_svc = get_llamaparse_client()
-        chunking_svc = get_chunking_service()
-
-        pages = await parser_svc.parse_pdf_to_markdown(temp_file_path)
-        chunks = chunking_svc.chunk_markdown_pages(
-            pages,
-            chunk_size_chars=chunk_size_chars,
-            chunk_overlap_chars=chunk_overlap_chars,
-        )
-
-        return FileChunkPreviewResponse(
-            filename=file.filename,
-            page_count=len(pages),
-            chunk_count=len(chunks),
-            chunk_size_chars=chunk_size_chars,
-            chunk_overlap_chars=chunk_overlap_chars,
-            chunks=[
-                FileChunkPreviewItem(
-                    chunk_index=c.chunk_index,
-                    page_index_start=c.page_index_start,
-                    page_index_end=c.page_index_end,
-                    section_path=c.section_path,
-                    text=c.text,
-                )
-                for c in chunks
-            ],
-        )
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Chunk preview failed: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-    finally:
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup chunk-preview temp file: {cleanup_error}")
 
 
 
@@ -339,82 +237,6 @@ async def list_files(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list files: {str(e)}")
 
 
-@router.get(
-    "/admin",
-    response_model=FileListResponse,
-    summary="List files (Admin)",
-    description="Admin file listing.",
-)
-async def list_files_admin(
-    file_status: Optional[str] = Query(None, alias="fileStatus", description="Filter by status"),
-    metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="JSON filter for metadata"),
-    keywords: Optional[str] = Query(None, description="Search by display name"),
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    _admin: Dict[str, Any] = Depends(require_admin),
-):
-    try:
-        file_svc = get_file_service()
-
-        status_enum = None
-        if file_status:
-            try:
-                status_enum = FileStatus(file_status.lower())
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status: {file_status}")
-
-        custom_metadata_filter = None
-        if metadata_filter:
-            try:
-                custom_metadata_filter = json.loads(metadata_filter)
-                custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
-
-                from app.modules.metadata.service import get_metadata_service
-                metadata_svc = get_metadata_service()
-                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter)
-                if not is_valid:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {', '.join(errors)}")
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid metadataFilter JSON format")
-
-        skip = (page - 1) * limit
-        files, total = await file_svc.list_files(
-            status=status_enum,
-            custom_metadata_filter=custom_metadata_filter,
-            keywords=keywords,
-            user_role="admin",
-            skip=skip,
-            limit=limit,
-        )
-
-        return FileListResponse(
-            files=[
-                FileDetailResponse(
-                    file_id=str(f.id),
-                    original_filename=f.original_filename,
-                    display_name=f.display_name,
-                    file_size=f.file_size,
-                    mime_type=f.mime_type,
-                    storage_path=f.storage_path,
-                    status=f.status.value if hasattr(f.status, "value") else str(f.status),
-                    custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
-                    file_url=get_download_url(f.storage_path),
-                    markdown_file_url=get_download_url(f.markdown_storage_path),
-                    created_at=f.created_at.isoformat() if f.created_at else "",
-                    updated_at=f.updated_at.isoformat() if f.updated_at else "",
-                )
-                for f in files
-            ],
-            total=total,
-            page=page,
-            limit=limit,
-        )
-
-    except Exception as e:
-        logger.error(f"Error listing files (admin): {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list files: {str(e)}")
-
-
 @router.post(
     "/batch",
     response_model=BatchFileUploadResponse,
@@ -423,6 +245,8 @@ async def list_files_admin(
     description="Upload multiple files at once, each with its own display name and metadata.",
 )
 async def batch_upload_files(
+    background_tasks: BackgroundTasks,
+    request: Request,
     files: List[UploadFile] = File(..., description="Files to upload"),
     display_names: Optional[str] = Form(None, alias="displayNames", description="JSON array of display names (one per file, use null for auto)"),
     metadata_list: Optional[str] = Form(None, alias="metadataList", description="JSON array of metadata objects (one per file, use null or {} for no metadata)"),
@@ -468,11 +292,28 @@ async def batch_upload_files(
                     temp_file.write(contents)
                     temp_file_path = temp_file.name
 
-                file_doc = await file_svc.upload_file(
+                client_id = request.headers.get("X-Client-ID")
+                notifier = get_file_status_notifier()
+                
+                async def _progress_callback_bound(payload: Dict[str, Any], cid=client_id):
+                    if cid:
+                        await notifier.notify(cid, payload)
+
+                file_doc, bg_payload = await file_svc.upload_file_quick(
                     file_path=temp_file_path,
                     original_filename=file.filename,
                     display_name=display_name,
                     custom_metadata=metadata_dict,
+                    progress_callback=_progress_callback_bound,
+                )
+
+                background_tasks.add_task(
+                    _background_process,
+                    bg_payload["file_id"],
+                    temp_file_path,
+                    bg_payload["display_name"],
+                    bg_payload["custom_metadata"],
+                    _progress_callback_bound
                 )
 
                 results.append(BatchFileUploadResult(
@@ -481,7 +322,7 @@ async def batch_upload_files(
                     file_id=str(file_doc.id),
                     display_name=file_doc.display_name,
                     file_url=get_download_url(file_doc.storage_path),
-                    message="Uploaded successfully",
+                    message="Uploaded successfully, background processing started.",
                 ))
                 successful += 1
 
@@ -489,9 +330,12 @@ async def batch_upload_files(
                 logger.error(f"Failed to upload file {file.filename}: {e}")
                 results.append(BatchFileUploadResult(original_filename=file.filename, success=False, error=str(e)))
                 failed += 1
-            finally:
+                # If error happens before process_file_background is scheduled, we need to clean up
                 if temp_file_path and os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as unlink_err:
+                        logger.warning(f"Failed to clean up temp file on error: {unlink_err}")
 
         return BatchFileUploadResponse(total=len(files), successful=successful, failed=failed, results=results)
 

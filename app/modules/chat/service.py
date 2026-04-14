@@ -9,27 +9,11 @@ from google.genai import types
 from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
 from app.modules.retrieval.service import get_retrieval_service
+from app.modules.retrieval.agent import AGENT_SYSTEM_PROMPT, build_pindex_tools
 from app.integrations.llm.gemini import gemini_client
 from app.integrations.pageindex.client import get_page_index_client
 
 logger = logging.getLogger(__name__)
-
-AGENT_SYSTEM_PROMPT = """
-You are an intelligent educational assistant.
-You are equipped with tools to read documents using a hierarchical structure index.
-You will be provided a list of relevant document IDs for the user's question.
-
-TOOL USE WORKFLOW:
-1. Use `get_document_structure(doc_id)` to view the table of contents and locate relevant sections. The structure contains `line_num` for each section.
-2. Use `get_page_content(doc_id, pages="start_line-end_line")` to extract the actual text from those sections. Never guess the text! Always fetch it. 
-3. If the fetched text is insufficient, fetch another section or document.
-4. Formulate your final answer in simple language based on the text.
-
-RULES:
-- Do not expose `doc_id` or tool details in your final answer.
-- Answer solely based on the documents. If not found, say you don't know.
-- Cite the file names (which are provided) instead of doc_ids when referring to sources.
-"""
 
 class ChatService:
     """Service for Agentic RAG-based chat operations."""
@@ -37,46 +21,49 @@ class ChatService:
     def __init__(self):
         self._retrieval = get_retrieval_service()
 
-    def _build_tools(self, available_doc_ids: list[str]):
-        """Create bound tool instances so LLM can invoke PageIndex client."""
-        client = get_page_index_client()
+    async def _prepare_chat_state(
+        self,
+        question: str,
+        user_context: UserContext,
+        chat_history: list[ChatHistoryItem],
+        metadata_filter: Optional[dict[str, Any]] = None,
+    ) -> dict:
+        """Helper to retrieve files and prepare prompt/history for Agentic Chat."""
+        # 1. Retrieval
+        candidate_files = await self._retrieval.retrieve_candidate_files(
+            query=question,
+            metadata_filter=metadata_filter,
+            user_role=user_context.role
+        )
 
-        async def get_document(doc_id: str) -> str:
-            """
-            Get metadata for a document including its name, description, and status.
-            
-            Args:
-                doc_id: The unique identifier of the document.
-            """
-            if doc_id not in available_doc_ids:
-                return '{"error": "Access denied or document not found."}'
-            return await client.get_document(doc_id)
+        if not candidate_files:
+            return {"candidate_files": [], "candidate_ids": [], "history": [], "prompt": None}
 
-        async def get_document_structure(doc_id: str) -> str:
-            """
-            Get the hierarchical table of contents (structure) for a document. 
-            Use this to find relevant sections and their line numbers.
-            
-            Args:
-                doc_id: The unique identifier of the document.
-            """
-            if doc_id not in available_doc_ids:
-                return '{"error": "Access denied or document not found."}'
-            return await client.get_document_structure(doc_id)
+        candidate_ids = [c["file_id"] for c in candidate_files]
+        
+        # 2. Prepare Context Prompt
+        files_info_str = "\n".join([f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}" for c in candidate_files])
+        prompt_text = (
+            f"User Context: {user_context.name} (Role: {user_context.role}, Cohort: {user_context.cohort or 'N/A'})\n\n"
+            f"Here are the relevant documents found in the database. Use tools to read them:\n{files_info_str}\n\n"
+            f"User Question: {question}"
+        )
 
-        async def get_page_content(doc_id: str, pages: str) -> str:
-            """
-            Get the actual text content of specific sections or line ranges.
-            
-            Args:
-                doc_id: The unique identifier of the document.
-                pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
-            """
-            if doc_id not in available_doc_ids:
-                return '{"error": "Access denied or document not found."}'
-            return await client.get_page_content(doc_id, pages)
+        # 3. Prepare History (Latest 6 turns)
+        history = []
+        for h in chat_history[-6:]:
+            role = "user" if h.role == "user" else "model"
+            history.append(types.Content(role=role, parts=[types.Part.from_text(text=h.content)]))
+        
+        # Add the current prompt as the latest user turn
+        history.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)]))
 
-        return [get_document, get_document_structure, get_page_content]
+        return {
+            "candidate_files": candidate_files,
+            "candidate_ids": candidate_ids,
+            "history": history,
+            "prompt": prompt_text
+        }
 
     async def generate_chat_response(
         self,
@@ -85,56 +72,90 @@ class ChatService:
         chat_history: list[ChatHistoryItem],
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
-        """Generate Agentic Chat Response natively with google-genai."""
+        """Generate Agentic Chat Response with captured reasoning steps."""
         start_time = time.time()
         
-        # 1. Vector Search for Candidates
-        candidate_files = await self._retrieval.retrieve_candidate_files(
-            query=question,
-            metadata_filter=metadata_filter,
-            user_role=user_context.role
-        )
-
-        candidate_ids = [c["file_id"] for c in candidate_files]
-        sources = candidate_files  # The final sources can be refined if we track tool calls
-        
-        # 2. Prepare Context Prompt
-        files_info_str = "\n".join([f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}" for c in candidate_files])
-        prompt = (
-            f"User Context: {user_context.name} (Role: {user_context.role}, Cohort: {user_context.cohort})\n\n"
-            f"Here are the relevant documents found in the database. Use tools to read them:\n{files_info_str}\n\n"
-            f"User Question: {question}"
-        )
+        # 1. Preparation
+        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        candidate_files = state["candidate_files"]
+        candidate_ids = state["candidate_ids"]
+        history = state["history"]
 
         if not candidate_files:
             return {
                 "answer": "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn.",
                 "sources": [],
+                "steps": [],
                 "processing_time_ms": int((time.time() - start_time) * 1000)
             }
 
-        # 3. Prepare History
-        history_contents = []
-        for h in chat_history[-6:]:
-            role = "user" if h.role == "user" else "model"
-            history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=h.content)]))
-
-        # 4. Create Chat Session and Send
+        # 2. Manual Agent Loop
+        tools = build_pindex_tools(candidate_ids)
+        tool_map = {tool.__name__: tool for tool in tools}
+        
         config = types.GenerateContentConfig(
             system_instruction=AGENT_SYSTEM_PROMPT,
-            tools=self._build_tools(candidate_ids),
-            temperature=0.0
+            tools=tools,
+            temperature=0.0,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
         )
-        
-        chat = gemini_client.client.aio.chats.create(
-            model=settings.GEMINI_MODEL,
-            history=history_contents,
-            config=config
-        )
-        
-        resp = await chat.send_message(prompt)
 
-        # Format sources for schema
+        steps = []
+        max_turns = 5
+        turn_count = 0
+        final_answer = ""
+        
+        while turn_count < max_turns:
+            turn_count += 1
+            
+            resp = await gemini_client.client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=history,
+                config=config
+            )
+            
+            if not resp.candidates or not resp.candidates[0].content.parts:
+                break
+                
+            model_parts = resp.candidates[0].content.parts
+            history.append(types.Content(role="model", parts=model_parts))
+            
+            tool_calls = []
+            for part in model_parts:
+                if part.thought:
+                    steps.append({"type": "thought", "content": str(part.thought)})
+                if part.function_call:
+                    call = part.function_call
+                    tool_calls.append(call)
+                    steps.append({"type": "call", "name": call.name, "args": call.args})
+                if part.text:
+                    final_answer += part.text
+
+            if not tool_calls:
+                break
+                
+            # Execute tools
+            tool_response_parts = []
+            for call in tool_calls:
+                try:
+                    tool_func = tool_map.get(call.name)
+                    if tool_func:
+                        result = await tool_func(**call.args)
+                        steps.append({"type": "tool_output", "name": call.name, "output": result})
+                        tool_response_parts.append(types.Part.from_function_response(
+                            name=call.name,
+                            response={"result": result}
+                        ))
+                except Exception as e:
+                    logger.error(f"Error executing tool {call.name}: {e}")
+                    tool_response_parts.append(types.Part.from_function_response(
+                        name=call.name,
+                        response={"error": str(e)}
+                    ))
+            
+            history.append(types.Content(role="user", parts=tool_response_parts))
+
+        # 3. Format sources
         formatted_sources = []
         for i, c in enumerate(candidate_files):
             formatted_sources.append({
@@ -145,8 +166,9 @@ class ChatService:
             })
 
         return {
-            "answer": resp.text or "",
+            "answer": final_answer,
             "sources": formatted_sources,
+            "steps": steps,
             "processing_time_ms": int((time.time() - start_time) * 1000),
         }
 
@@ -160,43 +182,24 @@ class ChatService:
         """Stream chat response using google-genai tools stream."""
         start_time = time.time()
         
-        candidate_files = await self._retrieval.retrieve_candidate_files(
-            query=question,
-            metadata_filter=metadata_filter,
-            user_role=user_context.role
-        )
+        # 1. Preparation
+        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        candidate_files = state["candidate_files"]
+        candidate_ids = state["candidate_ids"]
+        history = state["history"]
 
-        candidate_ids = [c["file_id"] for c in candidate_files]
-        
         if not candidate_files:
-            yield json.dumps({"chunk": "Không tìm thấy tài liệu nào phù hợp.", "done": False})
+            yield json.dumps({"type": "text", "content": "Không tìm thấy tài liệu phù hợp.", "done": False})
             yield json.dumps({"done": True, "sources": [], "processing_time_ms": int((time.time() - start_time) * 1000)})
             return
 
-        files_info_str = "\n".join([f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}" for c in candidate_files])
-        prompt = (
-            f"User Context: {user_context.name} (Role: {user_context.role})\n"
-            f"Available Documents:\n{files_info_str}\n\n"
-            f"User Question: {question}"
-        )
-
-        history_contents = []
-        for h in chat_history[-6:]:
-            role = "user" if h.role == "user" else "model"
-            history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=h.content)]))
-
-        # 1. Prepare Tools Map
-        tools_list = self._build_tools(candidate_ids)
-        tool_map = {tool.__name__: tool for tool in tools_list}
-        
-        # 2. Prepare History for Manual Loop
-        # We start with existing chat history + system instruction
-        history = history_contents.copy()
-        history.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt)]))
+        # 2. Prepare Tools and Config for Manual Loop
+        tools = build_pindex_tools(candidate_ids)
+        tool_map = {tool.__name__: tool for tool in tools}
         
         config = types.GenerateContentConfig(
             system_instruction=AGENT_SYSTEM_PROMPT,
-            tools=tools_list,
+            tools=tools,
             temperature=0.0,
             # We manage turns manually to yield tool calls to the frontend
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)

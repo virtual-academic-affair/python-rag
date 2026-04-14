@@ -21,6 +21,8 @@ from app.integrations.llamaparse.client import ParsedMarkdownPage
 class ChunkBlock:
     chunk_index: int
     text: str
+    page_index_start: int
+    page_index_end: int
     section_path: Optional[str] = None
 
 
@@ -55,6 +57,8 @@ class ChunkingService:
                     ChunkBlock(
                         chunk_index=chunk_idx,
                         text=part,
+                        page_index_start=sec.get("page_start", 0),
+                        page_index_end=sec.get("page_end", 0),
                         section_path=sec.get("section_path"),
                     )
                 )

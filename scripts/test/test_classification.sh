@@ -3,8 +3,8 @@ source "$(dirname "$0")/common.sh"
 
 log_header "2. EMAIL CLASSIFICATION"
 
-log_info "POST /process — label: classRegistration"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
+log_info "POST /api/email/process — label: classRegistration"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
     -d '{
         "title": "Xin dang ky mon hoc",
@@ -12,8 +12,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Classify email — classRegistration"
 
-log_info "POST /process — label: inquiry (AI draft reply)"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
+log_info "POST /api/email/process — label: inquiry (AI draft reply)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
     -d '{
         "title": "Hoi ve dieu kien tot nghiep",
@@ -21,8 +21,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Classify email — inquiry"
 
-log_info "POST /process — label: task"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
+log_info "POST /api/email/process — label: task"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
     -d '{
         "title": "Yeu cau cap nhat diem hoc phan",
@@ -30,8 +30,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Classify email — task"
 
-log_info "POST /process — label: other"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
+log_info "POST /api/email/process — label: other"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
     -d '{
         "title": "Thong bao lich thi",
@@ -39,8 +39,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/process" \
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Classify email — other"
 
-log_info "POST /api/test/classification/ingested — Simulate RabbitMQ ingest"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/test/classification/ingested" \
+log_info "POST /api/email/test/ingested — Simulate RabbitMQ ingest"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/test/ingested" \
     -H "Content-Type: application/json" \
     -d '{
         "pattern": "ingested",

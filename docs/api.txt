@@ -54,7 +54,7 @@ TỔNG: 26 ENDPOINTS
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "4.5.0",                                                      │
+│     "version": "4.6.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true                                                 │
 │   }                                                                          │
@@ -243,7 +243,7 @@ TỔNG: 26 ENDPOINTS
 │ REQUEST (Multipart):                                                         │
 │   - file: <binary>                                                           │
 │   - displayName: "Văn bản A"                                                 │
-│   - customMetadata: string JSON (vd: '{"cohort":["k20"]}')                   │
+│   - customMetadata: JSON string (vd: '{"access_scope":["student"], "academic_year":["2025-2026"]}') │
 │                                                                              │
 │ RESPONSE 201: { "fileId": "67...", "status": "uploading", ... }              │
 │   - Bao gồm: tableOfContents (list phẳng), summary (tóm tắt văn bản).        │
@@ -308,6 +308,14 @@ TỔNG: 26 ENDPOINTS
 │ REQUEST: - files: [binary], - displayNames: JSON, - metadataList: JSON       │
 │ RESPONSE: { "total": 5, "successful": 4, "failed": 1, "results": [...] }     │
 │ LUỒNG XỬ LÝ: Chạy vòng lặp gọi hàm upload đơn lẻ cho từng thành phần.        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/toc-tree/{fileId}       [🔒 AUTH]                                   │
+│ ├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy cấu trúc mục lục (TOC Tree) chi tiết theo PageIndex Schema.        │
+│ RESPONSE: { "docName": "...", "structure": [...], "markdownStoragePath": "..." } │
+│ LUỒNG XỬ LÝ: Truy vấn collection `file_toc_trees` theo fileId.                │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -377,8 +385,10 @@ TỔNG: 26 ENDPOINTS
 │ MÔ TẢ: Hỏi đáp RAG thời gian thực qua Web Stream (SSE).                      │
 │                                                                              │
 │ RESPONSE (Event Stream):                                                     │
-│   - Từng từ: data: {"chunk": "token", "done": false}                         │
-│   - Kết thúc: data: {"done": true, "sources": [...]}                         │
+│   - Thought: data: {"type": "thought", "content": "thinking...", "done": false}  │
+│   - Text:    data: {"type": "text", "content": "Hello", "done": false}           │
+│   - Call:    data: {"type": "call", "name": "get_doc", "args": {...}, "done": false} │
+│   - Final:   data: {"done": true, "sources": [...], "processingTimeMs": 1234}    │
 │                                                                              │
 │ LUỒNG XỬ LÝ: Tương tự `/query` nhưng response được chunking ngay lập tức.    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -428,5 +438,11 @@ TỔNG: 26 ENDPOINTS
 - 500 Internal Error: Lỗi hạ tầng (Qdrant, MongoDB, R2, Gemini API).
 
 --------------------------------------------------------------------------------
+LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
+- Tài liệu Markdown (.md) được cache tại local server (`PAGEINDEX_WORKSPACE/artifacts`).
+- Thời gian tồn tại (TTL): 60 phút kể từ lần truy cập cuối.
+- Background Task: Hệ thống tự động quét và dọn dẹp các tệp quá hạn mỗi 30 phút.
+- R2 Fallback: Nếu cache bị dọn dẹp, hệ thống sẽ tự động tải lại từ R2 khi có yêu cầu.
+
 Hoàn tất bản Đặc tả API chi tiết v4.6.0 (Full Compliance).
 --------------------------------------------------------------------------------

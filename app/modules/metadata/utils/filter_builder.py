@@ -215,6 +215,47 @@ class FilterBuilder:
         return qm.Filter(must=must_conditions)
 
 
+    async def build_mongo_filter(
+        self,
+        metadata: Dict[str, Any],
+        user_role: str = "student",
+        skip_validation: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Build metadata query filter for MongoDB filtering.
+        """
+        await self._load_metadata_types_cache()
+        
+        if not skip_validation and metadata:
+            is_valid, errors = await self.metadata_service.validate_metadata(metadata)
+            if not is_valid:
+                logger.warning(f"Metadata validation failed for filter: {metadata} - Errors: {errors}")
+
+        filter_metadata = dict(metadata) if metadata else {}
+        
+        # Enforce access_scope by role AFTER validation
+        if user_role == "student":
+            filter_metadata["access_scope"] = ["student"]
+        elif user_role == "lecture":
+            filter_metadata["access_scope"] = ["lecture"]
+            
+        mongo_filter = {}
+        for key, value in filter_metadata.items():
+            meta_type = self._metadata_types_cache.get(key)
+            if not meta_type and key != "access_scope":
+                logger.warning(f"Metadata key '{key}' not found in cache for mongo filter, skipping")
+                continue
+                
+            values = value if isinstance(value, list) else [value]
+            
+            if meta_type and meta_type.has_all_value and "all" not in values:
+                values = values + ["all"]
+                
+            mongo_filter[f"custom_metadata.{key}"] = {"$in": values}
+            
+        return mongo_filter
+
+
     def quick_convert(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
         """
         Convert metadata filter from JSON key-value format to Gemini FileSearch format.

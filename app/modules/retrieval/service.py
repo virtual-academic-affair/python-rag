@@ -6,13 +6,15 @@ Combines Qdrant semantic search with PageIndex structural context.
 from __future__ import annotations
 
 import logging
+import math
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
-from app.modules.toc_tree.repository import FileTocTreeRepository
+from app.modules.files.toc_tree.repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +54,6 @@ class RetrievalService:
         if not hits:
             return []
 
-        import math
-        from collections import defaultdict
-
         doc_info = {}
         doc_chunks = defaultdict(list)
 
@@ -82,9 +81,13 @@ class RetrievalService:
         doc_scores.sort(key=lambda x: x["doc_score"], reverse=True)
         top_docs = doc_scores[:max_files]
 
-        for ctx in top_docs:
-            toc_doc = await self._toc_repo.find_by_file_id(ctx["file_id"])
-            ctx["doc_description"] = (toc_doc or {}).get("doc_description", "")
+        # 4. Enrich with descriptions (Batch query)
+        top_ids = [d["file_id"] for d in top_docs]
+        toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
+        toc_map = {t["file_id"]: t.get("doc_description", "") for t in toc_docs}
+
+        for d in top_docs:
+            d["doc_description"] = toc_map.get(d["file_id"], "")
 
         return top_docs
 

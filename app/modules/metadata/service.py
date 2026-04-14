@@ -14,7 +14,7 @@ from app.core.exceptions import (
 )
 from app.modules.metadata.models import MetadataTypeDocument, AllowedValue
 from app.modules.metadata.repository import MetadataRepository
-from app.modules.files.utils import to_snake, normalize_to_snake
+from app.core.converters import to_snake, normalize_to_snake
 
 logger = logging.getLogger(__name__)
 
@@ -471,7 +471,9 @@ class MetadataService:
 
     async def validate_file_metadata_requirements(self, custom_metadata: Dict[str, Any]) -> None:
         """
-        Validate file metadata requirements (system fields and value validation).
+        Enforce system and logic requirements on metadata during file upload.
+        """
+        """
         Rules:
         - All system metadata fields are required.
         - Exception: At least one of academic_year or cohort is required.
@@ -568,6 +570,11 @@ class MetadataService:
             f["custom_metadata"] = filtered_cm
         
 
+_metadata_service_instance: Optional[MetadataService] = None
+
 def get_metadata_service() -> MetadataService:
-    """Get MetadataService instance."""
-    return MetadataService()
+    """Get MetadataService singleton instance."""
+    global _metadata_service_instance
+    if _metadata_service_instance is None:
+        _metadata_service_instance = MetadataService()
+    return _metadata_service_instance

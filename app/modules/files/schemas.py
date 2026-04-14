@@ -35,6 +35,8 @@ class FileParsePreviewResponse(BaseSchema):
 
 class FileChunkPreviewItem(BaseSchema):
     chunk_index: int
+    page_index_start: int
+    page_index_end: int
     section_path: Optional[str] = None
     text: str
 

@@ -99,8 +99,7 @@ class GeminiGenAIChat:
             if not model_name.startswith("models/"):
                 model_name = f"models/{model_name}"
 
-        resp = await asyncio.to_thread(
-            self._client.models.generate_content,
+        resp = await self._client.aio.models.generate_content(
             model=model_name,
             contents=prompt,
             config=self._build_config(),

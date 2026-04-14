@@ -546,9 +546,9 @@
                                 },
                                 {
                                     "key": "customMetadata",
-                                    "value": "{\"accessScope\":[\"student\"],\"academicYear\":[\"2024-2025\"]}",
+                                    "value": "{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}",
                                     "type": "text",
-                                    "description": "Required: must include accessScope (private, lecture, student (No mix private and student/lecture)) AND at least one of academicYear/cohort"
+                                    "description": "Required: must include access_scope (private, lecture, student (No mix private and student/lecture)) AND at least one of academic_year/cohort"
                                 }
                             ]
                         },
@@ -712,6 +712,31 @@
                     "response": []
                 },
                 {
+                    "name": "Get TOC Tree",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/toc-tree/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "toc-tree",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Get hierarchical Table of Contents (TOC) tree for a file."
+                    },
+                    "response": []
+                },
+                {
                     "name": "Download file",
                     "request": {
                         "method": "GET",
@@ -764,9 +789,9 @@
                                 },
                                 {
                                     "key": "metadataList",
-                                    "value": "[{\"accessScope\":[\"student\"],\"academicYear\":[\"2024-2025\"]}, {\"accessScope\":[\"lecture\"],\"cohort\":[\"K65\"]}]",
+                                    "value": "[{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}, {\"access_scope\":[\"lecture\"],\"cohort\":[\"K65\"]}]",
                                     "type": "text",
-                                    "description": "JSON array - one object per file. accessScope required + academicYear or cohort"
+                                    "description": "JSON array - one object per file. access_scope required + academic_year or cohort"
                                 }
                             ]
                         },

@@ -11,10 +11,10 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 1.  **Phân loại & Xử lý Email**: Nhận thông tin từ RabbitMQ, tự động nhận diện ý định (Classification) và trích xuất dữ liệu (Extraction) để gọi các workflows gRPC (ClassRegistration, Task, Inquiry).
 2.  **Modular RAG Ecosystem**: Hệ thống tìm kiếm và hỏi đáp tài liệu không phụ thuộc vào Gemini File Search, sử dụng pipeline mạnh mẽ:
     *   **LlamaParse**: Bọc tách tài liệu PDF phức tạp sang Markdown chuẩn.
-    *   **PageIndex**: Đánh chỉ mục cấu trúc (TOC) và quản lý phân đoạn văn bản phân cấp.
+    *   **PageIndex**: Đánh chỉ mục cấu trúc (TOC), quản lý phân đoạn văn bản phân cấp và **Agentic Tools**.
     *   **Qdrant**: Vector Database lưu trữ embeddings phục vụ tìm kiếm ngữ nghĩa.
     *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets.
-    *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks, giúp tăng độ chính xác của Agent.
+    *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks và cấu trúc mục lục.
 
 ---
 
@@ -34,32 +34,27 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 
 ---
 
-## 📂 Cấu trúc thư mục
+## 📂 Cấu trúc dự án (Refactored)
 
-```
+```text
 python-rag/
 ├── app/
-│   ├── api/                    # Cổng vào API tổng hợp
-│   ├── core/                   # Cấu hình, Database connection, Exception
-│   ├── integrations/           # Kết nối hạ tầng (Qdrant, R2, Gemini, PageIndex)
-│   ├── modules/                # Business Logic phân mảnh theo Module
-│   │   ├── chat/               # RAG Query & Streaming
+│   ├── api/                    # Cổng vào API tổng hợp (router.py)
+│   ├── core/                   # Cấu hình lõi, Database connection, Converters
+│   ├── integrations/           # Client wrappers (R2, Qdrant, PageIndex, gRPC)
+│   ├── modules/                # Business Logic phân mảnh theo Domain
+│   │   ├── chat/               # Agentic Chat RAG & Streaming
 │   │   ├── email/              # Orchestrator & Workflow classification
-│   │   ├── files/              # Quản lý tệp và nạp liệu (Ingestion)
+│   │   ├── files/              # Quản lý tệp (Upload, Delete, TOC Tree)
 │   │   ├── metadata/           # Quản lý nhãn và Role-based masking
-│   │   └── toc_tree/           # Quản lý cấu trúc mục lục (PageIndex)
+│   │   └── retrieval/          # Retrieval Service & Tool-use logic
+│   ├── pipelines/              # Quy trình xử lý phức tạp (Ingestion)
 │   ├── proto/                  # Protobuf definitions & generated stubs
-│   ├── repositories/           # Tầng truy cập dữ liệu MongoDB
-│   └── utils/                  # Tiện ích dùng chung (DB, Pagination)
-├── docs/                       # Tài liệu chi tiết hệ thống
-│   ├── api.txt                 # Đặc tả chi tiết 25+ Endpoints (Source of Truth)
-│   └── project-overview.txt    # Hướng dẫn kiến trúc chi tiết (Technical Manual)
-├── scripts/                    # Công cụ quản trị & Test
-│   ├── init_db.py              # Xóa/Khởi tạo môi trường DB/Vector/Storage
-│   ├── seed_metadata.py        # Thiết lập các nhãn hệ thống bắt buộc
-│   └── test_upload_n_chat.py   # Bộ test E2E cho luồng RAG
-├── Dockerfile                  # Cấu hình Docker
-└── requirements.txt            # Danh sách thư viện Python
+│   └── repositories/           # Tầng truy cập dữ liệu MongoDB (Base Pattern)
+├── docs/                       # Tài liệu chi tiết hệ thống (api.txt, overview)
+├── scripts/                    # Công cụ quản trị, Test & Seed dữ liệu
+├── Dockerfile                  # Cấu hình containerization
+└── requirements.txt            # Danh mục thư viện Python
 ```
 
 ---

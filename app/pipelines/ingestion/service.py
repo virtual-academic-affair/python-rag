@@ -17,10 +17,10 @@ from typing import Any, Optional
 
 import logging
 
-from app.modules.toc_tree.repository import FileTocTreeRepository
-from app.modules.ingestion.chunking import get_chunking_service
+from app.modules.files.toc_tree.repository import FileTocTreeRepository
+from app.pipelines.ingestion.chunking import get_chunking_service
 from app.integrations.llamaparse.client import get_llamaparse_client
-from app.integrations.llamaindex.indexer import get_llama_index_indexer
+from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.integrations.pageindex.client import get_page_index_client
 from app.core.config import settings
 
@@ -31,7 +31,7 @@ class IngestionService:
         self._toc_repo: Optional[FileTocTreeRepository] = None
         self._parser = get_llamaparse_client()
         self._chunker = get_chunking_service()
-        self._indexer = get_llama_index_indexer()
+        self._indexer = get_qdrant_indexer()
         self._page_index = get_page_index_client()
 
     @property
@@ -63,6 +63,7 @@ class IngestionService:
         with open(md_file_path, "w", encoding="utf-8") as f:
             f.write(markdown_content)
         
+        toc_line_count = 0
         try:
             doc_id = file_id 
             
@@ -72,20 +73,16 @@ class IngestionService:
                 doc_name=file_name
             )
             
-            await self.toc_repo.upsert_by_file_id(file_id, {
-                "doc_name": toc_result["doc_name"],
-                "doc_description": toc_result["doc_description"],
-                "line_count": toc_result["line_count"],
-                "structure": toc_result["structure"],
-            })
-            
-            # Extract simple TOC and summary for the main files collection
+            # In-memory storage for returning to caller
             table_of_contents = self._extract_flat_toc(toc_result["structure"])
             summary = toc_result["doc_description"]
+            toc_structure = toc_result["structure"]
+            toc_line_count = toc_result.get("line_count", 0)
         except Exception as e:
             logger.error(f"PageIndex failed to generate TOC/Summary for {file_id}: {e}")
             table_of_contents = []
             summary = None
+            toc_structure = []
 
         chunks = self._chunker.chunk_markdown_pages(
             pages,
@@ -122,7 +119,9 @@ class IngestionService:
             "indexed_count": indexed_count,
             "markdown_content": markdown_content,
             "table_of_contents": table_of_contents,
-            "summary": summary
+            "summary": summary,
+            "toc_structure": toc_structure,
+            "line_count": toc_line_count,
         }
     
     def _extract_flat_toc(self, structure: list[dict[str, Any]]) -> list[str]:

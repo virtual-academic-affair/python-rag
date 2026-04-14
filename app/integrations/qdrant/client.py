@@ -17,6 +17,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_qdrant_retrieval_service_instance: Optional[QdrantRetrievalService] = None
+_collection_ready: bool = False
+
 class QdrantRetrievalService:
     def __init__(self):
         self._client: Optional[QdrantClient] = None
@@ -34,10 +37,9 @@ class QdrantRetrievalService:
         return self._client
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding using new google-genai SDK."""
+        """Get embedding using new google-genai SDK (native async)."""
         from google.genai import types
-        response = await asyncio.to_thread(
-            self._genai_client.models.embed_content,
+        response = await self._genai_client.aio.models.embed_content(
             model=self._embed_model_name,
             contents=text,
             config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
@@ -45,6 +47,11 @@ class QdrantRetrievalService:
         return response.embeddings[0].values
 
     async def ensure_collection(self) -> None:
+        """Ensure collection and indexes exist (only once per process)."""
+        global _collection_ready
+        if _collection_ready:
+            return
+
         def _ensure() -> None:
             collections = self.qdrant_client_instance.get_collections().collections
             names = {c.name for c in collections}
@@ -58,7 +65,13 @@ class QdrantRetrievalService:
                 )
             
             # Ensure payload indexes
-            for field in ["file_id", "metadata.access_scope", "metadata.academic_year", "metadata.department"]:
+            fields = [
+                "file_id", 
+                "metadata.access_scope", 
+                "metadata.academic_year", 
+                "metadata.department"
+            ]
+            for field in fields:
                 try:
                     self.qdrant_client_instance.create_payload_index(
                         collection_name=settings.QDRANT_COLLECTION_NAME,
@@ -69,6 +82,7 @@ class QdrantRetrievalService:
                     pass
 
         await asyncio.to_thread(_ensure)
+        _collection_ready = True
 
     async def retrieve(
         self,
@@ -114,9 +128,6 @@ class QdrantRetrievalService:
         h = hashlib.sha1(file_id.encode("utf-8", errors="ignore")).hexdigest()[:16]
         return int(h, 16) % (2**63 - 1)
 
-
-
-_qdrant_retrieval_service_instance: Optional[QdrantRetrievalService] = None
 
 def get_qdrant_retrieval_service() -> QdrantRetrievalService:
     global _qdrant_retrieval_service_instance

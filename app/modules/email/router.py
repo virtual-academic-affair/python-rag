@@ -15,7 +15,7 @@ from app.modules.email.orchestrator import EmailWorkflowOrchestrator
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Email Classification"])
+router = APIRouter(prefix="/email", tags=["Email Classification"])
 
 
 def get_classifier() -> EmailWorkflowOrchestrator:

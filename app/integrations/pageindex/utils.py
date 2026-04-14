@@ -653,23 +653,30 @@ def format_structure(structure, order=None):
 
 class ConfigLoader:
     def __init__(self, default_path: str = None):
-        if default_path is None:
-            default_path = Path(__file__).parent / "config.yaml"
-        self._default_dict = self._load_yaml(default_path)
-
-    @staticmethod
-    def _load_yaml(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        # We ignore default_path and use global settings
+        from app.core.config import settings
+        self.settings = settings
+        self._default_dict = {
+            "model": settings.PAGEINDEX_MODEL,
+            "retrieve_model": settings.PAGEINDEX_RETRIEVE_MODEL or settings.PAGEINDEX_MODEL,
+            "toc_check_page_num": settings.PAGEINDEX_TOC_CHECK_PAGE_NUM,
+            "max_page_num_each_node": settings.PAGEINDEX_MAX_PAGE_NUM_EACH_NODE,
+            "max_token_num_each_node": settings.PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE,
+            "if_add_node_id": settings.PAGEINDEX_IF_ADD_NODE_ID,
+            "if_add_node_summary": settings.PAGEINDEX_IF_ADD_NODE_SUMMARY,
+            "if_add_doc_description": settings.PAGEINDEX_IF_ADD_DOC_DESCRIPTION,
+            "if_add_node_text": settings.PAGEINDEX_IF_ADD_NODE_TEXT,
+        }
 
     def _validate_keys(self, user_dict):
+        # Keys are validated against the keys in settings mapping
         unknown_keys = set(user_dict) - set(self._default_dict)
         if unknown_keys:
             raise ValueError(f"Unknown config keys: {unknown_keys}")
 
     def load(self, user_opt=None) -> config:
         """
-        Load the configuration, merging user options with default values.
+        Load the configuration, merging user options with values from settings.
         """
         if user_opt is None:
             user_dict = {}

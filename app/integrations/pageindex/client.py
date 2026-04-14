@@ -1,6 +1,7 @@
+import logging
 import os
+import time
 import uuid
-import json
 import asyncio
 import concurrent.futures
 from pathlib import Path
@@ -11,8 +12,10 @@ from .page_index import page_index
 from .page_index_md import md_to_tree
 from .retrieve import get_document, get_document_structure, get_page_content
 from .utils import ConfigLoader, remove_fields
+from app.integrations.storage.client import r2_storage
 
-META_INDEX = "_meta.json"
+logger = logging.getLogger(__name__)
+MD_CACHE_TTL_SECONDS = 3600  # 1 hour
 
 
 def _normalize_retrieve_model(model: str) -> str:
@@ -23,7 +26,6 @@ def _normalize_retrieve_model(model: str) -> str:
     if model.startswith(passthrough_prefixes):
         return model
     return f"litellm/{model}"
-
 
 class PageIndexClient:
     """
@@ -56,7 +58,7 @@ class PageIndexClient:
     @property
     def toc_repo(self):
         if self._toc_repo is None:
-            from app.modules.toc_tree.repository import FileTocTreeRepository
+            from app.modules.files.toc_tree.repository import FileTocTreeRepository
             self._toc_repo = FileTocTreeRepository()
         return self._toc_repo
 
@@ -169,33 +171,135 @@ class PageIndexClient:
             "structure": result['structure'],
         }
 
+    async def _check_and_refresh_cache(self, doc_id: str, md_storage_path: str):
+        """Check if local markdown exists and is fresh. If not, download from R2."""
+        if not self.workspace or not md_storage_path:
+            return
+
+        local_path = self.workspace / f"{doc_id}.md"
+        now = time.time()
+        
+        needs_download = False
+        if not local_path.exists():
+            needs_download = True
+        else:
+            # Check TTL
+            mtime = local_path.stat().st_mtime
+            if (now - mtime) > MD_CACHE_TTL_SECONDS:
+                needs_download = True
+
+        if needs_download:
+            try:
+                logger.info(f"Refreshing markdown cache for {doc_id} from R2 ({md_storage_path})")
+                file_obj = await r2_storage.download_file(md_storage_path)
+                with open(local_path, "wb") as f:
+                    f.write(file_obj.read())
+            except Exception as e:
+                logger.warning(f"Failed to refresh markdown cache for {doc_id}: {e}")
+
+    def evict_doc(self, doc_id: str) -> None:
+        """Remove a document from in-memory cache and delete local markdown cache file."""
+        # Remove from in-memory dict
+        self.documents.pop(doc_id, None)
+        # Remove local cached .md file
+        if self.workspace:
+            local_path = self.workspace / f"{doc_id}.md"
+            if local_path.exists():
+                try:
+                    local_path.unlink()
+                    logger.info(f"Evicted markdown cache for doc {doc_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to evict markdown cache for {doc_id}: {e}")
+
+    def cleanup_expired_artifacts(self, max_age_seconds: int = MD_CACHE_TTL_SECONDS) -> int:
+        """Scan workspace/artifacts and delete files older than max_age_seconds."""
+        if not self.workspace or not self.workspace.exists():
+            return 0
+            
+        count = 0
+        now = time.time()
+        # Find all .md files in workspace
+        for item in self.workspace.glob("*.md"):
+            if item.is_file():
+                mtime = item.stat().st_mtime
+                if (now - mtime) > max_age_seconds:
+                    try:
+                        item.unlink()
+                        count += 1
+                        logger.info(f"Cleaned up expired artifact: {item.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete expired artifact {item}: {e}")
+        return count
+
+    async def _check_and_refresh_cache(self, doc_id: str, md_storage_path: str):
+        """Check if local markdown exists and is fresh. If not, download from R2."""
+        if not self.workspace or not md_storage_path:
+            return
+
+        local_path = self.workspace / f"{doc_id}.md"
+        now = time.time()
+        
+        needs_download = False
+        if not local_path.exists():
+            needs_download = True
+        else:
+            # Check TTL
+            mtime = local_path.stat().st_mtime
+            if (now - mtime) > MD_CACHE_TTL_SECONDS:
+                needs_download = True
+
+        if needs_download:
+            try:
+                logger.info(f"Refreshing markdown cache for {doc_id} from R2 path: {md_storage_path}")
+                # Use a slightly longer timeout for R2 downloads
+                file_obj = await r2_storage.download_file(md_storage_path)
+                if file_obj:
+                    with open(local_path, "wb") as f:
+                        f.write(file_obj.read())
+                    logger.info(f"Successfully cached {doc_id}.md to {local_path}")
+                else:
+                    logger.error(f"R2 download returned empty object for {doc_id} at {md_storage_path}")
+            except Exception as e:
+                logger.error(f"Failed to refresh markdown cache for {doc_id}: {e}")
+
     async def _ensure_doc_loaded(self, doc_id: str):
         """Load full document from MongoDB on demand (structure, path, etc.)."""
-        # If we have path but no structure, fetch from MongoDB
         doc = self.documents.get(doc_id)
         
-        # If document not in memory at all, fetch metadata from files repo if possible?
-        # Actually, PageIndexClient currently doesn't have access to FileRepository.
-        # But we can reconstruct basic info from toc_repo.
-        
+        # We reload if doc is not in memory OR if structure is missing
         if not doc or doc.get('structure') is None:
             full = await self.toc_repo.find_by_file_id(doc_id)
             if not full:
+                logger.warning(f"Metadata for document {doc_id} not found in MongoDB (toc_tree collection).")
                 return
 
+            md_storage_path = full.get('markdown_storage_path')
+            if md_storage_path:
+                await self._check_and_refresh_cache(doc_id, md_storage_path)
+            else:
+                logger.warning(f"Document {doc_id} has no markdown_storage_path in MongoDB.")
+
+            local_md_path = str(self.workspace / f"{doc_id}.md")
+            
+            # Reconstruct or update memory cache entry
             if not doc:
-                # Reconstruct cache entry
                 self.documents[doc_id] = {
                     'id': doc_id,
-                    'type': 'md', # Defaulting to md as per refactor goal
-                    'path': str(Path(self.workspace) / f"{doc_id}.md"),
+                    'type': 'md',
+                    'path': local_md_path,
                     'doc_name': full.get('doc_name', ''),
                     'doc_description': full.get('doc_description', ''),
                     'line_count': full.get('line_count', 0),
                 }
                 doc = self.documents[doc_id]
+            else:
+                doc['path'] = local_md_path
 
-            doc['structure'] = full.get('structure', [])
+            doc_structure = full.get('structure', [])
+            if not doc_structure:
+                logger.warning(f"Document {doc_id} has metadata but EMPTY structure/TOC.")
+            
+            doc['structure'] = doc_structure
 
     async def get_document(self, doc_id: str) -> str:
         """Return document metadata JSON."""

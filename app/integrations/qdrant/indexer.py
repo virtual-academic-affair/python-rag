@@ -1,53 +1,30 @@
 """
-LlamaIndex integration for generating embeddings and indexing into Qdrant.
+Qdrant integration for generating embeddings and indexing into Qdrant.
 """
 
 from typing import Any, List, Optional
 import hashlib
-from llama_index.embeddings.gemini import GeminiEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
 from app.core.config import settings
 
 from google import genai
+from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from google.genai import types
 
-class LlamaIndexIndexer:
-    """Handles embedding chunks and indexing them into Qdrant using LlamaIndex constructs."""
+class QdrantIndexer:
+    """Handles embedding chunks and indexing them into Qdrant."""
     
     def __init__(self):
         self._genai_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         self._embed_model_name = "models/gemini-embedding-001"
-        self._qdrant_client = QdrantClient(
-            url=settings.QDRANT_URL,
-            api_key=settings.QDRANT_API_KEY or None,
-            timeout=30,
-        )
+        self._qdrant_svc = get_qdrant_retrieval_service()
+        self._qdrant_client = self._qdrant_svc.qdrant_client_instance
         
     async def ensure_collection(self) -> None:
-        """Create the collection in Qdrant if it does not exist."""
-        collections = self._qdrant_client.get_collections().collections
-        names = {c.name for c in collections}
-        if settings.QDRANT_COLLECTION_NAME not in names:
-            self._qdrant_client.create_collection(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                vectors_config=qm.VectorParams(
-                    size=settings.QDRANT_VECTOR_SIZE,
-                    distance=qm.Distance.COSINE,
-                ),
-            )
-        
-        # Always attempt to create payload indexes if missing
-        for field in ["file_id", "metadata.access_scope"]:
-            try:
-                self._qdrant_client.create_payload_index(
-                    collection_name=settings.QDRANT_COLLECTION_NAME,
-                    field_name=field,
-                    field_schema=qm.PayloadSchemaType.KEYWORD,
-                )
-            except Exception:
-                pass
+        """Create the collection in Qdrant if it does not exist (delegate to service)."""
+        await self._qdrant_svc.ensure_collection()
 
     def _stable_point_id(self, chunk_id: str) -> str:
         """Qdrant accepts UUID or unsigned integer. Using a uuid format derived from chunk_id."""
@@ -56,7 +33,7 @@ class LlamaIndexIndexer:
 
     async def ingest_chunks(self, chunks_data: List[dict]) -> int:
         """
-        Embed and ingest chunks into Qdrant.
+        Embed and ingest chunks into Qdrant (native async).
         
         Args:
             chunks_data: List of dicts representing chunks (with chunk_id, text, metadata)
@@ -70,9 +47,7 @@ class LlamaIndexIndexer:
         if not texts:
             return 0
             
-        import asyncio
-        response = await asyncio.to_thread(
-            self._genai_client.models.embed_content,
+        response = await self._genai_client.aio.models.embed_content(
             model=self._embed_model_name,
             contents=texts,
             config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
@@ -121,10 +96,34 @@ class LlamaIndexIndexer:
             )
         )
 
-_llama_index_indexer_instance: Optional[LlamaIndexIndexer] = None
+    async def update_payload_by_file_id(self, file_id: str, new_metadata: dict) -> None:
+        """
+        Update the metadata payload for all chunks associated with a file_id.
+        """
+        await self.ensure_collection()
+        
+        # We need to use `set_payload` or `overwrite_payload`
+        # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
+        import asyncio
+        await asyncio.to_thread(
+            self._qdrant_client.set_payload,
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            payload={"metadata": new_metadata},
+            points_selector=qm.Filter(
+                must=[
+                    qm.FieldCondition(
+                        key="file_id",
+                        match=qm.MatchValue(value=file_id)
+                    )
+                ]
+            ),
+            wait=True,
+        )
 
-def get_llama_index_indexer() -> LlamaIndexIndexer:
-    global _llama_index_indexer_instance
-    if _llama_index_indexer_instance is None:
-        _llama_index_indexer_instance = LlamaIndexIndexer()
-    return _llama_index_indexer_instance
+_qdrant_indexer_instance: Optional[QdrantIndexer] = None
+
+def get_qdrant_indexer() -> QdrantIndexer:
+    global _qdrant_indexer_instance
+    if _qdrant_indexer_instance is None:
+        _qdrant_indexer_instance = QdrantIndexer()
+    return _qdrant_indexer_instance

@@ -18,41 +18,7 @@ class FileRepository(BaseRepository):
     def __init__(self):
         super().__init__(Database.FILES)
     
-    async def find_with_filters(
-        self,
-        filters: Dict[str, Any],
-        skip: int = 0,
-        limit: int = 20,
-    ) -> List[Dict[str, Any]]:
-        """
-        Find files with filters.
-        
-        Args:
-            filters: MongoDB query filters
-            skip: Number to skip
-            limit: Maximum results
-            
-        Returns:
-            List of file documents
-        """
-        return await self.find_many(
-            query=filters,
-            skip=skip,
-            limit=limit,
-            sort=[("created_at", -1)]
-        )
-    
-    async def count_with_filters(self, filters: Dict[str, Any]) -> int:
-        """
-        Count files matching filters.
-        
-        Args:
-            filters: MongoDB query filters
-            
-        Returns:
-            Count of matching files
-        """
-        return await self.count(filters)
+
     
     async def update_status(
         self,

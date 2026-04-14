@@ -11,6 +11,10 @@ class FileTocTreeRepository(BaseRepository):
     async def find_by_file_id(self, file_id: str) -> Optional[Dict[str, Any]]:
         return await self.find_one({"file_id": file_id})
 
+    async def find_by_file_ids(self, file_ids: list[str]) -> list[Dict[str, Any]]:
+        """Find multiple TOC trees by their file IDs."""
+        return await self.find_many({"file_id": {"$in": file_ids}}, limit=len(file_ids))
+
     async def upsert_by_file_id(self, file_id: str, data: Dict[str, Any]) -> bool:
         """Insert or replace TOC tree for a file."""
         existing = await self.find_by_file_id(file_id)

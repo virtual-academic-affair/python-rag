@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
+    PAGEINDEX_MODEL: str = "gemini-4-31b-it" 
+    PAGEINDEX_RETRIEVE_MODEL: str = "gemini-4-31b-it" 
+    PAGEINDEX_TOC_CHECK_PAGE_NUM: int = 20
+    PAGEINDEX_MAX_PAGE_NUM_EACH_NODE: int = 10
+    PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE: int = 20000
+    PAGEINDEX_IF_ADD_NODE_ID: str = "yes"
+    PAGEINDEX_IF_ADD_NODE_SUMMARY: str = "yes"
+    PAGEINDEX_IF_ADD_DOC_DESCRIPTION: str = "no"
+    PAGEINDEX_IF_ADD_NODE_TEXT: str = "no"
 
 
 

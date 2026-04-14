@@ -25,32 +25,7 @@ from app.core.exceptions import FileSizeException, FileTypeException
 
 logger = logging.getLogger(__name__)
 
-class UploadStep(Enum):
-    """Steps in the upload process for tracking rollback."""
-    VALIDATED = "validated"
-    DB_CREATED = "db_created"
-    R2_UPLOADED = "r2_uploaded"
-    MARKDOWN_GENERATED = "markdown_generated"
-    VECTOR_DB_SAVED = "vector_db_saved"
-    METADATA_SYNCED = "metadata_synced"
-    COMPLETED = "completed"
 
-@dataclass
-class UploadState:
-    """Track upload progress for intelligent rollback."""
-    file_id: Optional[str] = None
-    storage_path: Optional[str] = None
-    markdown_storage_path: Optional[str] = None
-    summary: Optional[str] = None
-    table_of_contents: list[str] = field(default_factory=list)
-    custom_metadata: Optional[dict] = None
-    completed_steps: list = field(default_factory=list)
-
-    def mark_step(self, step: UploadStep):
-        self.completed_steps.append(step)
-    
-    def has_step(self, step: UploadStep) -> bool:
-        return step in self.completed_steps
 
 # ====================================
 # CONSTANTS
@@ -145,34 +120,7 @@ def cleanup_temp_file(file_path: str) -> None:
     except Exception:
         pass
 
-def to_snake(name: str) -> str:
-    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
 
-def normalize_to_snake(value: Any) -> Any:
-    if isinstance(value, str):
-        return to_snake(value)
-    if isinstance(value, list):
-        return [normalize_to_snake(v) for v in value]
-    if isinstance(value, dict):
-        return {to_snake(k): normalize_to_snake(v) for k, v in value.items()}
-    return value
-
-def convert_custom_metadata_to_snake(custom_metadata: dict) -> dict:
-    if not custom_metadata:
-        return {}
-    return normalize_to_snake(custom_metadata)
-
-def to_camel(name: str) -> str:
-    components = name.split('_')
-    if not components:
-        return ""
-    return components[0] + ''.join(x.title() for x in components[1:])
-
-def convert_custom_metadata_to_camel(custom_metadata: dict) -> dict:
-    if not custom_metadata:
-        return {}
-    return {to_camel(k): v for k, v in custom_metadata.items()}
 
 def remove_accents(input_str: str) -> str:
     if not input_str:

@@ -36,7 +36,7 @@ from app.modules.files.models import FileDocument
 from app.modules.files.models import FileStatus
 from app.modules.files.repository import FileRepository
 from app.integrations.storage.client import r2_storage
-from app.modules.ingestion.service import get_ingestion_service
+from app.pipelines.ingestion.service import get_ingestion_service
 from app.modules.metadata.service import get_metadata_service
 from app.modules.files.utils import (
     validate_file_size,
@@ -44,10 +44,15 @@ from app.modules.files.utils import (
     detect_mime_type,
     generate_storage_path,
     cleanup_temp_file,
+)
+from app.modules.files.upload_state import (
     UploadStep,
     UploadState,
 )
-from app.modules.metadata.service import get_metadata_service
+
+
+from app.integrations.qdrant.indexer import get_qdrant_indexer
+from app.modules.files.toc_tree.repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -87,34 +92,7 @@ class FileService:
         return self._file_repo
 
 
-    async def upload_file(
-        self,
-        file_path: str,
-        original_filename: str,
-        display_name: Optional[str] = None,
-        custom_metadata: Optional[dict] = None,
-        max_retries: int = 3,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
-    ) -> FileDocument:
-        """Legacy sync upload flow (kept for compatibility)."""
-        state, file_info = await self._prepare_upload_state(
-            file_path, original_filename, display_name, custom_metadata
-        )
 
-        try:
-            return await self._execute_upload_steps(
-                state=state,
-                file_path=file_path,
-                original_filename=original_filename,
-                display_name=display_name or original_filename,
-                mime_type=file_info["mime_type"],
-                file_size=file_info["file_size"],
-                max_retries=max_retries,
-                progress_callback=progress_callback,
-            )
-        except Exception as e:
-            await self._rollback_upload(state, str(e))
-            raise
 
     async def upload_file_quick(
         self,
@@ -203,12 +181,21 @@ class FileService:
             markdown_bytes = markdown_content.encode("utf-8")
             md_storage_path = storage_path.rsplit(".", 1)[0] + ".md"
             
-            from io import BytesIO
             await r2_storage.upload_file(
-                file=BytesIO(markdown_bytes),
+                file=io.BytesIO(markdown_bytes),
                 object_name=md_storage_path,
                 content_type="text/markdown",
             )
+
+            # Update TOC Tree with markdown storage path for PageIndex cache retrieval
+            toc_repo = FileTocTreeRepository()
+            await toc_repo.upsert_by_file_id(file_id, {
+                "doc_name": display_name,
+                "doc_description": ingest_result.get("summary", ""),
+                "line_count": ingest_result.get("line_count", 0),
+                "structure": ingest_result.get("toc_structure", []),
+                "markdown_storage_path": md_storage_path,
+            })
 
             # Final update
             await self.file_repo.update_by_id(
@@ -292,108 +279,7 @@ class FileService:
 
         return state, file_info
 
-    async def _execute_upload_steps(
-        self,
-        state: UploadState,
-        file_path: str,
-        original_filename: str,
-        display_name: str,
-        mime_type: str,
-        file_size: int,
-        max_retries: int,
-        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
-    ) -> FileDocument:
-        """Execute the atomic steps of uploading with a retry loop."""
-        retry_delay = 2
 
-        async def _notify(step: str, message: str):
-            if progress_callback:
-                await progress_callback({"step": step, "message": message, "file_id": state.file_id})
-
-        for attempt in range(max_retries):
-            try:
-                if not state.has_step(UploadStep.DB_CREATED):
-                    await _notify("db_creating", "Đang tạo bản ghi file")
-                    file_doc_data = {
-                        "display_name": display_name,
-                        "original_filename": original_filename,
-                        "storage_path": state.storage_path,
-                        "storage_bucket": settings.R2_BUCKET_NAME,
-                        "file_size": file_size,
-                        "mime_type": mime_type,
-                        "custom_metadata": state.custom_metadata or {},
-                        "status": FileStatus.UPLOADING.value,
-                    }
-                    created_file = await self.file_repo.create(file_doc_data)
-                    state.file_id = str(created_file["_id"])
-                    state.mark_step(UploadStep.DB_CREATED)
-
-                if not state.has_step(UploadStep.R2_UPLOADED):
-                    await _notify("uploading_original", "Đang upload file gốc lên storage")
-                    with open(file_path, "rb") as f:
-                        await r2_storage.upload_file(
-                            file=f,
-                            object_name=state.storage_path,
-                            content_type=mime_type,
-                            metadata={"file_id": state.file_id},
-                        )
-                    state.mark_step(UploadStep.R2_UPLOADED)
-
-                if not state.has_step(UploadStep.MARKDOWN_GENERATED) or not state.has_step(UploadStep.VECTOR_DB_SAVED):
-                    await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Vector DB")
-                    from app.modules.ingestion.service import get_ingestion_service
-                    ingest_svc = get_ingestion_service()
-                    
-                    ingest_result = await ingest_svc.ingest_pdf_chunks(
-                        file_id=state.file_id,
-                        file_name=display_name,
-                        file_path=file_path,
-                        metadata=state.custom_metadata,
-                    )
-                    markdown_content = ingest_result["markdown_content"]
-                    
-                    state.markdown_storage_path = f"{Path(state.storage_path).with_suffix('.md').as_posix()}"
-                    markdown_bytes = markdown_content.encode("utf-8")
-                    await r2_storage.upload_file(
-                        file=io.BytesIO(markdown_bytes),
-                        object_name=state.markdown_storage_path,
-                        content_type="text/markdown",
-                        metadata={"artifact": "markdown", "source_path": state.storage_path},
-                    )
-                    
-                    await self.file_repo.update_by_id(
-                        state.file_id,
-                        {
-                            "markdown_storage_path": state.markdown_storage_path,
-                            "markdown_file_size": len(markdown_bytes),
-                            "table_of_contents": ingest_result.get("table_of_contents", []),
-                            "summary": ingest_result.get("summary"),
-                        },
-                    )
-                    state.mark_step(UploadStep.MARKDOWN_GENERATED)
-                    state.mark_step(UploadStep.VECTOR_DB_SAVED)
-
-                await self.file_repo.update_by_id(
-                    state.file_id,
-                    {
-                        "status": FileStatus.READY.value,
-                    },
-                )
-
-                # Payload-only mode: skip Gemini store stats sync entirely
-                if state.custom_metadata and not state.has_step(UploadStep.METADATA_SYNCED):
-                    await self.metadata_svc.sync_metadata_counters(state.custom_metadata, delta=1)
-                    state.mark_step(UploadStep.METADATA_SYNCED)
-
-                await _notify("completed", "Upload hoàn tất")
-                state.mark_step(UploadStep.COMPLETED)
-                return await self.get_file_by_id(state.file_id)
-
-            except Exception as e:
-                logger.warning(f"[{state.file_id or 'NEW'}] Upload attempt {attempt + 1} failed: {e}. Retrying in {retry_delay * (attempt + 1)}s...")
-                if attempt == max_retries - 1:
-                    raise
-                await asyncio.sleep(retry_delay * (attempt + 1))
 
 
 
@@ -473,21 +359,17 @@ class FileService:
                 logger.warning(f"Failed to delete from Cloudflare R2: {e}")
 
         # Xóa Qdrant
-        from app.integrations.llamaindex.indexer import get_llama_index_indexer
-        indexer = get_llama_index_indexer()
+        indexer = get_qdrant_indexer()
         await indexer.delete_by_file_id(file_id)
 
         # Xóa file_toc_trees
-        from app.modules.toc_tree.repository import FileTocTreeRepository
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
 
-        # Xóa workspace
-        import pathlib
-        ws = pathlib.Path(settings.PAGEINDEX_WORKSPACE)
-        for ext in [".md", ".json"]:
-            p = ws / f"{file_id}{ext}"
-            if p.exists(): p.unlink()
+        # Xóa cache PageIndex (in-memory + local .md file)
+        from app.integrations.pageindex.client import get_page_index_client
+        page_index_client = get_page_index_client()
+        page_index_client.evict_doc(file_id)
 
         # Hard delete from MongoDB
         await self.file_repo.delete_by_id(file_id)
@@ -539,9 +421,7 @@ class FileService:
 
         return files
 
-    async def _filter_custom_metadata_for_role(self, file_dicts: List[Dict[str, Any]], user_role: str) -> None:
-        """Legacy delegate to MetadataService."""
-        await self.metadata_svc.filter_custom_metadata_by_role(file_dicts, user_role)
+
 
     async def list_files(
         self,
@@ -562,31 +442,17 @@ class FileService:
             filters["display_name"] = {"$regex": keywords, "$options": "i"}
 
         # Add metadata filters with "all" support
-        if custom_metadata_filter:
-            for k, v in custom_metadata_filter.items():
-                if k == "access_scope":
-                    continue # Handled by role logic
-
-                # Support array of values (OR logic for same key)
-                if isinstance(v, list):
-                    filter_values = v + ["all"]
-                else:
-                    filter_values = [v, "all"]
-
-                filters[f"custom_metadata.{k}"] = {"$in": filter_values}
-
-        # Database-level filtering for access_scope
-        if user_role == "student":
-            filters["custom_metadata.access_scope"] = {"$in": ["student"]}
-        elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = {"$in": ["lecture"]}
-        elif user_role == "admin":
-            if custom_metadata_filter and "access_scope" in custom_metadata_filter:
-                v = custom_metadata_filter["access_scope"]
-                if isinstance(v, list):
-                    filters["custom_metadata.access_scope"] = {"$in": v}
-                else:
-                    filters["custom_metadata.access_scope"] = {"$in": [v]}
+        from app.modules.metadata.utils.filter_builder import get_filter_builder
+        builder = get_filter_builder()
+        mongo_filter = await builder.build_mongo_filter(
+            metadata=custom_metadata_filter or {},
+            user_role=user_role,
+            skip_validation=True # Validation happens elsewhere or is implied
+        )
+        
+        # Merge built filter with other filters
+        if mongo_filter:
+            filters.update(mongo_filter)
 
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)

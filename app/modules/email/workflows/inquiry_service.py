@@ -62,35 +62,80 @@ class InquiryService:
         inquiry_filters = await extract_inquiry_filters(title, content, self._metadata_svc)
         metadata_filter = {}
         if inquiry_filters:
-            # Expand each filter value to include "all" so documents tagged
-            # with "all" are always included in RAG results.
-            # e.g. {"academic_year": "2024-2025"} -> {"academic_year": ["2024-2025", "all"]}
-            raw_filters = inquiry_filters.model_dump(exclude_none=True)
-            for k, v in raw_filters.items():
-                if v:
-                    metadata_filter[k] = [v, "all"]
-            logger.info(f"Extracted and expanded inquiry filters: {metadata_filter}")
+            metadata_filter = inquiry_filters.model_dump(exclude_none=True)
+            logger.info(f"Extracted inquiry filters: {metadata_filter}")
         
         # 3. RAG Step
         rag_query = extracted_question or f"{title}\n{content}"
         
-        from app.modules.chat.service import get_chat_service
-        from app.modules.chat.schemas import UserContext
-        
-        chat_svc = get_chat_service()
-        user_context = UserContext(
-            user_id=str(message_id) if message_id else "manual_inquiry",
-            name="Inquiry System",
-            cohort="N/A",
-            role=user_role
+        # Retrieval Step
+        candidate_files = await self._retrieval.retrieve_candidate_files(
+            query=rag_query,
+            metadata_filter=metadata_filter,
+            user_role=user_role
         )
         
-        rag_result = await chat_svc.generate_chat_response(
-            question=rag_query,
-            user_context=user_context,
-            chat_history=[],
-            metadata_filter=metadata_filter
-        )
+        if not candidate_files:
+            rag_result = {"answer": "Không tìm thấy tài liệu phù hợp để trả lời email này.", "sources": []}
+        else:
+            candidate_ids = [c["file_id"] for c in candidate_files]
+            
+            # 3. Prepare Context Prompt (Enriched with Metadata)
+            files_info_str = "\n".join([
+                f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}" 
+                for c in candidate_files
+            ])
+            
+            # Enrich prompt with metadata context if available
+            context_blocks = []
+            if metadata_filter.get("academic_year"):
+                context_blocks.append(f"Academic Year: {metadata_filter['academic_year']}")
+            if metadata_filter.get("cohort"):
+                context_blocks.append(f"Cohort: {metadata_filter['cohort']}")
+            
+            context_str = f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""
+
+            prompt_text = (
+                f"Email Subject: {title}\n"
+                f"Email Body:\n{content}\n\n"
+                f"{context_str}"
+                f"Relevant documents found:\n{files_info_str}\n\n"
+                f"Please answer the user's specific inquiry based on these documents. Respect the specific rules for the given academic year and cohort if provided."
+            )
+
+            # Generate Answer using shared Agent logic
+            from app.modules.retrieval.agent import AGENT_SYSTEM_PROMPT, build_pindex_tools
+            from app.integrations.llm.gemini import gemini_client
+            from google.genai import types
+
+            tools = build_pindex_tools(candidate_ids)
+            config = types.GenerateContentConfig(
+                system_instruction=AGENT_SYSTEM_PROMPT,
+                tools=tools,
+                temperature=0.0,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=5)
+            )
+
+            resp = await gemini_client.client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=prompt_text,
+                config=config
+            )
+            
+            # Format sources
+            formatted_sources = []
+            for i, c in enumerate(candidate_files):
+                formatted_sources.append({
+                    "citation_id": i + 1,
+                    "title": c.get("file_name", ""),
+                    "file_id": c.get("file_id"),
+                    "text": c.get("doc_description", "")
+                })
+
+            rag_result = {
+                "answer": resp.text or "Xin lỗi, tôi không thể tìm thấy câu trả lời chính xác.",
+                "sources": formatted_sources
+            }
 
         logger.info(f"Inquiry RAG complete. Answer length: {len(rag_result['answer'])}")
 

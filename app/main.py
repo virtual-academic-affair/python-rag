@@ -27,6 +27,30 @@ logger = logging.getLogger(__name__)
 # Global instances (initialized in lifespan)
 email_orchestrator = None
 rabbitmq_service = None
+_cleanup_task = None
+
+
+async def _run_artifact_cleanup():
+    """Background task to periodically clean up expired local artifacts."""
+    from app.integrations.pageindex.client import get_page_index_client
+    client = get_page_index_client()
+    
+    # Run every 30 minutes
+    INTERVAL = 1800  
+    
+    logger.info(f"⏳ Artifact cleanup task started (Interval: {INTERVAL}s)")
+    while True:
+        try:
+            await asyncio.sleep(INTERVAL)
+            count = client.cleanup_expired_artifacts()
+            if count > 0:
+                logger.info(f"🧹 Background cleanup removed {count} expired artifacts")
+        except asyncio.CancelledError:
+            logger.info("🛑 Artifact cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"❌ Error in artifact cleanup task: {e}")
+            await asyncio.sleep(60)  # Wait a bit before retrying if crashed
 
 
 # ====================================
@@ -38,6 +62,7 @@ async def lifespan(_: FastAPI):
     """Initialize and cleanup resources."""
     global email_orchestrator
     global rabbitmq_service
+    global _cleanup_task
 
     # Startup
     print("=" * 80)
@@ -114,6 +139,9 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
     
+    # 7. Start Artifact Cleanup Task
+    _cleanup_task = asyncio.create_task(_run_artifact_cleanup())
+    
     print(f"🟢 {settings.APP_NAME} is ready!\n")
     
     yield
@@ -139,6 +167,15 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️  Error disconnecting MongoDB: {e}")
     
+    # Cancel cleanup task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✅ Artifact cleanup task stopped")
+        
     logger.info("👋 Shutdown complete")
 
 
