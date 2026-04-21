@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+from app.modules.rag.retrieval.schemas import SourceCitation
 
 class BaseSchema(BaseModel):
     model_config = ConfigDict(
@@ -19,13 +20,6 @@ class ChatHistoryItem(BaseSchema):
     role: str = Field(..., description="Message sender: user or assistant")
     content: str = Field(..., description="Message content")
     timestamp: Optional[str] = Field(default=None, description="Message timestamp")
-
-class SourceCitation(BaseSchema):
-    citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
-    title: Optional[str] = Field(None, description="Document title/name")
-    text: Optional[str] = Field(None, description="Relevant text excerpt from document")
-    url: Optional[str] = Field(None, description="R2 URL to view the document")
-    file_id: Optional[str] = Field(None, description="File ID in database")
 
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")

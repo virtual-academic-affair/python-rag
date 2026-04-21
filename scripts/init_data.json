@@ -5,7 +5,7 @@
       "display_name": "Khoa/Phòng",
       "description": "Bộ phận quản lý tài liệu (VD: Đào tạo, Công tác sinh viên)",
       "allowed_values": [
-        { "value": "daotao", "display_name": "Phòng Đào tạo" },
+        { "value": "dao_tao", "display_name": "Phòng Đào tạo" },
         { "value": "ctsv", "display_name": "Phòng CTSV" },
         { "value": "khcn", "display_name": "Phòng KHCN" }
       ]
@@ -25,7 +25,7 @@
       "filename": "quy_che_dao_tao.txt",
       "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
-        "department": ["daotao"],
+        "department": ["dao_tao"],
         "academic_year": ["2024-2025"],
         "access_scope": ["student"]
       }
@@ -34,7 +34,7 @@
       "filename": "huong_dan_dang_ky.txt",
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
-        "department": ["daotao"],
+        "department": ["dao_tao"],
         "academic_year": ["2024-2025"],
         "access_scope": ["student"]
       }

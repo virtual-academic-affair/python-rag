@@ -120,15 +120,17 @@ async def seed_system_metadata():
                     # v could be an AllowedValue object or a dict
                     val_dict = v.to_dict() if hasattr(v, "to_dict") else dict(v)
                     # ensure value is snake_cased just like in MetadataService
-                    from app.modules.files.utils import to_snake
+                    from app.core.converters import to_snake
                     val_dict["value"] = to_snake(val_dict["value"])
                     update_values.append(val_dict)
 
                 # We use a custom update logic or just overwrite the fields
+                from app.core.text_utils import remove_accents
                 await Database.get_db()["metadata_types"].update_one(
                     {"key": key},
                     {"$set": {
                         "display_name": meta_def["display_name"],
+                        "display_name_unaccented": remove_accents(meta_def["display_name"]),
                         "description": meta_def["description"],
                         "allowed_values": update_values,
                         "is_system": True,

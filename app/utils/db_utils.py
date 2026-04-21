@@ -24,10 +24,11 @@ def to_str_id(doc: dict) -> dict:
     if doc is None:
         return None
     
-    if "_id" in doc and doc["_id"] is not None:
-        doc["_id"] = str(doc["_id"])
+    doc_copy = doc.copy()
+    if "_id" in doc_copy and doc_copy["_id"] is not None:
+        doc_copy["_id"] = str(doc_copy["_id"])
     
-    return doc
+    return doc_copy
 
 
 def docs_to_str_id(docs: list[dict]) -> list[dict]:

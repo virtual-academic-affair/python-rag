@@ -96,7 +96,7 @@ def start_email_ingest_consumer(
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             logger.error("Failed processing ingest message: %s", str(e), exc_info=True)
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     def _run():
         max_retries = 10

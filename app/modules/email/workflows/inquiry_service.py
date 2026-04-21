@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_chat_llm, build_extraction_llm, chain_prompt
 from app.integrations.grpc.client import get_grpc_client
-from app.modules.retrieval.service import get_retrieval_service
+from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.email.utils import extract_structured_data, remove_accents, extract_inquiry_filters
 from app.modules.metadata.service import get_metadata_service
 from app.modules.email.schemas import InquiryIntent, InquiryTypesResult, InquiryFilters
@@ -104,37 +104,16 @@ class InquiryService:
             )
 
             # Generate Answer using shared Agent logic
-            from app.modules.retrieval.agent import AGENT_SYSTEM_PROMPT, build_pindex_tools
-            from app.integrations.llm.gemini import gemini_client
-            from google.genai import types
+            from app.modules.rag.retrieval.agent import run_agent_loop
 
-            tools = build_pindex_tools(candidate_ids)
-            config = types.GenerateContentConfig(
-                system_instruction=AGENT_SYSTEM_PROMPT,
-                tools=tools,
-                temperature=0.0,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=5)
+            agent_result = await run_agent_loop(
+                candidate_files=candidate_files,
+                prompt_contents=prompt_text,
             )
-
-            resp = await gemini_client.client.aio.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=prompt_text,
-                config=config
-            )
-            
-            # Format sources
-            formatted_sources = []
-            for i, c in enumerate(candidate_files):
-                formatted_sources.append({
-                    "citation_id": i + 1,
-                    "title": c.get("file_name", ""),
-                    "file_id": c.get("file_id"),
-                    "text": c.get("doc_description", "")
-                })
 
             rag_result = {
-                "answer": resp.text or "Xin lỗi, tôi không thể tìm thấy câu trả lời chính xác.",
-                "sources": formatted_sources
+                "answer": agent_result["final_answer"] or "Xin lỗi, tôi không thể tìm thấy câu trả lời chính xác.",
+                "sources": agent_result["sources"],
             }
 
         logger.info(f"Inquiry RAG complete. Answer length: {len(rag_result['answer'])}")

@@ -81,3 +81,6 @@ qdrant-client==1.15.1
 
 # LiteLLM (PageIndex / Agent Reasoning)
 litellm==1.83.4
+
+# Redis for shared caching
+redis==5.0.1

@@ -21,7 +21,6 @@ class FileUploadResponse(BaseSchema):
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     markdown_file_url: Optional[str] = Field(None, description="Direct download URL for generated markdown in R2")
     table_of_contents: List[str] = Field(default_factory=list)
-    summary: Optional[str] = None
     message: Optional[str] = None
 
 class FileParsePreviewPage(BaseSchema):
@@ -64,7 +63,6 @@ class FileDetailResponse(BaseSchema):
     file_url: Optional[str] = None
     markdown_file_url: Optional[str] = None
     table_of_contents: List[str] = Field(default_factory=list)
-    summary: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -98,6 +96,8 @@ class HealthCheckResponse(BaseSchema):
     version: str
     gemini_api_connected: bool
     mongodb_connected: bool
+    redis_connected: bool
+    qdrant_connected: bool
 
 class ErrorResponse(BaseSchema):
     error: str

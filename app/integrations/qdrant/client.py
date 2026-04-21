@@ -11,6 +11,7 @@ from typing import Any, Optional, List
 from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 from google import genai
+from google.genai import types
 
 from app.core.config import settings
 import logging
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _qdrant_retrieval_service_instance: Optional[QdrantRetrievalService] = None
 _collection_ready: bool = False
+_qdrant_lock = asyncio.Lock()
 
 class QdrantRetrievalService:
     def __init__(self):
@@ -38,7 +40,6 @@ class QdrantRetrievalService:
 
     async def _get_embedding(self, text: str) -> List[float]:
         """Get embedding using new google-genai SDK (native async)."""
-        from google.genai import types
         response = await self._genai_client.aio.models.embed_content(
             model=self._embed_model_name,
             contents=text,
@@ -51,6 +52,11 @@ class QdrantRetrievalService:
         global _collection_ready
         if _collection_ready:
             return
+
+        async with _qdrant_lock:
+            # Double check after acquiring lock
+            if _collection_ready:
+                return
 
         def _ensure() -> None:
             collections = self.qdrant_client_instance.get_collections().collections

@@ -36,7 +36,7 @@ from app.modules.files.models import FileDocument
 from app.modules.files.models import FileStatus
 from app.modules.files.repository import FileRepository
 from app.integrations.storage.client import r2_storage
-from app.pipelines.ingestion.service import get_ingestion_service
+from app.modules.rag.ingestion.service import get_ingestion_service
 from app.modules.metadata.service import get_metadata_service
 from app.modules.files.utils import (
     validate_file_size,
@@ -53,6 +53,8 @@ from app.modules.files.upload_state import (
 
 from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
+from app.integrations.pageindex.client import get_page_index_client
+from app.modules.metadata.utils.filter_builder import get_filter_builder
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +93,6 @@ class FileService:
             self._file_repo = FileRepository()
         return self._file_repo
 
-
-
-
     async def upload_file_quick(
         self,
         file_path: str,
@@ -113,9 +112,13 @@ class FileService:
 
         try:
             await _notify("db_creating", "Đang tạo bản ghi file")
+            from app.core.text_utils import remove_accents
+            _dn = display_name or original_filename
             file_doc_data = {
-                "display_name": display_name or original_filename,
+                "display_name": _dn,
+                "display_name_unaccented": remove_accents(_dn),
                 "original_filename": original_filename,
+                "original_filename_unaccented": remove_accents(original_filename),
                 "storage_path": state.storage_path,
                 "storage_bucket": settings.R2_BUCKET_NAME,
                 "file_size": file_info["file_size"],
@@ -169,6 +172,9 @@ class FileService:
 
             storage_path = file_doc.get("storage_path")
 
+            # Update status to processing
+            await self.file_repo.update_by_id(file_id, {"status": FileStatus.PROCESSING.value})
+
             await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Vector DB")
             ingest_result = await self._ingest_to_vector_db(
                 file_id=file_id,
@@ -204,7 +210,6 @@ class FileService:
                     "markdown_storage_path": md_storage_path,
                     "markdown_file_size": len(markdown_bytes),
                     "table_of_contents": ingest_result.get("table_of_contents", []),
-                    "summary": ingest_result.get("summary"),
                     "status": FileStatus.READY.value,
                 },
             )
@@ -278,11 +283,6 @@ class FileService:
         }
 
         return state, file_info
-
-
-
-
-
 
     async def _rollback_upload(self, state: UploadState, error_msg: str) -> None:
         """
@@ -366,10 +366,9 @@ class FileService:
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
 
-        # Xóa cache PageIndex (in-memory + local .md file)
-        from app.integrations.pageindex.client import get_page_index_client
+        # Xóa cache PageIndex (Redis + local .md file)
         page_index_client = get_page_index_client()
-        page_index_client.evict_doc(file_id)
+        await page_index_client.evict_doc(file_id)
 
         # Hard delete from MongoDB
         await self.file_repo.delete_by_id(file_id)
@@ -387,7 +386,11 @@ class FileService:
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
 
-        update_data = {"display_name": new_display_name}
+        from app.core.text_utils import remove_accents
+        update_data = {
+            "display_name": new_display_name,
+            "display_name_unaccented": remove_accents(new_display_name),
+        }
         update_success = await self.file_repo.update_by_id(file_id, update_data)
 
         if update_success:
@@ -437,12 +440,16 @@ class FileService:
         if status:
             filters["status"] = status.value
 
-        # Add keywords filter (partial match on display_name)
+        # Keyword search: match against unaccented field (user may type with/without accents)
         if keywords:
-            filters["display_name"] = {"$regex": keywords, "$options": "i"}
+            from app.core.text_utils import remove_accents
+            unaccented_kw = remove_accents(keywords)
+            filters["$or"] = [
+                {"display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}},
+                {"original_filename_unaccented": {"$regex": unaccented_kw, "$options": "i"}}
+            ]
 
         # Add metadata filters with "all" support
-        from app.modules.metadata.utils.filter_builder import get_filter_builder
         builder = get_filter_builder()
         mongo_filter = await builder.build_mongo_filter(
             metadata=custom_metadata_filter or {},
@@ -450,15 +457,26 @@ class FileService:
             skip_validation=True # Validation happens elsewhere or is implied
         )
         
-        # Merge built filter with other filters
+        # Safe merge: prevent $or key collision when combining keyword filter with mongo_filter
         if mongo_filter:
+            keyword_or = filters.pop("$or", None)
             filters.update(mongo_filter)
+            if keyword_or:
+                # Wrap keyword $or inside $and so it doesn't get overwritten
+                filters["$and"] = filters.get("$and", []) + [{"$or": keyword_or}]
+
+        # Add role-based access filtering directly to DB query (Fix pagination)
+        if user_role == "student":
+            filters["custom_metadata.access_scope"] = "student"
+        elif user_role == "lecture":
+            filters["custom_metadata.access_scope"] = "lecture"
+        # Admin sees all, no filter needed
 
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)
 
-        # Final masking for visible_roles (permission check already implicitly handled by DB filters)
-        file_dicts = await self._apply_role_filters_and_metadata_masking(file_dicts, user_role)
+        # Apply metadata masking (visible_roles), access filtering is now handled by the DB
+        await self.metadata_svc.filter_custom_metadata_by_role(file_dicts, user_role)
 
         files = [_to_file_model(f) for f in file_dicts]
         return files, total
@@ -482,7 +500,23 @@ class FileService:
 
         return _to_file_model(file_dict)
 
+    async def get_file_data(self, file_id: str, user_role: str = "student") -> tuple[Any, FileDocument]:
+        """Get file bytes and document for download."""
+        file_doc_dict = await self.file_repo.find_by_id(file_id)
+        if not file_doc_dict:
+            raise NotFoundException("File", file_id)
 
+        # Apply role filtering to verify access
+        filtered_files = await self._apply_role_filters_and_metadata_masking([file_doc_dict], user_role)
+        if not filtered_files:
+            raise NotFoundException("File access denied", file_id)
+
+        file_doc = _to_file_model(filtered_files[0])
+        
+        from app.integrations.storage.client import r2_storage
+        file_data = await r2_storage.download_file(file_doc.storage_path)
+        
+        return file_data, file_doc
 
 
 # Factory function for dependency injection

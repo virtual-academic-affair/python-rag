@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from bson import ObjectId
 from datetime import datetime, timezone
 import logging
+from bson.errors import InvalidId
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorCollection
@@ -42,8 +43,8 @@ class BaseRepository:
         """Convert string to ObjectId."""
         try:
             return ObjectId(id_str)
-        except Exception:
-            raise ValueError(f"Invalid ObjectId: {id_str}")
+        except InvalidId:
+            raise ValueError(f"Invalid ObjectId format: {id_str}")
     
     def _serialize_doc(self, doc: Dict[str, Any]) -> Dict[str, Any]:
         """Convert ObjectId to string in document."""

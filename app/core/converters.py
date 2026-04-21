@@ -25,7 +25,16 @@ def to_camel(name: str) -> str:
         return ""
     return components[0] + ''.join(x.title() for x in components[1:])
 
+def normalize_to_camel(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return [normalize_to_camel(v) for v in value]
+    if isinstance(value, dict):
+        return {to_camel(k): normalize_to_camel(v) for k, v in value.items()}
+    return value
+
 def convert_custom_metadata_to_camel(custom_metadata: dict) -> dict:
     if not custom_metadata:
         return {}
-    return {to_camel(k): v for k, v in custom_metadata.items()}
+    return normalize_to_camel(custom_metadata)

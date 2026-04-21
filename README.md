@@ -23,7 +23,7 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 | Thành phần | Công nghệ | Lưu ý |
 |---|---|---|
 | **Web Framework** | FastAPI | Async/Await, Pydantic v2 |
-| **AI Processing** | Google Gemini (1.5-flash / Pro) | Xử lý ngôn ngữ tự nhiên & Reasoning |
+| **AI Processing** | Google Gemini (2.5-flash / Pro) | Xử lý ngôn ngữ tự nhiên & Reasoning |
 | **Parsing & Chunking** | LlamaIndex / LlamaParse | Chuyển đổi PDF và băm nhỏ văn bản |
 | **Indexing Structure** | PageIndex | Lưu trữ cấu trúc mục lục tài liệu (Hierarchy) |
 | **Vector Database** | Qdrant | Công cụ tìm kiếm vector mật độ cao |
@@ -40,7 +40,7 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 python-rag/
 ├── app/
 │   ├── api/                    # Cổng vào API tổng hợp (router.py)
-│   ├── core/                   # Cấu hình lõi, Database connection, Converters
+│   ├── core/                   # Cấu hình lõi (Database, Exceptions, Converters)
 │   ├── integrations/           # Client wrappers (R2, Qdrant, PageIndex, gRPC)
 │   ├── modules/                # Business Logic phân mảnh theo Domain
 │   │   ├── chat/               # Agentic Chat RAG & Streaming

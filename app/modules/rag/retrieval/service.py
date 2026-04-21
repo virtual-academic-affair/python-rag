@@ -44,6 +44,8 @@ class RetrievalService:
             user_role=user_role
         )
 
+        logger.info(f"[Retrieval] Bắt đầu semantic search cho query: '{query[:50]}...', role: {user_role}, filter: {qdrant_meta_filter}")
+
         hits = await self._qdrant.retrieve(
             query=query,
             top_k=top_k_chunks,
@@ -52,7 +54,10 @@ class RetrievalService:
         )
 
         if not hits:
+            logger.info(f"[Retrieval] Không tìm thấy dữ liệu vector nào cho query '{query}'")
             return []
+            
+        logger.info(f"[Retrieval] Đã quét được {len(hits)} chunks từ Qdrant. Đang tính điểm DocScore...")
 
         doc_info = {}
         doc_chunks = defaultdict(list)
@@ -80,14 +85,28 @@ class RetrievalService:
         # 3. Retrieve top documents
         doc_scores.sort(key=lambda x: x["doc_score"], reverse=True)
         top_docs = doc_scores[:max_files]
+        logger.info(f"[Retrieval] Lọc ra {len(top_docs)} tài liệu tốt nhất: {[d['file_id'] for d in top_docs]}")
 
-        # 4. Enrich with descriptions (Batch query)
+        # 4. Enrich with descriptions and structure (Batch query)
         top_ids = [d["file_id"] for d in top_docs]
         toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
-        toc_map = {t["file_id"]: t.get("doc_description", "") for t in toc_docs}
+        toc_map = {t["file_id"]: t for t in toc_docs}
+        
+        from app.modules.files.repository import FileRepository
+        file_repo = FileRepository()
 
         for d in top_docs:
-            d["doc_description"] = toc_map.get(d["file_id"], "")
+            fid = d["file_id"]
+            toc_doc = toc_map.get(fid, {})
+            d["doc_description"] = toc_doc.get("doc_description", "")
+            d["structure"] = toc_doc.get("structure", [])
+            d["markdown_storage_path"] = toc_doc.get("markdown_storage_path", "")
+            
+            f_doc = await file_repo.find_by_id(fid)
+            if f_doc:
+                d["storage_path"] = f_doc.get("storage_path", "")
+            else:
+                d["storage_path"] = ""
 
         return top_docs
 

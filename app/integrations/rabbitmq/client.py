@@ -2,6 +2,7 @@
 import logging
 import json
 import pika
+import asyncio
 from typing import Optional, Dict, Any
 from app.core.config import settings
 
@@ -70,7 +71,7 @@ class RabbitMQService:
             self._connected = False
             raise
 
-    def store_token(
+    async def store_token(
         self, token_key: str, token_data: Dict[str, Any], ttl: int = 3600
     ) -> bool:
         """Store token data in RabbitMQ."""
@@ -85,15 +86,18 @@ class RabbitMQService:
                 {"token_key": token_key, "token_data": token_data, "ttl": ttl}
             )
 
-            self.channel.basic_publish(
-                exchange="",
-                routing_key=self.TOKEN_QUEUE,
-                body=message,
-                properties=pika.BasicProperties(
-                    delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE,
-                    content_type="application/json",
-                ),
-            )
+            def _publish():
+                self.channel.basic_publish(
+                    exchange="",
+                    routing_key=self.TOKEN_QUEUE,
+                    body=message,
+                    properties=pika.BasicProperties(
+                        delivery_mode=pika.spec.PERSISTENT_DELIVERY_MODE,
+                        content_type="application/json",
+                    ),
+                )
+
+            await asyncio.to_thread(_publish)
 
             logger.info(f"Token stored successfully: {token_key[:20]}...")
             return True

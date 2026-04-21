@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+from app.modules.rag.retrieval.schemas import SourceCitation
 
 class BaseSchema(BaseModel):
     model_config = ConfigDict(
@@ -19,6 +20,7 @@ class SystemLabel(str, Enum):
 class RequestData(BaseSchema):
     title: str = Field(..., description="Email title/subject")
     content: str = Field(..., description="Email content/body")
+    message_id: Optional[int] = Field(default=None, description="Optional message ID for gRPC tracking")
 
 class LabelClassificationResponse(BaseSchema):
     message_id: Optional[int] = Field(default=None)
@@ -77,15 +79,6 @@ class TaskPayload(BaseSchema):
 class TaskExtractResponse(BaseSchema):
     label: SystemLabel = Field(default=SystemLabel.Task)
     extracted: TaskPayload
-
-class SourceCitation(BaseSchema):
-    citation_id: int = Field(..., description="ID of citation [1], [2], etc.")
-    title: Optional[str] = Field(None, description="Document title/name")
-    text: Optional[str] = Field(None, description="Relevant text excerpt from document")
-    url: Optional[str] = Field(None, description="R2 URL to view the document")
-    file_id: Optional[str] = Field(None, description="File ID in database")
-    page_index_start: Optional[int] = Field(None, description="Start page index of cited chunk")
-    page_index_end: Optional[int] = Field(None, description="End page index of cited chunk")
 
 class InquiryIntent(BaseSchema):
     question: str = Field(description="The main question or intent extracted from the email.")

@@ -19,7 +19,7 @@ from app.modules.chat.schemas import (
 )
 from app.core.dependencies import require_auth
 from app.modules.chat.service import get_chat_service
-from app.modules.retrieval.service import get_retrieval_service
+from app.modules.rag.retrieval.service import get_retrieval_service
 from app.core.converters import convert_custom_metadata_to_snake
 from app.core.config import settings
 

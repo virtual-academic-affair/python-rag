@@ -7,7 +7,7 @@ SAMPLE_PDF=$(ls scripts/uploads/*.pdf 2>/dev/null | head -n 1)
 
 if [ -z "$SAMPLE_PDF" ]; then
     log_warning "No sample PDF found in scripts/uploads/. Skipping debug tests."
-    exit 0
+    return 0
 fi
 
 log_info "Using sample PDF: $SAMPLE_PDF"

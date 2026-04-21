@@ -9,16 +9,17 @@ Flow:
 """
 
 from __future__ import annotations
-
+import asyncio
 import hashlib
 import os
 import tempfile
+from pathlib import Path
 from typing import Any, Optional
 
 import logging
 
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
-from app.pipelines.ingestion.chunking import get_chunking_service
+from app.modules.rag.ingestion.chunking import get_chunking_service
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.integrations.pageindex.client import get_page_index_client
@@ -55,13 +56,15 @@ class IngestionService:
         markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
 
         # Generate TOC and Summary using PageIndex
-        import pathlib
-        workspace_dir = pathlib.Path(settings.PAGEINDEX_WORKSPACE).resolve()
+        workspace_dir = Path(settings.PAGEINDEX_WORKSPACE).resolve()
         workspace_dir.mkdir(parents=True, exist_ok=True)
         md_file_path = workspace_dir / f"{file_id}.md"
 
-        with open(md_file_path, "w", encoding="utf-8") as f:
-            f.write(markdown_content)
+        def _write_md():
+            with open(md_file_path, "w", encoding="utf-8") as f:
+                f.write(markdown_content)
+        
+        await asyncio.to_thread(_write_md)
         
         toc_line_count = 0
         try:
@@ -141,8 +144,7 @@ class IngestionService:
 
     async def cleanup_local_artifacts(self, file_id: str):
         """Delete local markdown file after ingestion."""
-        import pathlib
-        workspace_dir = pathlib.Path(settings.PAGEINDEX_WORKSPACE).resolve()
+        workspace_dir = Path(settings.PAGEINDEX_WORKSPACE).resolve()
         md_file_path = workspace_dir / f"{file_id}.md"
         if md_file_path.exists():
             md_file_path.unlink()

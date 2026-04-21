@@ -37,7 +37,7 @@ async def process_request(
         logger.debug(f"Title: {request.title[:100]}...")
 
         result = await classifier_service.process_request(
-            message_id=None,
+            message_id=request.message_id,
             title=request.title,
             content=request.content,
             sender_email="",  # Manual endpoint - no sender info

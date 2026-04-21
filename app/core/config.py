@@ -67,11 +67,12 @@ class Settings(BaseSettings):
     
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
-    PAGEINDEX_MODEL: str = "gemini-4-31b-it" 
-    PAGEINDEX_RETRIEVE_MODEL: str = "gemini-4-31b-it" 
+    PAGEINDEX_MODEL: str = "gemma-4-31b-it" 
+    PAGEINDEX_RETRIEVE_MODEL: str = "gemma-4-31b-it" 
     PAGEINDEX_TOC_CHECK_PAGE_NUM: int = 20
     PAGEINDEX_MAX_PAGE_NUM_EACH_NODE: int = 10
     PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE: int = 20000
+    PAGEINDEX_SUMMARY_TOKEN_THRESHOLD: int = 200
     PAGEINDEX_IF_ADD_NODE_ID: str = "yes"
     PAGEINDEX_IF_ADD_NODE_SUMMARY: str = "yes"
     PAGEINDEX_IF_ADD_DOC_DESCRIPTION: str = "no"
@@ -134,6 +135,13 @@ class Settings(BaseSettings):
     # CORS Configuration
     # ====================================
     CORS_ORIGINS: list[str] = ["*"]
+
+    # ====================================
+    # Redis Configuration
+    # ====================================
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_ENABLED: bool = True
+    REDIS_TIMEOUT: int = 5
 
     # ====================================
     # Pydantic Config

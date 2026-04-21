@@ -84,9 +84,11 @@ class MetadataService:
             allowed_values_dict = [v.to_dict() for v in allowed_values]
         
         # Create metadata type
+        from app.core.text_utils import remove_accents
         metadata_data = {
             "key": key,
             "display_name": display_name,
+            "display_name_unaccented": remove_accents(display_name),
             "description": description,
             "allowed_values": allowed_values_dict,
             "is_active": is_active,
@@ -115,6 +117,8 @@ class MetadataService:
         updates = {}
         if display_name is not None:
             updates["display_name"] = display_name
+            from app.core.text_utils import remove_accents
+            updates["display_name_unaccented"] = remove_accents(display_name)
         if description is not None:
             updates["description"] = description
         if is_active is not None:
@@ -329,9 +333,11 @@ class MetadataService:
             filter_query["is_active"] = is_active
             
         if keywords:
+            from app.core.text_utils import remove_accents
+            unaccented_kw = remove_accents(keywords)
             filter_query["$or"] = [
-                {"display_name": {"$regex": keywords, "$options": "i"}},
-                {"allowed_values.display_name": {"$regex": keywords, "$options": "i"}}
+                {"display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}},
+                {"allowed_values.display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}}
             ]
             
         types = await self.metadata_repo.find_many(filter_query, 0, 1000, sort=[("is_system", -1), ("created_at", -1)])
@@ -361,9 +367,11 @@ class MetadataService:
             filter_query["is_active"] = is_active
             
         if keywords:
+            from app.core.text_utils import remove_accents
+            unaccented_kw = remove_accents(keywords)
             filter_query["$or"] = [
-                {"display_name": {"$regex": keywords, "$options": "i"}},
-                {"allowed_values.display_name": {"$regex": keywords, "$options": "i"}}
+                {"display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}},
+                {"allowed_values.display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}}
             ]
             
         types = await self.metadata_repo.find_many(filter_query, skip, limit, sort=[("is_system", -1), ("created_at", -1)])

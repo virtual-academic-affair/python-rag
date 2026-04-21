@@ -10,11 +10,12 @@ Scope of Sprint 1:
 from __future__ import annotations
 
 import logging
+from llama_parse import LlamaParse
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.core.config import settings
-from app.core.exceptions import ValidationException
+from app.core.exceptions import ValidationException, ExternalServiceException
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class LlamaParseClient:
             )
 
         try:
-            from llama_parse import LlamaParse
+            pass
         except Exception as exc:  # pragma: no cover - import/runtime env issue
             raise ValidationException(
                 "llama-parse package is not installed or cannot be imported."
@@ -62,7 +63,7 @@ class LlamaParseClient:
             documents = await parser.aload_data(file_path)
         except Exception as exc:
             logger.error("LlamaParse parse failed: %s", exc, exc_info=True)
-            raise ValidationException(f"LlamaParse failed to parse PDF: {exc}") from exc
+            raise ExternalServiceException(f"LlamaParse failed to parse PDF: {exc}") from exc
 
         pages: list[ParsedMarkdownPage] = []
         for i, doc in enumerate(documents):
@@ -128,4 +129,3 @@ def get_llamaparse_client() -> LlamaParseClient:
     if _llamaparse_client_instance is None:
         _llamaparse_client_instance = LlamaParseClient()
     return _llamaparse_client_instance
-

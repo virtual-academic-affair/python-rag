@@ -31,6 +31,7 @@ class R2Storage(BaseStorage):
     _instance: Optional["R2Storage"] = None
     _client = None
     _bucket_ensured: bool = False
+    _lock = asyncio.Lock()
     
     def __new__(cls):
         """Singleton pattern implementation."""
@@ -77,6 +78,10 @@ class R2Storage(BaseStorage):
         if self.disabled or self._bucket_ensured:
             return
             
+        async with self._lock:
+            # Double check
+            if self._bucket_ensured:
+                return
         def _check_and_create():
             try:
                 self._client.head_bucket(Bucket=settings.R2_BUCKET_NAME)

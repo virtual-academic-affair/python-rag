@@ -13,6 +13,14 @@ from app.api.router import api_router
 from app.modules.files.schemas import ErrorResponse, HealthCheckResponse
 from app.core.config import settings
 from app.modules.email.orchestrator import EmailWorkflowOrchestrator
+from app.core.database import Database
+from app.integrations.storage.client import r2_storage
+from app.integrations.rabbitmq.client import get_rabbitmq_service
+from app.integrations.llm.gemini import gemini_client
+from app.integrations.redis.client import get_redis_client
+from app.integrations.pageindex.client import get_page_index_client
+from app.modules.email.consumer import start_email_ingest_consumer
+from app.integrations.qdrant.indexer import get_qdrant_indexer
 
 # Load environment variables
 load_dotenv()
@@ -32,7 +40,6 @@ _cleanup_task = None
 
 async def _run_artifact_cleanup():
     """Background task to periodically clean up expired local artifacts."""
-    from app.integrations.pageindex.client import get_page_index_client
     client = get_page_index_client()
     
     # Run every 30 minutes
@@ -42,7 +49,7 @@ async def _run_artifact_cleanup():
     while True:
         try:
             await asyncio.sleep(INTERVAL)
-            count = client.cleanup_expired_artifacts()
+            count = await client.cleanup_expired_artifacts()
             if count > 0:
                 logger.info(f"🧹 Background cleanup removed {count} expired artifacts")
         except asyncio.CancelledError:
@@ -82,7 +89,6 @@ async def lifespan(_: FastAPI):
     
     # 1. Connect to MongoDB
     try:
-        from app.core.database import Database
         await Database.connect()
         if settings.MONGODB_DISABLED:
             logger.warning("⚠️  MongoDB disabled. Continuing without DB.")
@@ -94,7 +100,6 @@ async def lifespan(_: FastAPI):
 
     # 2. Initialize R2 storage
     try:
-        from app.integrations.storage.client import r2_storage
         # R2 client initializes on import, test connection
         if settings.R2_DISABLED:
             logger.warning("⚠️  R2 disabled. Continuing without storage.")
@@ -108,7 +113,6 @@ async def lifespan(_: FastAPI):
     # 3. Initialize RabbitMQ service
     if settings.RABBITMQ_ENABLED:
         try:
-            from app.integrations.rabbitmq.client import get_rabbitmq_service
             rabbitmq_service = get_rabbitmq_service()
             logger.info("✅ RabbitMQ service initialized")
         except Exception as e:
@@ -125,7 +129,6 @@ async def lifespan(_: FastAPI):
 
     if rabbitmq_service is not None:
         try:
-            from app.modules.email.consumer import start_email_ingest_consumer
             loop = asyncio.get_running_loop()
             start_email_ingest_consumer(email_orchestrator, loop=loop)
             logger.info("Email ingest consumer started")
@@ -134,13 +137,20 @@ async def lifespan(_: FastAPI):
     
     # 6. Test Gemini API
     try:
-        from app.integrations.llm.gemini import gemini_client
         logger.info("✅ Gemini service initialized")
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
     
     # 7. Start Artifact Cleanup Task
     _cleanup_task = asyncio.create_task(_run_artifact_cleanup())
+
+    # 8. Initialize Redis
+    if settings.REDIS_ENABLED:
+        try:
+            redis_client = get_redis_client()
+            await redis_client.connect()
+        except Exception as e:
+            logger.warning(f"⚠️  Redis initialization warning: {e}")
     
     print(f"🟢 {settings.APP_NAME} is ready!\n")
     
@@ -161,7 +171,6 @@ async def lifespan(_: FastAPI):
     
     # Disconnect from MongoDB
     try:
-        from app.core.database import Database
         await Database.disconnect()
         logger.info("✅ MongoDB disconnected")
     except Exception as e:
@@ -175,6 +184,15 @@ async def lifespan(_: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("✅ Artifact cleanup task stopped")
+
+    # Close Redis
+    if settings.REDIS_ENABLED:
+        try:
+            redis_client = get_redis_client()
+            await redis_client.disconnect()
+            logger.info("✅ Redis disconnected")
+        except Exception:
+            pass
         
     logger.info("👋 Shutdown complete")
 
@@ -262,25 +280,37 @@ async def health_check():
     """
     gemini_connected = False
     mongodb_connected = False
+    redis_connected = False
+    qdrant_connected = False
     
     try:
-        from app.integrations.llm.gemini import gemini_client
         gemini_connected = gemini_client.client is not None
     except Exception:
         pass
     
     try:
-        from app.core.database import Database
         mongodb_connected = Database._db is not None
+    except Exception:
+        pass
+
+    try:
+        redis_connected = get_redis_client()._redis is not None
+    except Exception:
+        pass
+    
+    try:
+        qdrant_connected = get_qdrant_indexer()._qdrant_client is not None
     except Exception:
         pass
     
     return HealthCheckResponse(
-        status="healthy" if (gemini_connected and mongodb_connected) else "degraded",
+        status="healthy" if (gemini_connected and mongodb_connected and redis_connected and qdrant_connected) else "degraded",
         service=settings.APP_NAME,
         version=settings.APP_VERSION,
         gemini_api_connected=gemini_connected,
         mongodb_connected=mongodb_connected,
+        redis_connected=redis_connected,
+        qdrant_connected=qdrant_connected,
     )
 
 

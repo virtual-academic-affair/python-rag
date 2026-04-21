@@ -97,7 +97,6 @@ app/
 │   ├── config.py             : Quản lý biến môi trường (.env) qua Pydantic Settings.
 │   ├── database.py           : Cấu hình Motor (Async MongoDB), khởi tạo indexes.
 │   ├── exceptions.py         : Hệ thống Exception tập trung.
-│   ├── prompts.py            : Kho lưu trữ Prompt cho Gemini/LLMs.
 │   └── converters.py         : Logic chuyển đổi kiểu dữ liệu (vd: snake_case converters).
 ├── integrations/ (External Gateways - Pure Clients)
 │   ├── llamaparse/           : Client gọi Cloud LlamaParse API.
@@ -604,7 +603,7 @@ CO CHE HOAT DONG:
 
 
 ================================================================================
-25. AI PROMPTS TAP TRUNG HOA (PROMPTS.PY)
+25. AI PROMPTS TAP TRUNG HOA
 ================================================================================
 
 Tất cả các prompt tại dự án được viết theo cấu trúc:
@@ -614,7 +613,8 @@ Tất cả các prompt tại dự án được viết theo cấu trúc:
 - HƯỚNG DẪN TRÍCH DẪN (Phải ghi rõ File ID, Trang nào).
 
 LƯU Ý QUAN TRỌNG:
-Toàn bộ Prompts phục vụ SV phản hồi đều được viết bằng Tiếng Việt chuẩn mực, hỗ trợ người dùng bản địa tốt nhất. Phần Prompt Phân loại (Triage) và Trích xuất (Extraction) dùng Tiếng Anh để tăng độ chính xác của các mã Lệnh điều khiển.
+Quá trình Refactor đã chuyển các prompt từ file `app/core/prompts.py` cũ và phân mảnh vào các module riêng biệt như `agent.py`, `label_classifier_service.py`, v.v. Điều này giúp đóng gói logic gần nhau và tránh Import lỗi.
+Toàn bộ Prompts phục vụ RAG đều được ép cấu trúc tư duy (reasoning) và trả lời bằng Tiếng Việt. Phân loại (Triage) và Trích xuất (Extraction) dùng Tiếng Anh để tăng độ map các Token.
 
 --------------------------------------------------------------------------------
 Xác nhận bản thảo Overview Version 4.5.0 (Extreme Detail).

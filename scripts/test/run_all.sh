@@ -27,6 +27,11 @@ run_test "test_classification.sh"
 run_test "test_metadata.sh"
 run_test "test_files.sh"
 run_test "test_debug.sh"
+
+log_header "RATE LIMIT PAUSE"
+echo "Sleeping for 65 seconds to avoid Gemini API rate limit before testing chat..."
+sleep 65
+
 run_test "test_chat.sh"
 run_test "test_cache_ttl.sh"
 

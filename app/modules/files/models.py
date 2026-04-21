@@ -14,7 +14,9 @@ class FileDocument(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
     
     display_name: str = Field(..., description="Display name for file")
+    display_name_unaccented: Optional[str] = Field(default=None, description="Unaccented display name for search")
     original_filename: str = Field(..., description="Original filename when uploaded")
+    original_filename_unaccented: Optional[str] = Field(default=None, description="Unaccented original filename for search")
     
     storage_path: str = Field(..., description="Path in R2 bucket (original file)")
     storage_bucket: str = Field(..., description="R2 bucket name")
@@ -30,7 +32,6 @@ class FileDocument(BaseModel):
     )
     
     table_of_contents: List[str] = Field(default_factory=list, description="Flat list of headings")
-    summary: Optional[str] = Field(None, description="Document summary")
     
     status: FileStatus = Field(default=FileStatus.UPLOADING)
 

@@ -9,11 +9,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from importlib import import_module
+import json
 
 import grpc
 from google.protobuf.json_format import MessageToDict
 
 from app.modules.email.schemas import SystemLabel
+from app.core.exceptions import GrpcServerException
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +145,14 @@ class GrpcClient:
             # Specific handling for verify token which uses these exceptions as expected flow
             if rpc_name == "VerifyToken":
                 raise exc
-            return None
+            
+            # For other RPCs, we still log but now we raise to notify caller
+            raise GrpcServerException(f"gRPC call {rpc_name} failed with {exc.code()}: {exc.details()}") from exc
         except Exception as exc:
+            if isinstance(exc, GrpcServerException):
+                raise
             logger.error("gRPC call %s failed: %s", rpc_name, exc, exc_info=True)
-            return None
+            raise GrpcServerException(f"Internal error during gRPC {rpc_name}: {exc}") from exc
 
     # =========================================================================
     # Service Endpoints
@@ -357,32 +364,6 @@ class GrpcClient:
             rpc_name="Create",
             request=request,
         )
-        if response is None and assignee_ids:
-            logger.warning(
-                "gRPC task create failed with assigneeIds. Retrying without assigneeIds to avoid proto mismatch.",
-            )
-            request = request_cls(
-                name=payload.name or "",
-                description=payload.description or "",
-                due=payload.due or "",
-                priority=normalized_priority,
-                assigners=list(payload.assigners or []),
-                assigneeIds=[],
-                messageId=int(payload.message_id or 0),
-            )
-            logger.info(
-                "gRPC task create retry request: %s",
-                MessageToDict(
-                    request,
-                    preserving_proto_field_name=True,
-                    always_print_fields_with_no_presence=True,
-                ),
-            )
-            response = await self._call(
-                service_key="task",
-                rpc_name="Create",
-                request=request,
-            )
         if response is None:
             return False
 
@@ -423,7 +404,6 @@ class GrpcClient:
         if inquiry_types is not None:
             kwargs["types"] = inquiry_types
         if sources is not None:
-            import json
             kwargs["sources"] = [json.dumps(s, ensure_ascii=False) if isinstance(s, dict) else str(s) for s in sources]
             
         request = request_cls(**kwargs)
@@ -458,7 +438,6 @@ def get_grpc_client() -> GrpcClient:
     """Return the shared GrpcClient singleton, initialised from settings."""
     global _grpc_client_instance
     if _grpc_client_instance is None:
-        from app.core.config import settings
         host, port = settings.GRPC_URL.split(":", 1)
         _grpc_client_instance = GrpcClient(
             GrpcClientConfig(

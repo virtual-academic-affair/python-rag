@@ -25,8 +25,8 @@ from app.modules.files.schemas import (
 from app.modules.files.service import get_file_service
 from app.modules.files.notifier import get_file_status_notifier
 from app.integrations.llamaparse.client import get_llamaparse_client
-from app.pipelines.ingestion.chunking import get_chunking_service
-from app.pipelines.ingestion.service import get_ingestion_service
+from app.modules.rag.ingestion.chunking import get_chunking_service
+from app.modules.rag.ingestion.service import get_ingestion_service
 from app.core.converters import (
     convert_custom_metadata_to_snake,
     convert_custom_metadata_to_camel,
@@ -155,11 +155,6 @@ async def upload_file(
         if temp_file_path and os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
-
-
-
-
-
 
 @router.get(
     "",
@@ -376,6 +371,35 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/{file_id}/download",
+    summary="Download file",
+    description="Download the original uploaded file directly.",
+)
+async def download_file_endpoint(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
+    try:
+        file_svc = get_file_service()
+        file_data, file_doc = await file_svc.get_file_data(file_id, user_role=_user.get("role", "student"))
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{file_doc.original_filename}"'
+        }
+        
+        return StreamingResponse(
+            file_data,
+            media_type=file_doc.mime_type or "application/octet-stream",
+            headers=headers
+        )
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading file {file_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.patch(

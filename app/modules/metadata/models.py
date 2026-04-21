@@ -14,9 +14,11 @@ class AllowedValue:
     visible_roles: List[str] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
+        from app.core.text_utils import remove_accents
         return {
             "value": self.value,
             "display_name": self.display_name,
+            "display_name_unaccented": remove_accents(self.display_name),
             "is_active": self.is_active,
             "color": self.color,
             "total_files": self.total_files,
@@ -40,6 +42,7 @@ class MetadataTypeDocument(BaseModel):
     
     key: str = Field(..., description="Unique metadata key (immutable)")
     display_name: str = Field(..., description="Display name for UI")
+    display_name_unaccented: Optional[str] = Field(default=None, description="Unaccented display name for search")
     description: str = Field(default="", description="Metadata description")
     
     allowed_values: Optional[List[Dict[str, Any]]] = Field(

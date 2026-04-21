@@ -26,10 +26,10 @@ RESPONSE_STREAM=$(curl -s -N --max-time 60 -X POST "${API_URL}/chat/stream" \
 CUR_EXIT=$?
 if [ $CUR_EXIT -eq 28 ]; then
     log_error "Chat Stream — Request timed out (60s)"
-    exit 1
+    return 1
 elif [ $CUR_EXIT -ne 0 ]; then
     log_error "Chat Stream — Curl failed with exit code $CUR_EXIT"
-    exit 1
+    return 1
 fi
 
 HAS_CHUNK=$(echo "$RESPONSE_STREAM" | grep -Ei '"type":\s*"(text|thought|call)"' | head -n 1 || echo "")

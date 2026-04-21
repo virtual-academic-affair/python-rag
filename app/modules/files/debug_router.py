@@ -11,7 +11,7 @@ from app.modules.files.schemas import (
     FileChunkPreviewItem,
 )
 from app.integrations.llamaparse.client import get_llamaparse_client
-from app.pipelines.ingestion.chunking import get_chunking_service
+from app.modules.rag.ingestion.chunking import get_chunking_service
 from app.core.exceptions import ValidationException
 from app.core.dependencies import require_admin
 

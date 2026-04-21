@@ -4,6 +4,7 @@ Qdrant integration for generating embeddings and indexing into Qdrant.
 
 from typing import Any, List, Optional
 import hashlib
+import asyncio
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
@@ -104,7 +105,6 @@ class QdrantIndexer:
         
         # We need to use `set_payload` or `overwrite_payload`
         # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
-        import asyncio
         await asyncio.to_thread(
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
