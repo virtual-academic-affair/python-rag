@@ -57,6 +57,24 @@ class Database:
             file_toc_trees = cls._db[cls.FILE_TOC_TREES]
             await file_toc_trees.create_index([("file_id", ASCENDING)], name="idx_file_toc_trees_file_id", unique=True)
 
+            files_col = cls._db[cls.FILES]
+            
+            indexes_to_create = [
+                ([("display_name_unaccented", ASCENDING)], "idx_files_display_name"),
+                ([("status", ASCENDING)], "status_1"),
+                ([("custom_metadata.access_scope", ASCENDING)], "idx_files_access_scope")
+            ]
+            
+            for keys, name in indexes_to_create:
+                try:
+                    await files_col.create_index(keys, name=name)
+                except Exception as e:
+                    # Ignore index name conflict if it already exists, log others
+                    if getattr(e, 'code', None) == 85:
+                        pass
+                    else:
+                        logger.warning(f"⚠️ Could not create index {name}: {e}")
+
 
         except Exception as e:
             logger.error(f"❌ Failed to connect to MongoDB: {e}")

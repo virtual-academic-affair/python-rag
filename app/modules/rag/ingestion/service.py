@@ -52,10 +52,32 @@ class IngestionService:
         chunk_overlap_chars: int = 250,
     ) -> dict[str, Any]:
         """Ingest a PDF file by parsing, chunking, embedding, and storing."""
+        # 1. Parse PDF to Markdown
         pages = await self._parser.parse_pdf_to_markdown(file_path)
         markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
 
-        # Generate TOC and Summary using PageIndex
+        # 2. Generate TOC and Summary
+        toc_result = await self._build_toc(file_id, file_name, markdown_content)
+
+        # 3. Chunk and Index to Qdrant
+        chunk_count, indexed_count = await self._chunk_and_index(
+            file_id, file_name, pages, metadata, chunk_size_chars, chunk_overlap_chars
+        )
+
+        return {
+            "file_id": file_id,
+            "page_count": len(pages),
+            "chunk_count": chunk_count,
+            "indexed_count": indexed_count,
+            "markdown_content": markdown_content,
+            "table_of_contents": toc_result["table_of_contents"],
+            "summary": toc_result["summary"],
+            "toc_structure": toc_result["toc_structure"],
+            "line_count": toc_result["line_count"],
+        }
+
+    async def _build_toc(self, file_id: str, file_name: str, markdown_content: str) -> dict[str, Any]:
+        """Generate TOC and Summary using PageIndex."""
         workspace_dir = Path(settings.PAGEINDEX_WORKSPACE).resolve()
         workspace_dir.mkdir(parents=True, exist_ok=True)
         md_file_path = workspace_dir / f"{file_id}.md"
@@ -68,15 +90,12 @@ class IngestionService:
         
         toc_line_count = 0
         try:
-            doc_id = file_id 
-            
             toc_result = await self._page_index.index_md_content(
                 md_path=str(md_file_path),
-                doc_id=doc_id,
+                doc_id=file_id,
                 doc_name=file_name
             )
             
-            # In-memory storage for returning to caller
             table_of_contents = self._extract_flat_toc(toc_result["structure"])
             summary = toc_result["doc_description"]
             toc_structure = toc_result["structure"]
@@ -87,6 +106,23 @@ class IngestionService:
             summary = None
             toc_structure = []
 
+        return {
+            "table_of_contents": table_of_contents,
+            "summary": summary,
+            "toc_structure": toc_structure,
+            "line_count": toc_line_count,
+        }
+
+    async def _chunk_and_index(
+        self,
+        file_id: str,
+        file_name: str,
+        pages: list,
+        metadata: Optional[dict[str, Any]],
+        chunk_size_chars: int,
+        chunk_overlap_chars: int,
+    ) -> tuple[int, int]:
+        """Chunk markdown pages and index them to Qdrant."""
         chunks = self._chunker.chunk_markdown_pages(
             pages,
             chunk_size_chars=chunk_size_chars,
@@ -115,17 +151,7 @@ class IngestionService:
         else:
             indexed_count = 0
 
-        return {
-            "file_id": file_id,
-            "page_count": len(pages),
-            "chunk_count": len(chunks),
-            "indexed_count": indexed_count,
-            "markdown_content": markdown_content,
-            "table_of_contents": table_of_contents,
-            "summary": summary,
-            "toc_structure": toc_structure,
-            "line_count": toc_line_count,
-        }
+        return len(chunks), indexed_count
     
     def _extract_flat_toc(self, structure: list[dict[str, Any]]) -> list[str]:
         """Flatten PageIndex tree structure into a simple list of headings."""

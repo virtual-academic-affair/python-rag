@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from typing import Any, Optional
+import unicodedata
 
 from langchain_core.prompts import ChatPromptTemplate
 from app.integrations.llm.gemini import GeminiPromptChain, chain_prompt, GeminiGenAIChat
@@ -119,7 +120,7 @@ def remove_accents(input_str: str) -> str:
     """
     if not input_str:
         return ""
-    import unicodedata
+
     # Normalize to NFD (Decomposition)
     s = unicodedata.normalize('NFD', input_str)
     # Filter out non-spacing marks (accents)

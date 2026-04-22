@@ -5,6 +5,12 @@ Used by both Chat and Email Inquiry services.
 import logging
 from typing import List, Callable, Dict, Any
 from app.integrations.pageindex.client import get_page_index_client
+import re
+import difflib
+from app.integrations.storage.client import r2_storage
+from app.core.config import settings
+from app.integrations.llm.gemini import gemini_client
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +75,7 @@ def parse_agent_response(text: str) -> tuple[str, str]:
     Returns:
         tuple: (reasoning_text, final_answer_text)
     """
-    import re
+
     
     # Strip common Gemini thinking artifacts leaked into the text block
     text = re.sub(r"^`\.\n?", "", text).strip()
@@ -93,8 +99,8 @@ def parse_agent_response(text: str) -> tuple[str, str]:
 
 
 def verify_citations(text: str, sources_data: list[dict]) -> str:
-    import difflib
-    import re
+
+
     valid_titles = [s["title"] for s in sources_data if s.get("title")]
 
     def verify_title(match):
@@ -208,13 +214,13 @@ async def build_sources_from_steps(
             if '-' in first_part:
                 return int(first_part.split('-')[0].strip())
             return int(first_part)
-        except:
+        except (ValueError, AttributeError):
             return 0
 
     sources = []
     targets = accessed.items() if accessed else [(did, [None]) for did in file_map]
     
-    from app.integrations.storage.client import r2_storage
+
     
     for i, (did, pages_list) in enumerate(targets):
         c = file_map[did]
@@ -286,9 +292,7 @@ async def run_agent_loop(
           Chat uses this for streaming transparency; Inquiry can ignore it.
         - sources (list[dict]): Citations built from actual get_page_content calls.
     """
-    from app.core.config import settings
-    from app.integrations.llm.gemini import gemini_client
-    from google.genai import types
+
 
     max_turns = max_turns or settings.AGENT_MAX_TURNS
     tools, tool_map, config = get_agent_config(candidate_files)

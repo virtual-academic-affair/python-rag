@@ -31,7 +31,14 @@ class R2Storage(BaseStorage):
     _instance: Optional["R2Storage"] = None
     _client = None
     _bucket_ensured: bool = False
-    _lock = asyncio.Lock()
+    __lock: Optional[asyncio.Lock] = None
+    
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Lazy initialization of asyncio.Lock to ensure it is created within the event loop."""
+        if self.__lock is None:
+            self.__lock = asyncio.Lock()
+        return self.__lock
     
     def __new__(cls):
         """Singleton pattern implementation."""

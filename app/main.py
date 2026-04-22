@@ -87,6 +87,14 @@ async def lifespan(_: FastAPI):
     print(f"🐛 Debug Mode: {settings.DEBUG}")
     print("=" * 80)
     
+    if settings.MONGODB_DISABLED or settings.R2_DISABLED:
+        print("🚨 WARNING: RUNNING WITH DISABLED SERVICES!")
+        if settings.MONGODB_DISABLED:
+            print("   - MONGODB_DISABLED=True: NO data persistence!")
+        if settings.R2_DISABLED:
+            print("   - R2_DISABLED=True: Files will NOT be stored!")
+        print("=" * 80)
+    
     # 1. Connect to MongoDB
     try:
         await Database.connect()
@@ -191,8 +199,8 @@ async def lifespan(_: FastAPI):
             redis_client = get_redis_client()
             await redis_client.disconnect()
             logger.info("✅ Redis disconnected")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ Redis disconnect failed: {e}")
         
     logger.info("👋 Shutdown complete")
 
@@ -285,23 +293,23 @@ async def health_check():
     
     try:
         gemini_connected = gemini_client.client is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: gemini probe failed: {e}")
     
     try:
         mongodb_connected = Database._db is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: mongodb probe failed: {e}")
 
     try:
         redis_connected = get_redis_client()._redis is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: redis probe failed: {e}")
     
     try:
         qdrant_connected = get_qdrant_indexer()._qdrant_client is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: qdrant probe failed: {e}")
     
     return HealthCheckResponse(
         status="healthy" if (gemini_connected and mongodb_connected and redis_connected and qdrant_connected) else "degraded",

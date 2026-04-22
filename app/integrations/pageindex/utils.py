@@ -122,7 +122,7 @@ def extract_json(content):
             # Remove any trailing commas before closing brackets/braces
             json_content = json_content.replace(',]', ']').replace(',}', '}')
             return json.loads(json_content)
-        except:
+        except json.JSONDecodeError:
             logging.error("Failed to parse JSON even after cleanup")
             return {}
     except Exception as e:
