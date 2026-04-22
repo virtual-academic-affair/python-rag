@@ -48,8 +48,17 @@ class FileChunkPreviewResponse(BaseSchema):
     chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
 
 
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+
 class UpdateFileRequest(BaseSchema):
-    display_name: str = Field(..., min_length=1, max_length=512, description="New display name for the file")
+    display_name: Optional[str] = Field(None, min_length=1, max_length=512, description="New display name for the file")
+    custom_metadata: Optional[Dict[str, List[str]]] = Field(None, description="New custom metadata for the file")
+
+    @model_validator(mode='after')
+    def check_at_least_one_field(self) -> 'UpdateFileRequest':
+        if self.display_name is None and self.custom_metadata is None:
+            raise ValueError("At least one of 'display_name' or 'custom_metadata' must be provided.")
+        return self
 
 class FileDetailResponse(BaseSchema):
     file_id: str

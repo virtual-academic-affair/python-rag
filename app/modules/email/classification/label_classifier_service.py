@@ -116,21 +116,29 @@ Output constraints:
 
     @classmethod
     def _normalize_label(cls, raw_label: str) -> str:
-        text = (raw_label or "").strip().lower()
+        text = (raw_label or "").strip()
         if not text:
             return SystemLabel.Other.value
 
-        # Keep only letters/underscore/hyphen to handle outputs like:
-        # "classRegistration.", "Label: classRegistration", "```classRegistration```"
-        compact = re.sub(r"[^a-zA-Z_-]", "", text)
-        if compact in cls._VALID_LABELS:
-            return compact
+        # Clean markdown backticks and single quotes that Gemini sometimes adds
+        # E.g. "'classRegistration'", "`inquiry`"
+        clean_text = re.sub(r"['\"`]", "", text)
+        
+        # Exact match (case insensitive)
+        for token in cls._VALID_LABELS:
+            if clean_text.lower() == token.lower():
+                return token
+
+        text_lower = text.lower()
+        
+        # Check aliases
+        compact = re.sub(r"[^a-zA-Z_-]", "", text_lower)
         if compact in cls._ALIASES:
             return cls._ALIASES[compact]
 
-        # Fallback: find a valid label token inside longer text
+        # Fallback: substring match on original cleaned text
         for token in cls._VALID_LABELS:
-            if token.lower() in text:
+            if token.lower() in text_lower:
                 return token
 
         return SystemLabel.Other.value
@@ -174,16 +182,19 @@ Output constraints:
             logger.info("[CLASSIFY RESULT] normalized_label=%s", label)
 
             if self.grpc_client is not None and message_id is not None:
-                grpc_ok = await self.grpc_client.update_label(
-                    message_id=message_id,
-                    label=SystemLabel(label),
-                    title=title,
-                )
-                if not grpc_ok:
-                    logger.warning(
-                        "gRPC label update failed/rejected in classifier for message_id=%s",
-                        message_id,
+                try:
+                    grpc_ok = await self.grpc_client.update_label(
+                        message_id=message_id,
+                        label=SystemLabel(label),
+                        title=title,
                     )
+                    if not grpc_ok:
+                        logger.warning(
+                            "gRPC label update failed/rejected in classifier for message_id=%s",
+                            message_id,
+                        )
+                except Exception as grpc_err:
+                    logger.warning("gRPC update_label raised exception for message_id=%s: %s", message_id, grpc_err)
 
             if label == SystemLabel.Other.value and raw_label:
                 logger.warning("Could not normalize label from LLM: %r -> other", raw_label)

@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 4.6.0 | April 2026
+Version 4.8.0 | April 2026
 ================================================================================
 
 MUC LUC (DETAILED INDEX)
@@ -26,13 +26,13 @@ MUC LUC (DETAILED INDEX)
      - 10.1. R2 Storage (Original Document Storage)
      - 10.2. LlamaParse (PDF-to-Markdown High-Quality Conversion)
      - 10.3. PageIndex Indexing (Structural Tree & Description)
-     - 10.4. LlamaIndex Indexer (Semantic Chunking & Qdrant Push)
+     - 10.4. Qdrant Indexer (Semantic Chunking & Qdrant Push)
  11.  Hệ thống Metadata Types (Definitions & Rules)
      - 11.1. System Metadata (academic_year, cohort, access_scope)
-     - 11.2. Thống kê totalFiles & Atomic Counter Logic
+     - 11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY)
  12.  Filter Builder Logic (Metadata-to-Vector Query Mapping)
      - 12.1. Role-based Access Scope Expansion
- 13.  Retrieval Service (Strategy & Search Flow)
+ 13.  RAG Service (Strategy & Search Flow)
  14.  PageIndex Integration — Agentic Tools (get_document, tree, content)
  15.  Chat Service & Agentic RAG logic
      - 15.1. SSE (Server-Sent Events) Streaming Protocol details
@@ -51,6 +51,7 @@ MUC LUC (DETAILED INDEX)
  24.  Cấu hình hệ thống (Settings Table & .env impacts)
  25.  Scripts hỗ trợ bảo trì (Maintenance & Debug Tools)
  26.  AI Prompts Tập trung hóa (Propmts.py Context)
+ 27.  Hệ thống Snapshot & Restore (Data Persistence)
 
 
 ================================================================================
@@ -68,20 +69,21 @@ HỆ THỐNG GIẢI QUYẾT 2 BÀI TOÁN LỚN:
 2. KIEN TRUC HE THONG MODULAR RAG
 ================================================================================
 
-Dự án sử dụng kiến trúc RAG Modular (phi tập trung), rời bỏ Gemini File Search để kiểm soát hoàn toàn dữ liệu (State-free):
+Dự án sử dụng kiến trúc RAG Modular (phi tập trung), kiểm soát hoàn toàn dữ liệu với luồng pipeline mới (State-free):
 
-SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT:
+SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT (Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant):
 1.  UPLOAD LAYER: Nhận file -> Validate Metadata (Required fields) -> R2 (Lưu file gốc) -> MongoDB (Status: uploading).
     - [NEW]: Hỗ trợ clientId để đẩy thông báo tiến trình real-time qua WebSocket.
 2.  INDEXING LAYER (ASYNC):
     - LlamaParse: Trình phân tích PDF tốt nhất hiện nay, xử lý được bảng biểu (tables) trong quy chế.
     - PageIndex: Đóng vai trò kiến trúc sư mục lục. Nó không lấy text thô mà xây dựng một cây Phân cấp (Building an Heirarchical Tree).
-    - LlamaIndex Indexer (app/pipelines/ingestion/chunking.py): Chịu trách nhiệm chia mảnh (Chunking) và đẩy Vector lên Qdrant kèm Metadata gắn sẵn.
-3.  RETRIEVAL LAYER:
+    - Qdrant Indexer (app/pipelines/ingestion/chunking.py): Chịu trách nhiệm chia mảnh (Chunking) và đẩy Vector lên Qdrant kèm Metadata gắn sẵn.
+3.  RAG LAYER:
     - Khi có Query: Hệ thống kiểm tra JWT User Role -> Mở rộng Filter (vd: Student chỉ thấy file scope \"student\").
     - Qdrant: Trả về Top-K Chunks liên quan nhất.
     - MongoDB: Trả về \"doc_description\" (1 câu tóm tắt file) để AI định hướng context.
 4.  AGENTIC CHAT LAYER:
+    - [NEW] RAG Gate: Hệ thống sử dụng AI để đánh giá câu hỏi. Nếu là câu hỏi xã giao (Small Talk), AI sẽ trả lời trực tiếp mà không cần gọi RAG, giúp tiết kiệm tài nguyên.
     - AI Agent (Gemini) không nhận hàng tấn text. Nó nhận danh sách File IDs.
     - Agent sử dụng bộ công cụ (Tools) để gọi lại PageIndex: \"Hãy cho tôi xem mục lục File ID 1\" -> \"Tôi muốn đọc trang 5 của File ID 1\".
 
@@ -110,7 +112,7 @@ app/
 │   ├── files/                : Quản lý tệp tin, upload, delete, metadata sync.
 │   │   └── toc_tree/         : [Moved] Repo & Model chuyên biệt cho cấu trúc tài liệu.
 │   ├── chat/                 : Controller của Agentic Chat & SSE Streaming.
-│   ├── retrieval/            : Retrieval Service & Tool-use Agent logic.
+│   ├── rag/                  : RAG Service & Tool-use Agent logic.
 │   ├── email/                : Hệ thống phân loại & Workflows xử lý (Inquiry, etc.).
 │   └── metadata/             : Quản lý Metadata Types & Validation.
 ├── pipelines/ (Multi-step Async Processes)
@@ -219,7 +221,7 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 8.2. INQUIRY SERVICE:
 - B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự là gì).
 - B2: Phân loại thắc mắc (`training`, `procedure`, `graduation`).
-- B3: Retrieval RAG lấy context từ tài liệu trường.
+- B3: RAG service lấy context từ tài liệu trường.
 - B4: Gemini soạn câu trả lời (Email Draft Body).
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
@@ -263,15 +265,16 @@ BƯỚC 2: BACKGROUND PROCESSING (`FileService.process_file_background`)
   - Phân tích MD để tạo cấu trúc mục lục.
   - Sinh ra 1 câu `doc_description` (Mô tả tài liệu).
   - Lưu TOC Tree vào `file_toc_trees` Collection.
-- LlamaIndex Indexer:
+- Qdrant Indexer:
   - Chia nhỏ văn bản (Semantic Chunking).
   - Gemini Embedding -> Chuyển văn bản thành dãy số (vector).
   - Push lên Qdrant kèm Payload: {file_id, text, metadata_filters}.
 - Artifact storage: Upload bản `.md` đã bóc tách lên R2 (sát cạnh file gốc) để AI tham chiếu nhanh.
 - Status Update: Chuyển file sang status=\"ready\" (hoặc \"failed\" nếu lỗi).
 
-BƯỚC 3: METADATA SYNC (Atomic Counter)
+BƯỚC 3: METADATA SYNC (Atomic Counter & Qdrant Update)
 - Khi file chuyển sang \"ready\", hệ thống gọi `$inc: { \"total_files\": 1 }` cho tất cả nhãn metadata tương ứng trong `metadata_types`.
+- Khi user cập nhật metadata qua API `PATCH /api/files/{id}`, hệ thống đồng thời cập nhật MongoDB và sync lại payload sang Qdrant để đảm bảo bộ lọc (filters) luôn chính xác.
 
 
 ================================================================================
@@ -303,6 +306,12 @@ QUY TẮC VALIDATION (MetadataService):
 - Nếu Metadata Type gán `is_active=False` (Soft Delete), hệ thống vẫn giữ dữ liệu cũ nhưng cấm upload file mới mang tag đó.
 - Cấm xóa Metadata Type nếu `total_files > 0`.
 
+11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY):
+Hệ thống sử dụng cơ chế cập nhật bộ đếm nguyên tử để tránh sai lệch dữ liệu:
+- Tăng bộ đếm: Chỉ thực hiện khi lệnh `find_one_and_update` chuyển trạng thái file thành công từ `PROCESSING` -> `READY`.
+- Giảm bộ đếm: Chỉ thực hiện khi lệnh `find_one_and_delete` xác nhận file bị xóa đang ở trạng thái `READY`.
+- Công nghệ: Sử dụng `$inc` của MongoDB để đảm bảo tính nhất quán ngay cả khi có nhiều request đồng thời.
+
 
 ================================================================================
 12. FILTER BUILDER LOGIC (VECTOR QUERY MAPPING)
@@ -326,7 +335,7 @@ THUẬT TOÁN OR-LOGIC CÙNG KEY:
 
 
 ================================================================================
-13. RETRIEVAL SERVICE (STRATEGY & SEARCH FLOW)
+13. RAG SERVICE (STRATEGY & SEARCH FLOW)
 ================================================================================
 
 Tách biệt hoàn toàn việc \"Tìm mảnh\" và \"Tạo context\".
@@ -364,11 +373,15 @@ PageIndex cung cấp 3 công cụ \"mắt thần\" cho AI Agent, giúp nó chủ
     - Ý nghĩa: Giúp AI lấy được con số chính xác (vd: 50% học phí) từ văn bản mà không cần nạp context khổng lồ.
 
 
-================================================================================
 15. CHAT SERVICE & AGENTIC RAG LOGIC
 ================================================================================
 
-Sử dụng vòng lặp `agent_loop`:
+Sử dụng vòng lặp `agent_loop` tích hợp lớp bảo vệ tối ưu:
+
+0.  RAG GATE (GATEKEEPER):
+    - Hệ thống sử dụng một lớp LLM phân tích nhanh ý định người dùng.
+    - Nếu câu hỏi là xã giao (Chào hỏi, cảm ơn) hoặc không cần dữ liệu chuyên môn -> Trả lời trực tiếp và ngắt luồng RAG ngay lập tức.
+    - Lợi ích: Tiết kiệm Token, giảm độ trễ, tránh nhiễu từ các tài liệu không liên quan.
 
 1.  Input: Câu hỏi + Chat History + Metadata Context.
 2.  Loop:
@@ -479,7 +492,7 @@ LỚP KẾ THỪA ĐẶC BIỆT:
 - Mọi truy cập file MD đều qua một lớp Cache logic.
 
 19.2. ARTIFACT CACHING STRATEGY (PageIndex Integration):
-Hệ thống sử dụng chiến lược "Double-Fetch" để tối ưu hiệu năng và chi phí:
+Hệ thống sử dụng chiến lược \"Double-Fetch\" để tối ưu hiệu năng và chi phí:
 1.  Check Local: Khi cần file MD (cho Agent đọc), hệ thống kiểm tra thư mục `PAGEINDEX_WORKSPACE/artifacts`.
 2.  TTL Logic: File cached tại local sẽ tồn tại trong 60 phút (3600s).
 3.  Background Invalidation: Một background task kiểm tra và xóa file sau khi quá hạn.
@@ -528,7 +541,8 @@ PHÂN HỆ FILES:
 - GET /api/files                : List file (Metadata search, Keyword search, Phân trang).
 - POST /api/files               : Upload file (Quick flow, trả về file_id ngay).
 - GET /api/files/{id}           : Chi tiết file (Metadata, status).
-- GET /api/files/{id}/download   : Download file (Tạo Presigned URL chuyển hướng).
+- PATCH /api/files/{id}         : Cập nhật tên hiển thị và metadata (Sync Qdrant).
+- GET /api/files/{id}/download   : Download file (Stream dữ liệu trực tiếp từ Server).
 - DELETE /api/files/{id}        : Xóa file (Reverse cleanup).
 
 PHÂN HỆ CHAT:
@@ -564,8 +578,13 @@ CO CHE HOAT DONG:
 4. Payload Format: `{"step": "string", "message": "string", "file_id": "string"}`
 
 ================================================================================
-24. CAU HINH HE THONG (SETTINGS & .ENV IMPACTS)
+24. CAU HINH HE THONG (SETTINGS TABLE & .env IMPACTS)
 ================================================================================
+
+Các biến môi trường quan trọng:
+- `AGENT_MAX_TURNS`: Số vòng lặp tối đa của RAG Agent (Mặc định: 7). Tránh Agent bị lặp vô tận.
+- `MONGODB_URL`: Link kết nối cơ sở dữ liệu.
+- `R2_BUCKET_NAME`: Tên kho lưu trữ tài liệu.
 
 | Biến .env             | Giá trị mặc định     | Mô tả |
 | :---                  | :---                 | :---  |
@@ -640,5 +659,5 @@ LƯU Ý KỸ THUẬT:
 - Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 4.6.1 (Added Snapshot System).
+Xác nhận bản thảo Overview Version 4.8.0 (Added RAG Gate & Metadata Sync).
 --------------------------------------------------------------------------------

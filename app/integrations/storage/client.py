@@ -82,21 +82,22 @@ class R2Storage(BaseStorage):
             # Double check
             if self._bucket_ensured:
                 return
-        def _check_and_create():
-            try:
-                self._client.head_bucket(Bucket=settings.R2_BUCKET_NAME)
-                self._bucket_ensured = True
-            except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code')
-                if error_code == '404':
-                    self._client.create_bucket(Bucket=settings.R2_BUCKET_NAME)
-                    logger.info(f"✅ Created R2 bucket: {settings.R2_BUCKET_NAME}")
+                
+            def _check_and_create():
+                try:
+                    self._client.head_bucket(Bucket=settings.R2_BUCKET_NAME)
                     self._bucket_ensured = True
-                else:
-                    logger.error(f"Error checking/creating bucket: {e}")
-                    raise StorageException(f"R2 initialization failed: {e}")
+                except ClientError as e:
+                    error_code = e.response.get('Error', {}).get('Code')
+                    if error_code == '404':
+                        self._client.create_bucket(Bucket=settings.R2_BUCKET_NAME)
+                        logger.info(f"✅ Created R2 bucket: {settings.R2_BUCKET_NAME}")
+                        self._bucket_ensured = True
+                    else:
+                        logger.error(f"Error checking/creating bucket: {e}")
+                        raise StorageException(f"R2 initialization failed: {e}")
 
-        await asyncio.to_thread(_check_and_create)
+            await asyncio.to_thread(_check_and_create)
 
     async def upload_file(
         self,

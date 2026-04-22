@@ -107,6 +107,14 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
         -d "{ \"displayName\": \"Updated File Name ${TIMESTAMP}\" }" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update File Display Name"
+
+    log_info "PATCH /api/files/${FILE_ID} — Update display_name & customMetadata"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
+        -H "Content-Type: application/json" \
+        -H "${AUTH_HEADER}" \
+        -d "{ \"displayName\": \"Full Update ${TIMESTAMP}\", \"customMetadata\": { \"academicYear\": [\"2025-2026\"], \"department\": [\"khcn\"] } }" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Update File Metadata"
     
     log_info "POST /api/files — Upload temp file to delete"
     TEMP_FILE="${UPLOADS_DIR}/temp_doc_delete_${TIMESTAMP}.txt"

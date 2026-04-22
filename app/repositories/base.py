@@ -49,6 +49,7 @@ class BaseRepository:
     def _serialize_doc(self, doc: Dict[str, Any]) -> Dict[str, Any]:
         """Convert ObjectId to string in document."""
         if doc and "_id" in doc:
+            doc = doc.copy()
             doc["_id"] = str(doc["_id"])
         return doc
     
@@ -277,3 +278,52 @@ class BaseRepository:
         except Exception as e:
             logger.error(f"Error deleting documents in {self.collection_name}: {e}")
             raise DatabaseException(f"Failed to delete documents: {e}")
+
+    async def find_one_and_update(
+        self,
+        query: Dict[str, Any],
+        update_data: Dict[str, Any],
+        return_document: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find and update a document atomically.
+        
+        Args:
+            query: MongoDB query
+            update_data: Fields to update (using $set)
+            return_document: If True, returns document after update
+            
+        Returns:
+            Updated document or None
+        """
+        try:
+            update_data["updated_at"] = datetime.now(timezone.utc)
+            
+            result = await self.collection.find_one_and_update(
+                query,
+                {"$set": update_data},
+                return_document=True if return_document else False
+            )
+            
+            return self._serialize_doc(result) if result else None
+            
+        except Exception as e:
+            logger.error(f"Error find_one_and_update in {self.collection_name}: {e}")
+            raise DatabaseException(f"Failed to update document: {e}")
+
+    async def find_one_and_delete(self, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Find and delete a document atomically, returning its contents.
+        
+        Args:
+            query: MongoDB query
+            
+        Returns:
+            Deleted document or None
+        """
+        try:
+            result = await self.collection.find_one_and_delete(query)
+            return self._serialize_doc(result) if result else None
+        except Exception as e:
+            logger.error(f"Error find_one_and_delete in {self.collection_name}: {e}")
+            raise DatabaseException(f"Failed to delete document: {e}")

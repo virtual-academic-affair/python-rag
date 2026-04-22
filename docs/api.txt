@@ -1,6 +1,6 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         AI SERVICE API DOCUMENTATION                         ║
-║                                  VERSION 4.6.0                               ║
+║                                  VERSION 4.8.0                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 BASE URL: http://localhost:8000
@@ -32,12 +32,13 @@ MỤC LỤC
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
  3. Metadata Type Management   (9 endpoints) [🔒 admin / 🔒 auth]
- 4. File Management APIs       (9 endpoints) [🔒 admin / 🔒 auth]
+ 4. File Management APIs       (8 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (3 endpoints) [🔒 auth]
- 6. Real-time Notifications    (1 websocket) [🔒 auth]
- 7. Appendix: Error Codes & Formatting
+ 6. Debug & Preview APIs       (2 endpoints) [🔒 admin]
+ 7. Real-time Notifications    (1 websocket) [🔒 auth]
+ 8. Appendix: Error Codes & Formatting
 
-TỔNG: 26 ENDPOINTS
+TỔNG: 27 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -54,9 +55,11 @@ TỔNG: 26 ENDPOINTS
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "4.6.0",                                                      │
+│     "version": "4.8.0",                                                      │
 │     "geminiApiConnected": true,                                              │
-│     "mongodbConnected": true                                                 │
+│     "mongodbConnected": true,                                                │
+│     "qdrantConnected": true,                                                 │
+│     "redisConnected": true                                                   │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
@@ -253,25 +256,10 @@ TỔNG: 26 ENDPOINTS
 │   2. Trả về kết quả ngay lập tức kèm trạng thái "uploading".                 │
 │   3. Kích hoạt BackgroundTask chạy process_file_background.                  │
 │   4. Background: LlamaParse bóc tách -> PageIndex sinh Tree -> Qdrant Embed. │
-│   5. Hoàn tất: Update status="ready" và sync bộ đếm Metadata.                │
+│   5. Hoàn tất: Sử dụng `find_one_and_update` để chuyển status sang "ready"    │
+│      nguyên tử. Chỉ khi transition thành công mới tăng bộ đếm Metadata.      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/files/parse-preview    [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống).   │
-│ REQUEST: - file: <binary>                                                    │
-│ RESPONSE: { "pages": [{"pageIndex": 0, "markdown": "..."}] }                 │
-│ LUỒNG XỬ LÝ: Gửi tệp tới LlamaParse API và trả về kết quả thô ngay lập tức.  │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/files/chunk-preview    [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks).       │
-│ RESPONSE: { "chunkCount": 25, "chunks": [...] }                              │
-│ LUỒNG XỬ LÝ: Gọi LlamaParse sau đó chạy logic ChunkingService cục bộ.        │
-└──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/files                   [🔒 AUTH]                                   │
@@ -293,12 +281,28 @@ TỔNG: 26 ENDPOINTS
 │   4. Truy vấn MongoDB trả về danh sách tệp Metadata Masked.                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
+
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/files/admin             [🔒 ADMIN]                                  │
+│ PATCH /api/files/{file_id}       [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Liệt kê tệp tin dành cho quản trị viên (Thấy toàn bộ tệp internal).   │
-│ LUỒNG XỬ LÝ: Tương tự API /files nhưng không áp dụng Filter bảo mật, cho     │
-│ phép xem các tệp có access_scope=[].                                         │
+│ MÔ TẢ: Cập nhật thông tin tệp tin (Tên hiển thị, Metadata).                  │
+│                                                                              │
+│ REQUEST EXAMPLE:                                                             │
+│   {                                                                          │
+│     "displayName": "Tên mới.pdf",                                            │
+│     "customMetadata": {                                                      │
+│       "academicYear": ["2025-2026"],                                         │
+│       "accessScope": ["lecture"]                                             │
+│     }                                                                        │
+│   }                                                                          │
+│                                                                              │
+│ RESPONSE: FileDetailResponse                                                 │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. MongoDB: Cập nhật thông tin record file.                                │
+│   2. Qdrant Sync: Nếu có cập nhật `customMetadata`, hệ thống tự động đồng bộ │
+│      lại payload của tất cả các vector points thuộc file này trên Qdrant.    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -322,19 +326,17 @@ TỔNG: 26 ENDPOINTS
 │ GET /api/files/{fileId}          [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy thông tin chi tiết một tệp tin.                                   │
-│ RESPONSE: FileDetailResponse kèm Presigned URLs, tableOfContents và summary. │
-│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2 thời hạn 3600 giây.         │
+│ RESPONSE: FileDetailResponse kèm Download URLs, tableOfContents và summary.  │
+│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2 (Public hoặc Presigned).    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/files/{fileId}        [🔒 ADMIN]                                  │
+│ GET /api/files/{fileId}/download [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Đổi tên hiển thị (displayName) của tệp tin.                           │
-│ REQUEST: { "displayName": "Tên mới" }                                        │
-│ RESPONSE: FileDetail đã cập nhật.                                            │
+│ MÔ TẢ: Tải xuống trực tiếp tệp tin binary từ kho lưu trữ R2.                 │
+│ RESPONSE: Binary file stream.                                                │
+│ LUỒNG XỬ LÝ: FileService tải bytes từ R2 và trả về qua StreamingResponse.    │
 └──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
 │ DELETE /api/files/{fileId}       [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
@@ -342,7 +344,8 @@ TỔNG: 26 ENDPOINTS
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Qdrant: Xóa toàn bộ Vector points mang file_id tương ứng.               │
 │   2. R2: Xóa binary file gốc và binary file markdown bóc tách.                │
-│   3. Metadata Service: Gọi sync để TRỪ bộ đếm totalFiles của các tag cũ.     │
+│   3. Metadata Service: Sử dụng `find_one_and_delete` nguyên tử. Nếu tệp bị xóa│
+│      đang ở trạng thái "ready", hệ thống mới thực hiện trừ bộ đếm Metadata.  │
 │   4. MongoDB: Xóa bản ghi tệp và bản ghi TOC Tree.                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -371,7 +374,9 @@ TỔNG: 26 ENDPOINTS
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. RetrievalService: Vector search lấy Top-30 chunks (Coarse Search).      │
+│   0. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
+│      hoặc xã giao, trả lời trực tiếp và BYPASS hoàn toàn luồng RAG tốn kém.  │
+│   1. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
 │   2. PageIndex Semantic Reranking: Tính toán DocScore từng File dựa trên     │
 │      mẫu 30 chunks này để chọn ra Top-5 Files tốt nhất (Fine Selection).     │
 │   3. Build Context: Kết hợp descriptions của Files tìm được và lịch sử chat. │
@@ -408,7 +413,29 @@ TỔNG: 26 ENDPOINTS
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        6. REAL-TIME NOTIFICATIONS
+                        6. DEBUG & PREVIEW APIs
+════════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/debug/files/parse-preview [🔒 ADMIN]                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống).   │
+│ REQUEST: - file: <binary>                                                    │
+│ RESPONSE: { "pages": [{"pageIndex": 0, "markdown": "..."}] }                 │
+│ LUỒNG XỬ LÝ: Gửi tệp tới LlamaParse API và trả về kết quả thô ngay lập tức.  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/debug/files/chunk-preview [🔒 ADMIN]                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks).       │
+│ RESPONSE: { "chunkCount": 25, "chunks": [...] }                              │
+│ LUỒNG XỬ LÝ: Gọi LlamaParse sau đó chạy logic ChunkingService cục bộ.        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+                        7. REAL-TIME NOTIFICATIONS
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -443,6 +470,7 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Thời gian tồn tại (TTL): 60 phút kể từ lần truy cập cuối.
 - Background Task: Hệ thống tự động quét và dọn dẹp các tệp quá hạn mỗi 30 phút.
 - R2 Fallback: Nếu cache bị dọn dẹp, hệ thống sẽ tự động tải lại từ R2 khi có yêu cầu.
+- Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 
-Hoàn tất bản Đặc tả API chi tiết v4.6.0 (Full Compliance).
+Hoàn tất bản Đặc tả API chi tiết v4.8.0 (Full Compliance).
 --------------------------------------------------------------------------------

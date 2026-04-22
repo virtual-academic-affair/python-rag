@@ -61,14 +61,17 @@ class EmailWorkflowOrchestrator:
                 extracted.model_dump_json(by_alias=True, exclude_none=False),
             )
             if self.grpc_client is not None:
-                grpc_ok = await self.grpc_client.create_class_registration(
-                    payload=extracted,
-                )
-                if not grpc_ok:
-                    logger.warning(
-                        "gRPC class registration create failed/rejected for message_id=%s",
-                        extracted.message_id,
+                try:
+                    grpc_ok = await self.grpc_client.create_class_registration(
+                        payload=extracted,
                     )
+                    if not grpc_ok:
+                        logger.warning(
+                            "gRPC class registration create failed/rejected for message_id=%s",
+                            extracted.message_id,
+                        )
+                except Exception as grpc_err:
+                    logger.warning("gRPC create_class_registration raised exception: %s", grpc_err)
             return ClassRegistrationExtractResponse(
                 message_id=message_id,
                 label=SystemLabel.ClassRegistration,
@@ -105,12 +108,15 @@ class EmailWorkflowOrchestrator:
                         resolved_assignee_ids.append(user_id)
 
                 extracted.assignee_ids = resolved_assignee_ids
-                grpc_ok = await self.grpc_client.create_task(payload=extracted)
-                if not grpc_ok:
-                    logger.warning(
-                        "gRPC task create failed/rejected for message_id=%s",
-                        extracted.message_id,
-                    )
+                try:
+                    grpc_ok = await self.grpc_client.create_task(payload=extracted)
+                    if not grpc_ok:
+                        logger.warning(
+                            "gRPC task create failed/rejected for message_id=%s",
+                            extracted.message_id,
+                        )
+                except Exception as grpc_err:
+                    logger.warning("gRPC create_task raised exception: %s", grpc_err)
 
             return TaskExtractResponse(
                 message_id=message_id,

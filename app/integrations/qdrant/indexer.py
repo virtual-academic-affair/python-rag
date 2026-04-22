@@ -73,7 +73,8 @@ class QdrantIndexer:
                 payload=payload
             ))
 
-        self._qdrant_client.upsert(
+        await asyncio.to_thread(
+            self._qdrant_client.upsert,
             collection_name=settings.QDRANT_COLLECTION_NAME,
             points=points,
             wait=True,
@@ -85,15 +86,18 @@ class QdrantIndexer:
         Delete all chunks associated with a file_id from Qdrant.
         """
         await self.ensure_collection()
-        self._qdrant_client.delete(
+        await asyncio.to_thread(
+            self._qdrant_client.delete,
             collection_name=settings.QDRANT_COLLECTION_NAME,
-            points_selector=qm.Filter(
-                must=[
-                    qm.FieldCondition(
-                        key="file_id",
-                        match=qm.MatchValue(value=file_id)
-                    )
-                ]
+            points_selector=qm.FilterSelector(
+                filter=qm.Filter(
+                    must=[
+                        qm.FieldCondition(
+                            key="file_id",
+                            match=qm.MatchValue(value=file_id)
+                        )
+                    ]
+                )
             )
         )
 
@@ -109,7 +113,7 @@ class QdrantIndexer:
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
             payload={"metadata": new_metadata},
-            points_selector=qm.Filter(
+            points=qm.Filter(
                 must=[
                     qm.FieldCondition(
                         key="file_id",

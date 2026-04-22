@@ -23,7 +23,8 @@ class RedisClient:
                 self._redis = from_url(
                     settings.REDIS_URL,
                     decode_responses=True,
-                    socket_timeout=settings.REDIS_TIMEOUT
+                    socket_timeout=settings.REDIS_TIMEOUT,
+                    ssl_cert_reqs=None,
                 )
                 # Test connection
                 await self._redis.ping()

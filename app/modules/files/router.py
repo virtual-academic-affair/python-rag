@@ -405,7 +405,7 @@ async def download_file_endpoint(file_id: str, _user: Dict[str, Any] = Depends(r
 @router.patch(
     "/{file_id}",
     response_model=FileDetailResponse,
-    summary="Update file display name",
+    summary="Update file details (display name, metadata)",
 )
 async def update_file(
     file_id: str,
@@ -414,7 +414,11 @@ async def update_file(
 ):
     try:
         file_svc = get_file_service()
-        file_doc = await file_svc.update_file_display_name(file_id, request.display_name)
+        file_doc = await file_svc.update_file(
+            file_id=file_id, 
+            display_name=request.display_name,
+            custom_metadata=request.custom_metadata
+        )
         if not file_doc:
             raise HTTPException(status_code=404, detail="File not found")
 

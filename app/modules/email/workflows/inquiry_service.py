@@ -122,13 +122,14 @@ class InquiryService:
         if message_id is not None:
             try:
                 grpc = get_grpc_client()
-                await grpc.create_inquiry(
-                    message_id=message_id,
-                    answer=rag_result["answer"],
-                    extracted_question=extracted_question,
-                    inquiry_types=inquiry_types,
-                    sources=rag_result["sources"]
-                )
+                if grpc is not None:
+                    await grpc.create_inquiry(
+                        message_id=message_id,
+                        answer=rag_result["answer"],
+                        extracted_question=extracted_question,
+                        inquiry_types=inquiry_types,
+                        sources=rag_result["sources"]
+                    )
             except Exception as e:
                 logger.warning(f"Failed to create Gmail draft via gRPC: {e}")
 

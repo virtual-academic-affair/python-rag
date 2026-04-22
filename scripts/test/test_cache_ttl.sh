@@ -50,14 +50,12 @@ log_info "Step 3: Calling TOC Tree API to ensure file is cached locally..."
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}/toc" \
     -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
 
-# 4. Verify local file exists
-CACHE_FILE="${WS_PATH}/${FILE_ID}.md"
-if [ -f "$CACHE_FILE" ]; then
-    log_success "Local cache file exists: $CACHE_FILE"
-else
-    # MIGHT be that another background cleanup process removed it, or caching is disabled. Let's just warn for now.
-    log_warning "Local cache file NOT found at $CACHE_FILE after processing"
-fi
+# 4. Verify TOC API instead of local file (local file is deleted after ingestion by design)
+log_info "Step 4: Calling TOC API..."
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/toc-tree/${FILE_ID}" \
+    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Get TOC Tree"
+
 
 # 5. Call something else or just skip
 log_info "Cleanup..."

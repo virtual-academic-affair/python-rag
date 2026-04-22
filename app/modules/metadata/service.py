@@ -158,9 +158,8 @@ class MetadataService:
             if av["value"] == allowed_value.value:
                 raise ConflictException(f"Allowed value '{allowed_value.value}' already exists in metadata type '{key}'")
                 
-        existing_values.append(allowed_value.to_dict())
+        await self.metadata_repo.push_allowed_value(key, allowed_value.to_dict())
         
-        await self.metadata_repo.update_by_key(key, {"allowed_values": existing_values})
         updated = await self.metadata_repo.find_by_key(key)
         logger.info(f"Added metadata value '{allowed_value.value}' to type '{key}'")
         return _to_metadata_model(updated)

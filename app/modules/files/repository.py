@@ -51,3 +51,29 @@ class FileRepository(BaseRepository):
             return []
         query = {"display_name": {"$in": display_names}}
         return await self.find_many(query=query, skip=0, limit=len(display_names))
+
+    async def find_by_ids(self, file_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Find files by list of IDs.
+        
+        Args:
+            file_ids: List of file IDs (strings)
+            
+        Returns:
+            List of file documents
+        """
+        if not file_ids:
+            return []
+            
+        object_ids = []
+        for fid in file_ids:
+            try:
+                object_ids.append(self._to_object_id(fid))
+            except ValueError:
+                continue
+                
+        if not object_ids:
+            return []
+            
+        query = {"_id": {"$in": object_ids}}
+        return await self.find_many(query=query, skip=0, limit=len(object_ids))

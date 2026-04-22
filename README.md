@@ -1,6 +1,6 @@
 # AI Service - Unified Modular RAG & Email Classification
 
-**Version 4.6.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
+**Version 4.7.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
 
 ---
 
@@ -9,12 +9,13 @@
 Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nhiệm vụ cốt lõi:
 
 1.  **Phân loại & Xử lý Email**: Nhận thông tin từ RabbitMQ, tự động nhận diện ý định (Classification) và trích xuất dữ liệu (Extraction) để gọi các workflows gRPC (ClassRegistration, Task, Inquiry).
-2.  **Modular RAG Ecosystem**: Hệ thống tìm kiếm và hỏi đáp tài liệu không phụ thuộc vào Gemini File Search, sử dụng pipeline mạnh mẽ:
+2.  **Modular RAG Ecosystem**: Hệ thống Modular RAG độc lập, lưu trữ dữ liệu tại chỗ (State-free), sử dụng pipeline mạnh mẽ:
     *   **LlamaParse**: Bọc tách tài liệu PDF phức tạp sang Markdown chuẩn.
     *   **PageIndex**: Đánh chỉ mục cấu trúc (TOC), quản lý phân đoạn văn bản phân cấp và **Agentic Tools**.
     *   **Qdrant**: Vector Database lưu trữ embeddings phục vụ tìm kiếm ngữ nghĩa.
-    *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets.
+    *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets (`/api/files/progress/{clientId}`).
     *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks và cấu trúc mục lục.
+    *   **Tiêu chuẩn Ingestion Flow**: Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant (Chunks/Embeddings).
 
 ---
 
@@ -24,7 +25,7 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 |---|---|---|
 | **Web Framework** | FastAPI | Async/Await, Pydantic v2 |
 | **AI Processing** | Google Gemini (2.5-flash / Pro) | Xử lý ngôn ngữ tự nhiên & Reasoning |
-| **Parsing & Chunking** | LlamaIndex / LlamaParse | Chuyển đổi PDF và băm nhỏ văn bản |
+| **Parsing & Chunking** | LlamaParse              | Chuyển đổi PDF và băm nhỏ văn bản |
 | **Indexing Structure** | PageIndex | Lưu trữ cấu trúc mục lục tài liệu (Hierarchy) |
 | **Vector Database** | Qdrant | Công cụ tìm kiếm vector mật độ cao |
 | **Metadata Database** | MongoDB (Motor client) | Quản lý tệp, metadata và logging |
@@ -47,7 +48,7 @@ python-rag/
 │   │   ├── email/              # Orchestrator & Workflow classification
 │   │   ├── files/              # Quản lý tệp (Upload, Delete, TOC Tree)
 │   │   ├── metadata/           # Quản lý nhãn và Role-based masking
-│   │   └── retrieval/          # Retrieval Service & Tool-use logic
+│   │   └── rag/                # RAG Service & Tool-use logic
 │   ├── pipelines/              # Quy trình xử lý phức tạp (Ingestion)
 │   ├── proto/                  # Protobuf definitions & generated stubs
 │   └── repositories/           # Tầng truy cập dữ liệu MongoDB (Base Pattern)

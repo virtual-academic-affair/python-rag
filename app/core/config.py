@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     GEMINI_TOP_P: float = 0.95
     GEMINI_TOP_K: int = 40
     GEMINI_TIMEOUT_SECONDS: int = 60
+    AGENT_MAX_TURNS: int = 7
 
     # LlamaParse configuration (Sprint 1)
     LLAMA_CLOUD_API_KEY: Optional[str] = None

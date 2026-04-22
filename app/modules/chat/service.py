@@ -65,6 +65,70 @@ class ChatService:
 
         return {"candidate_files": candidate_files, "history": history}
 
+    async def _evaluate_rag_needs(self, question: str, chat_history: list[ChatHistoryItem]) -> tuple[bool, str, dict]:
+        """
+        Dùng LLM nhẹ (e.g. Gemini Flash fallback) để quyết định xem câu hỏi có thực sự cần tìm tài liệu quy chế không.
+        Trả về (needs_rag, direct_answer, token_usage).
+        """
+        token_usage = {"prompt_tokens": 0, "candidates_tokens": 0, "total_tokens": 0}
+        try:
+            logger.info(f"[Chat] Evaluating RAG needs for question: '{question}'")
+            
+            history_text = "\n".join([f"{'User' if h.role == 'user' else 'Bot'}: {h.content}" for h in chat_history[-3:]])
+            
+            prompt = types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(
+                        text=f"""Bạn là trợ lý phân loại ý định người dùng.
+Lịch sử chat gần đây:
+{history_text}
+
+Câu hỏi hiện tại: "{question}"
+
+Nhiệm vụ: Câu hỏi này có yêu cầu tra cứu tài liệu quy chế, thủ tục, thông báo từ Phòng Giáo vụ không? hay chỉ là giao tiếp thông thường (như "Hi", "Cảm ơn", "Tạm biệt", hoặc câu hỏi ngoài luồng)?
+Nếu CÓ cần tra cứu: Trả về duy nhất chữ "YES".
+Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản hồi lịch sự, ngắn gọn và giữ vai trò là "Phòng Giáo vụ" (Ví dụ: "NO|Phòng Giáo vụ xin chào. Bạn cần hỗ trợ thông tin gì về quy chế, thủ tục hay học vụ?").
+
+Định dạng trả lời BẮT BUỘC: YES hoặc NO|<câu phản hồi>
+""")
+                ]
+            )
+
+            resp = await gemini_client.client.aio.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.0
+                )
+            )
+
+            # Extract token usage
+            if resp.usage_metadata:
+                token_usage = {
+                    "prompt_tokens": resp.usage_metadata.prompt_token_count or 0,
+                    "candidates_tokens": resp.usage_metadata.candidates_token_count or 0,
+                    "total_tokens": (resp.usage_metadata.prompt_token_count or 0) + (resp.usage_metadata.candidates_token_count or 0)
+                }
+            
+            if resp.candidates and resp.candidates[0].content.parts:
+                answer = ""
+                for part in resp.candidates[0].content.parts:
+                    if not getattr(part, "thought", False):
+                        answer = (part.text or "").strip()
+                        if answer:
+                            break
+                            
+                if answer.startswith("NO|"):
+                    return False, answer.split("NO|", 1)[1].strip(), token_usage
+                elif "NO" in answer.upper() and "|" not in answer:
+                   return False, "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?", token_usage
+
+            return True, "", token_usage
+        except Exception as e:
+            logger.error(f"[Chat] RAG Gate Error: {e}")
+            return True, "", token_usage # Fail-safe: always use RAG if gate fails
+
     async def generate_chat_response(
         self,
         question: str,
@@ -77,6 +141,17 @@ class ChatService:
         Delegates fully to shared run_agent_loop; returns answer, steps, and sources.
         """
         start_time = time.time()
+
+        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        if not needs_rag:
+            logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
+            return {
+                "answer": direct_answer,
+                "sources": [],
+                "steps": [],
+                "token_usage": gate_usage,
+                "processing_time_ms": int((time.time() - start_time) * 1000),
+            }
 
         state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
@@ -125,6 +200,18 @@ class ChatService:
         """
         start_time = time.time()
 
+        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        if not needs_rag:
+            logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
+            yield json.dumps({"type": "text", "content": direct_answer, "done": False})
+            yield json.dumps({
+                "done": True, 
+                "sources": [], 
+                "token_usage": gate_usage,
+                "processing_time_ms": int((time.time() - start_time) * 1000)
+            })
+            return
+
         state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
         history = state["history"]
@@ -146,7 +233,7 @@ class ChatService:
         
         logger.info(f"[Chat] Bắt đầu stream response về cho người dùng (Khởi động Agent Stream)")
 
-        for turn_idx in range(7):
+        for turn_idx in range(settings.AGENT_MAX_TURNS):
             logger.info(f"[Chat-Stream] Vòng lặp stream turn {turn_idx + 1}")
             tool_calls_in_turn = []
             model_response_parts = []

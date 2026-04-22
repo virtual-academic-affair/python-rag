@@ -94,6 +94,9 @@ class RetrievalService:
         
         from app.modules.files.repository import FileRepository
         file_repo = FileRepository()
+        
+        file_docs = await file_repo.find_by_ids(top_ids)
+        file_map = {str(f.get("_id")): f for f in file_docs}
 
         for d in top_docs:
             fid = d["file_id"]
@@ -102,7 +105,7 @@ class RetrievalService:
             d["structure"] = toc_doc.get("structure", [])
             d["markdown_storage_path"] = toc_doc.get("markdown_storage_path", "")
             
-            f_doc = await file_repo.find_by_id(fid)
+            f_doc = file_map.get(fid)
             if f_doc:
                 d["storage_path"] = f_doc.get("storage_path", "")
             else:

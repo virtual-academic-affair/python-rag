@@ -71,6 +71,9 @@ def parse_agent_response(text: str) -> tuple[str, str]:
     """
     import re
     
+    # Strip common Gemini thinking artifacts leaked into the text block
+    text = re.sub(r"^`\.\n?", "", text).strip()
+    
     # TH1: Có cả cặp thẻ đóng/mở
     match_closed = re.search(r'<answer>(.*?)</answer>', text, flags=re.DOTALL | re.IGNORECASE)
     if match_closed:
@@ -266,7 +269,7 @@ def get_agent_config(candidate_files: list[dict]) -> tuple[list[Callable], dict[
 async def run_agent_loop(
     candidate_files: list[dict],
     prompt_contents: Any,
-    max_turns: int = 7,
+    max_turns: int = None,
 ) -> dict:
     """
     Run the manual PageIndex agent loop and return a structured result.
@@ -287,6 +290,7 @@ async def run_agent_loop(
     from app.integrations.llm.gemini import gemini_client
     from google.genai import types
 
+    max_turns = max_turns or settings.AGENT_MAX_TURNS
     tools, tool_map, config = get_agent_config(candidate_files)
 
     # Normalise prompt_contents into a list of Content

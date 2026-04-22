@@ -652,8 +652,7 @@
                             ],
                             "path": [
                                 "api",
-                                "files",
-                                "admin"
+                                "files"
                             ],
                             "query": [
                                 {
@@ -834,6 +833,39 @@
                         "description": "Hard delete file (R2 + Qdrant + PageIndex/MongoDB)."
                     },
                     "response": []
+                },
+                {
+                    "name": "Update file details",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": [\"2025-2026\"],\n    \"accessScope\": [\"lecture\"]\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "files",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Update file display name and/or custom metadata. Syncs metadata to Qdrant automatically."
+                    },
+                    "response": []
                 }
             ]
         },
@@ -847,7 +879,7 @@
                         "header": [
                             {
                                 "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
+                                "value": "Bearer {{token}}"
                             },
                             {
                                 "key": "Content-Type",
@@ -856,12 +888,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ],\n    \"accessScope\": [\n      \"student\"\n    ]\n  }\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": [\"2024-2025\"]\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/query",
@@ -873,84 +900,7 @@
                                 "chat",
                                 "query"
                             ]
-                        },
-                        "description": "RAG-based chat query. Returns complete answer with sources.\n\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student'].\nFor lecture role, access_scope is enforced to ['lecture'].\nFor admin role, no access_scope filter is applied (can see 'private').\n"
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chat query - Lecture role",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"chatHistory\": []\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/query",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "query"
-                            ]
-                        },
-                        "description": "Lecture role: can see documents with scope 'lecture' and 'student'."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chat query - With history",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"chatHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ]\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/query",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "query"
-                            ]
-                        },
-                        "description": "Chat query with conversation history. NestJS manages sessions and sends history on each request."
+                        }
                     },
                     "response": []
                 },
@@ -961,7 +911,7 @@
                         "header": [
                             {
                                 "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
+                                "value": "Bearer {{token}}"
                             },
                             {
                                 "key": "Content-Type",
@@ -974,12 +924,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ]\n  }\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": []\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/stream",
@@ -991,8 +936,127 @@
                                 "chat",
                                 "stream"
                             ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "7. Debug & Preview",
+            "item": [
+                {
+                    "name": "Parse PDF preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": []
+                                }
+                            ]
                         },
-                        "description": "Streaming chat response via Server-Sent Events (SSE).\n\nEach chunk: {\"chunk\": \"text\", \"done\": false}\nFinal message: {\"done\": true, \"sources\": [...], \"token_usage\": {...}, \"processing_time_ms\": 1234}\n\nNote: Postman may not display SSE well. Test with curl:\ncurl -X POST http://localhost:8000/api/chat/stream \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"question\":\"...\",\"user_context\":{...},\"chat_history\":[]}'"
+                        "url": {
+                            "raw": "{{base_url}}/api/debug/files/parse-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "debug",
+                                "files",
+                                "parse-preview"
+                            ]
+                        },
+                        "description": "Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Chunk PDF preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": []
+                                },
+                                {
+                                    "key": "chunkSizeChars",
+                                    "value": "1800",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "chunkOverlapChars",
+                                    "value": "250",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/debug/files/chunk-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "debug",
+                                "files",
+                                "chunk-preview"
+                            ]
+                        },
+                        "description": "Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Retrieve preview (Qdrant)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Quy trình thôi học?\",\n  \"topK\": 5,\n  \"minScore\": 0.3,\n  \"includeExplain\": true\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/retrieve-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "retrieve-preview"
+                            ]
+                        },
+                        "description": "Debug endpoint to inspect retrieved chunks and ranking before generation."
                     },
                     "response": []
                 }

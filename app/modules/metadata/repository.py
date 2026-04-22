@@ -127,6 +127,34 @@ class MetadataRepository(BaseRepository):
         metadata_types = await self.find_all(limit=1000)
         return [mt["key"] for mt in metadata_types]
 
+    async def push_allowed_value(self, key: str, allowed_value: Dict[str, Any]) -> bool:
+        """
+        Atomically push a new allowed value to a metadata type.
+        
+        Args:
+            key: Metadata key
+            allowed_value: Allowed value dict to append
+            
+        Returns:
+            True if updated
+            
+        Raises:
+            NotFoundException: If key not found
+        """
+        from datetime import datetime, timezone
+        existing = await self.find_by_key(key)
+        if not existing:
+            raise NotFoundException("Metadata type", key)
+            
+        result = await self.collection.update_one(
+            {"key": key},
+            {
+                "$push": {"allowed_values": allowed_value},
+                "$set": {"updated_at": datetime.now(timezone.utc)}
+            }
+        )
+        return result.modified_count > 0
+
     async def sync_metadata_counters(self, custom_metadata: Dict[str, Any], delta: int) -> None:
         """
         Update total_files statistics for multiple metadata keys and their corresponding values.

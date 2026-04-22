@@ -45,6 +45,7 @@ from app.modules.files.utils import (
     generate_storage_path,
     cleanup_temp_file,
 )
+from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.upload_state import (
     UploadStep,
     UploadState,
@@ -203,19 +204,25 @@ class FileService:
                 "markdown_storage_path": md_storage_path,
             })
 
-            # Final update
-            await self.file_repo.update_by_id(
-                file_id,
+            # Final update atomically - only increment counter if transition to READY happens
+            updated_file = await self.file_repo.find_one_and_update(
+                {
+                    "_id": self.file_repo._to_object_id(file_id), 
+                    "status": {"$ne": FileStatus.READY.value}
+                },
                 {
                     "markdown_storage_path": md_storage_path,
                     "markdown_file_size": len(markdown_bytes),
                     "table_of_contents": ingest_result.get("table_of_contents", []),
                     "status": FileStatus.READY.value,
-                },
+                }
             )
+            
+            # Use metadata from DB if possible, or fallback to argument
+            sync_meta = (updated_file or file_doc).get("custom_metadata") or custom_metadata
 
-            if custom_metadata:
-                await self.metadata_svc.sync_metadata_counters(custom_metadata, delta=1)
+            if updated_file and sync_meta:
+                await self.metadata_svc.sync_metadata_counters(sync_meta, delta=1)
 
             await _notify("completed", "Upload hoàn tất")
         except Exception as e:
@@ -346,7 +353,11 @@ class FileService:
 
 
     async def delete_file(self, file_id: str) -> bool:
-        """Delete a file (hard delete)."""
+        """
+        Delete file from storage, vector DB, and metadata counters.
+        Atomic hard delete from MongoDB.
+        """
+        # Fetch file info first to get storage path and metadata
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
@@ -370,32 +381,65 @@ class FileService:
         page_index_client = get_page_index_client()
         await page_index_client.evict_doc(file_id)
 
-        # Hard delete from MongoDB
-        await self.file_repo.delete_by_id(file_id)
+        # Atomic hard delete from MongoDB
+        deleted_doc = await self.file_repo.find_one_and_delete({"_id": self.file_repo._to_object_id(file_id)})
 
-        # Decrement metadata counters if the file was active and has custom_metadata
-        if file_doc.get("status") == FileStatus.READY.value and file_doc.get("custom_metadata"):
-            await self.metadata_svc.sync_metadata_counters(file_doc["custom_metadata"], delta=-1)
+        # Decrement metadata counters ONLY if the file was actually READY and deleted
+        if deleted_doc:
+            status = deleted_doc.get("status")
+            meta = deleted_doc.get("custom_metadata")
+            
+            if status == FileStatus.READY.value and meta:
+                await self.metadata_svc.sync_metadata_counters(meta, delta=-1)
+                logger.info(f"File {file_id} deleted and counters decremented")
+            else:
+                logger.info(f"File {file_id} deleted (was not READY, no counter decrement)")
+            return True
+            
+        return False
 
-        logger.info(f"File {file_id} deleted")
-        return True
-
-    async def update_file_display_name(self, file_id: str, new_display_name: str) -> Optional[FileDocument]:
-        """Update the display name of a file."""
+    async def update_file(
+        self,
+        file_id: str,
+        display_name: Optional[str] = None,
+        custom_metadata: Optional[Dict[str, List[str]]] = None
+    ) -> Optional[FileDocument]:
+        """
+        Update file details (display name and/or metadata).
+        Syncs metadata to Qdrant if provided.
+        """
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
 
-        from app.core.text_utils import remove_accents
-        update_data = {
-            "display_name": new_display_name,
-            "display_name_unaccented": remove_accents(new_display_name),
-        }
+        update_data = {}
+        if display_name is not None:
+            from app.core.text_utils import remove_accents
+            update_data["display_name"] = display_name
+            update_data["display_name_unaccented"] = remove_accents(display_name)
+
+        if custom_metadata is not None:
+            update_data["custom_metadata"] = custom_metadata
+
+        if not update_data:
+            return _to_file_model(file_doc_dict)
+
         update_success = await self.file_repo.update_by_id(file_id, update_data)
 
         if update_success:
-            file_doc_dict["display_name"] = new_display_name
+            # Sync to Qdrant if metadata changed
+            if custom_metadata is not None:
+                try:
+                    indexer = get_qdrant_indexer()
+                    await indexer.update_payload_by_file_id(file_id, custom_metadata)
+                    logger.info(f"[FileService] Synced metadata to Qdrant for file {file_id}")
+                except Exception as e:
+                    logger.warning(f"[FileService] Failed to sync metadata to Qdrant for file {file_id}: {e}")
+
+            # Merge for response
+            file_doc_dict.update(update_data)
             return _to_file_model(file_doc_dict)
+            
         return None
 
     async def _apply_role_filters_and_metadata_masking(self, files: List[Dict[str, Any]], user_role: str) -> List[Dict[str, Any]]:
