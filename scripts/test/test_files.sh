@@ -138,6 +138,32 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
         check_response "$RESPONSE" "204" "Delete File by ID"
     fi
     rm -f "$TEMP_FILE"
+
+    # Ported from main: Download Markdown & Metadata Endpoint
+    log_info "GET /api/files/${FILE_ID}/download?format=markdown — Download Markdown"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}/download?format=markdown" \
+        -H "${AUTH_HEADER}" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Download Markdown"
+
+    log_info "PATCH /api/files/${FILE_ID} — Update metadata via unified endpoint"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
+        -H "Content-Type: application/json" \
+        -H "${AUTH_HEADER}" \
+        -d "{ \"customMetadata\": { \"academicYear\": [\"2024-2025\"], \"department\": [\"dao_tao\"] } }" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Update File Metadata (unified endpoint)"
+    
+    log_info "GET /api/files/${FILE_ID} — Verify updated metadata"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
+        -H "${AUTH_HEADER}" \
+        2>/dev/null || echo -e "\n000")
+    if [[ "$RESPONSE" == *"2024-2025"* ]]; then
+        log_success "Metadata update verification success"
+    else
+        log_error "Metadata update verification failed: $RESPONSE"
+        exit 1
+    fi
 fi
 
 # 5. Batch Upload

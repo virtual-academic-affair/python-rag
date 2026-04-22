@@ -376,21 +376,33 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
 @router.get(
     "/{file_id}/download",
     summary="Download file",
-    description="Download the original uploaded file directly.",
+    description="Download the original uploaded file or its markdown version.",
 )
-async def download_file_endpoint(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
+async def download_file_endpoint(
+    file_id: str, 
+    format: str = Query("original", description="Download format: original | markdown"),
+    _user: Dict[str, Any] = Depends(require_auth)
+):
     try:
-        file_svc = get_file_service()
-        file_data, file_doc = await file_svc.get_file_data(file_id, user_role=_user.get("role", "student"))
+        allowed_formats = {"original", "markdown"}
+        requested_format = format.lower()
+        if requested_format not in allowed_formats:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid format. Allowed values: original, markdown",
+            )
 
-        headers = {
-            "Content-Disposition": f'attachment; filename="{file_doc.original_filename}"'
-        }
-        
+        file_svc = get_file_service()
+        file_obj, filename, mime_type = await file_svc.download_file(
+            file_id,
+            user_role=_user.get("role", "student"),
+            file_format=requested_format,
+        )
+        file_data = file_obj.read()
         return StreamingResponse(
-            file_data,
-            media_type=file_doc.mime_type or "application/octet-stream",
-            headers=headers
+            BytesIO(file_data),
+            media_type=mime_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -436,6 +448,8 @@ async def update_file(
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
+    except ValidationException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

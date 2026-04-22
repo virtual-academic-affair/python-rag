@@ -11,7 +11,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable
+from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable, Literal
 
 from app.integrations.llamaparse.client import get_llamaparse_client
 
@@ -331,7 +331,12 @@ class FileService:
                 logger.warning(f"Rollback: Failed to delete DB record: {e}")
 
 
-    async def download_file(self, file_id: str, user_role: Optional[str] = None) -> tuple[BinaryIO, str, str]:
+    async def download_file(
+        self, 
+        file_id: str, 
+        user_role: Optional[str] = None,
+        file_format: Literal["original", "markdown"] = "original"
+    ) -> tuple[BinaryIO, str, str]:
         """
         Download a file from Cloudflare R2.
         If user_role is provided, validates access permissions.
@@ -344,11 +349,23 @@ class FileService:
         if not file_doc:
             raise NotFoundException("File", file_id)
 
+        if file_format == "markdown":
+            if not file_doc.markdown_storage_path:
+                raise NotFoundException("Markdown artifact for file", file_id)
+            storage_path = file_doc.markdown_storage_path
+            # Use display_name for markdown filename if available
+            download_name = f"{Path(file_doc.display_name or file_doc.original_filename).stem}.md"
+            mime_type = "text/markdown"
+        else:
+            storage_path = file_doc.storage_path
+            download_name = file_doc.original_filename
+            mime_type = file_doc.mime_type
+
         try:
-            file_obj = await r2_storage.download_file(file_doc.storage_path)
-            return file_obj, file_doc.original_filename, file_doc.mime_type
+            file_obj = await r2_storage.download_file(storage_path)
+            return file_obj, download_name, mime_type
         except Exception as e:
-            logger.error(f"Download failed for {file_id}: {e}", exc_info=True)
+            logger.error(f"Download failed for {file_id} ({file_format}): {e}", exc_info=True)
             raise StorageException(f"File download failed: {str(e)}")
 
 
@@ -406,11 +423,14 @@ class FileService:
     ) -> Optional[FileDocument]:
         """
         Update file details (display name and/or metadata).
-        Syncs metadata to Qdrant if provided.
+        Syncs metadata to Qdrant and updates counters if provided.
         """
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
+
+        old_metadata = file_doc_dict.get("custom_metadata") or {}
+        status = file_doc_dict.get("status")
 
         update_data = {}
         if display_name is not None:
@@ -419,6 +439,10 @@ class FileService:
             update_data["display_name_unaccented"] = remove_accents(display_name)
 
         if custom_metadata is not None:
+            # Validate metadata before updating
+            is_valid, errors = await self.metadata_svc.validate_metadata(custom_metadata)
+            if not is_valid:
+                raise ValidationException(f"Invalid custom metadata: {', '.join(errors)}")
             update_data["custom_metadata"] = custom_metadata
 
         if not update_data:
@@ -435,6 +459,13 @@ class FileService:
                     logger.info(f"[FileService] Synced metadata to Qdrant for file {file_id}")
                 except Exception as e:
                     logger.warning(f"[FileService] Failed to sync metadata to Qdrant for file {file_id}: {e}")
+
+                # Sync metadata counters if file is READY
+                if status == FileStatus.READY.value:
+                    if old_metadata:
+                        await self.metadata_svc.sync_metadata_counters(old_metadata, delta=-1)
+                    if custom_metadata:
+                        await self.metadata_svc.sync_metadata_counters(custom_metadata, delta=1)
 
             # Merge for response
             file_doc_dict.update(update_data)
