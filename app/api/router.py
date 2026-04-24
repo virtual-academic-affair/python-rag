@@ -5,6 +5,13 @@ Unified router combining email classification and RAG features.
 
 from fastapi import APIRouter
 import logging
+from app.modules.email.router import router as email_router
+from app.modules.chat.router import router as chat_router
+from app.modules.files.router import router as files_router
+from app.modules.files.ws import router as files_ws
+from app.modules.metadata.router import router as metadata_router
+from app.modules.files.debug_router import router as debug_router
+from app.modules.files.toc_tree.router import router as toc_tree_router
 
 logger = logging.getLogger(__name__)
 
@@ -21,25 +28,13 @@ async def root():
     return {"message": "AI Service is running"}
 
 
-# ====================================
-# CLASSIFICATION ENDPOINTS
-# ====================================
+# Registration
+api_router.include_router(email_router, prefix="/api")
+api_router.include_router(chat_router, prefix="/api")
+api_router.include_router(files_router, prefix="/api")
+api_router.include_router(metadata_router, prefix="/api")
+api_router.include_router(files_ws, prefix="/api")
+api_router.include_router(debug_router, prefix="/api")
+api_router.include_router(toc_tree_router, prefix="/api")
 
-from app.api.endpoints import classification
-
-api_router.include_router(classification.router)
-logger.info("✅ Classification routes included")
-
-
-# ====================================
-# RAG ENDPOINTS
-# ====================================
-
-from app.api.endpoints import chat, files, stores, metadata, file_progress_ws
-
-api_router.include_router(chat.router, prefix="/api", tags=["Chat"])
-api_router.include_router(files.router, prefix="/api", tags=["Files"])
-api_router.include_router(stores.router, prefix="/api", tags=["Stores"])
-api_router.include_router(metadata.router, prefix="/api", tags=["Metadata"])
-api_router.include_router(file_progress_ws.router, prefix="/api", tags=["Files"])
-logger.info("✅ RAG endpoints included (chat, files, stores, metadata, file_progress_ws)")
+logger.info("✅ All modular routers included (email, chat, files, metadata)")

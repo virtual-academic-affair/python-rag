@@ -4,21 +4,21 @@
 # Shared Configuration & Helpers
 # ====================================
 
-# Configuration
-BASE_URL="${AI_SERVICE_URL:-http://localhost:8000}"
-API_URL="${BASE_URL}/api"
+# Default Configuration
+API_URL=${AI_SERVICE_URL:-"http://localhost:8000/api"}
+BASE_URL=${AI_BASE_URL:-"http://localhost:8000"}
 
-# Output file (if not inherited)
-OUTPUT_DIR="scripts/test_results"
-mkdir -p "$OUTPUT_DIR"
-
-# JWT Tokens
+# Admin JWT token
 ADMIN_TOKEN=""
 # Student token 
 STUDENT_TOKEN=""
 
 AUTH_HEADER="Authorization: Bearer ${ADMIN_TOKEN}"
 STUDENT_AUTH_HEADER="Authorization: Bearer ${STUDENT_TOKEN}"
+
+# Output file (if not inherited)
+OUTPUT_DIR="scripts/test_results"
+mkdir -p "$OUTPUT_DIR"
 
 # Colors
 RED='\033[0;31m'
@@ -45,6 +45,18 @@ log_header()  {
     echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}  $1${NC}"
     echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+}
+
+run_test() {
+    local script_name="$1"
+    local script_path="$(dirname "$0")/$script_name"
+    if [ -f "$script_path" ]; then
+        log_info "Running $script_name..."
+        source "$script_path"
+    else
+        log_warning "Test script NOT found: $script_name"
+        export TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+    fi
 }
 
 check_response() {

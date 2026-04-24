@@ -57,8 +57,13 @@ filetype==1.2.0
 # Slug generation
 python-slugify==8.0.1
 
+# PDF processing for PageIndex
+PyPDF2==3.0.1
+pymupdf==1.26.5
+pyyaml==6.0.3
+
 # ====================================
-# LLM FRAMEWORK
+# LLM FRAMEWORK & RAG
 # ====================================
 
 # LangChain (prompt templates)
@@ -70,5 +75,12 @@ langchain-text-splitters==1.1.1
 
 # LlamaParse (Sprint 1 ingestion)
 llama-parse==0.5.19
+
+# Qdrant client
 qdrant-client==1.15.1
 
+# LiteLLM (PageIndex / Agent Reasoning)
+litellm==1.83.4
+
+# Redis for shared caching
+redis==5.0.1

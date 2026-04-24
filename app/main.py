@@ -10,13 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
-from app.models.schemas import ErrorResponse, HealthCheckResponse
+from app.modules.files.schemas import ErrorResponse, HealthCheckResponse
 from app.core.config import settings
-from app.services.integrations.grpc_client import (
-    GrpcClient,
-    GrpcClientConfig,
-)
-from app.services.orchestration.email_workflow_orchestrator import EmailWorkflowOrchestrator
+from app.modules.email.orchestrator import EmailWorkflowOrchestrator
+from app.core.database import Database
+from app.integrations.storage.client import r2_storage
+from app.integrations.rabbitmq.client import get_rabbitmq_service
+from app.integrations.llm.gemini import gemini_client
+from app.integrations.redis.client import get_redis_client
+from app.integrations.pageindex.client import get_page_index_client
+from app.modules.email.consumer import start_email_ingest_consumer
+from app.integrations.qdrant.indexer import get_qdrant_indexer
 
 # Load environment variables
 load_dotenv()
@@ -31,6 +35,29 @@ logger = logging.getLogger(__name__)
 # Global instances (initialized in lifespan)
 email_orchestrator = None
 rabbitmq_service = None
+_cleanup_task = None
+
+
+async def _run_artifact_cleanup():
+    """Background task to periodically clean up expired local artifacts."""
+    client = get_page_index_client()
+    
+    # Run every 30 minutes
+    INTERVAL = 1800  
+    
+    logger.info(f"⏳ Artifact cleanup task started (Interval: {INTERVAL}s)")
+    while True:
+        try:
+            await asyncio.sleep(INTERVAL)
+            count = await client.cleanup_expired_artifacts()
+            if count > 0:
+                logger.info(f"🧹 Background cleanup removed {count} expired artifacts")
+        except asyncio.CancelledError:
+            logger.info("🛑 Artifact cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"❌ Error in artifact cleanup task: {e}")
+            await asyncio.sleep(60)  # Wait a bit before retrying if crashed
 
 
 # ====================================
@@ -42,6 +69,7 @@ async def lifespan(_: FastAPI):
     """Initialize and cleanup resources."""
     global email_orchestrator
     global rabbitmq_service
+    global _cleanup_task
 
     # Startup
     print("=" * 80)
@@ -59,9 +87,16 @@ async def lifespan(_: FastAPI):
     print(f"🐛 Debug Mode: {settings.DEBUG}")
     print("=" * 80)
     
+    if settings.MONGODB_DISABLED or settings.R2_DISABLED:
+        print("🚨 WARNING: RUNNING WITH DISABLED SERVICES!")
+        if settings.MONGODB_DISABLED:
+            print("   - MONGODB_DISABLED=True: NO data persistence!")
+        if settings.R2_DISABLED:
+            print("   - R2_DISABLED=True: Files will NOT be stored!")
+        print("=" * 80)
+    
     # 1. Connect to MongoDB
     try:
-        from app.core.database import Database
         await Database.connect()
         if settings.MONGODB_DISABLED:
             logger.warning("⚠️  MongoDB disabled. Continuing without DB.")
@@ -73,7 +108,6 @@ async def lifespan(_: FastAPI):
 
     # 2. Initialize R2 storage
     try:
-        from app.storage.r2_client import r2_storage
         # R2 client initializes on import, test connection
         if settings.R2_DISABLED:
             logger.warning("⚠️  R2 disabled. Continuing without storage.")
@@ -87,7 +121,6 @@ async def lifespan(_: FastAPI):
     # 3. Initialize RabbitMQ service
     if settings.RABBITMQ_ENABLED:
         try:
-            from app.services.messaging.rabbitmq_service import get_rabbitmq_service
             rabbitmq_service = get_rabbitmq_service()
             logger.info("✅ RabbitMQ service initialized")
         except Exception as e:
@@ -97,28 +130,13 @@ async def lifespan(_: FastAPI):
         logger.info("🐰 RabbitMQ disabled via config")
         rabbitmq_service = None
 
-    host, port = settings.GRPC_URL.split(":", 1)
-    grpc_client = GrpcClient(
-        GrpcClientConfig(
-            enabled=settings.GRPC_ENABLED,
-            host=host,
-            port=int(port),
-            timeout_seconds=settings.GRPC_TIMEOUT_SECONDS,
-        )
-    )
-
-    classifier = EmailWorkflowOrchestrator(
-        api_key=settings.GOOGLE_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=settings.LLM_TEMPERATURE,
-        grpc_client=grpc_client,
-    )
-    email_orchestrator = classifier
-    logger.info(f"Email Workflow Orchestrator initialized with model: {settings.LLM_MODEL}")
+    # 4. Initialize gRPC and Orchestrator
+    # GrpcClient is now used as a singleton wrapper via get_grpc_client
+    email_orchestrator = EmailWorkflowOrchestrator()
+    logger.info("Email Workflow Orchestrator initialized")
 
     if rabbitmq_service is not None:
         try:
-            from app.services.messaging.email_ingest_consumer import start_email_ingest_consumer
             loop = asyncio.get_running_loop()
             start_email_ingest_consumer(email_orchestrator, loop=loop)
             logger.info("Email ingest consumer started")
@@ -127,10 +145,20 @@ async def lifespan(_: FastAPI):
     
     # 6. Test Gemini API
     try:
-        from app.services.rag.gemini_client import gemini_client
         logger.info("✅ Gemini service initialized")
     except Exception as e:
         logger.warning(f"⚠️  Gemini service warning: {e}")
+    
+    # 7. Start Artifact Cleanup Task
+    _cleanup_task = asyncio.create_task(_run_artifact_cleanup())
+
+    # 8. Initialize Redis
+    if settings.REDIS_ENABLED:
+        try:
+            redis_client = get_redis_client()
+            await redis_client.connect()
+        except Exception as e:
+            logger.warning(f"⚠️  Redis initialization warning: {e}")
     
     print(f"🟢 {settings.APP_NAME} is ready!\n")
     
@@ -151,12 +179,29 @@ async def lifespan(_: FastAPI):
     
     # Disconnect from MongoDB
     try:
-        from app.core.database import Database
         await Database.disconnect()
         logger.info("✅ MongoDB disconnected")
     except Exception as e:
         logger.warning(f"⚠️  Error disconnecting MongoDB: {e}")
     
+    # Cancel cleanup task
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✅ Artifact cleanup task stopped")
+
+    # Close Redis
+    if settings.REDIS_ENABLED:
+        try:
+            redis_client = get_redis_client()
+            await redis_client.disconnect()
+            logger.info("✅ Redis disconnected")
+        except Exception as e:
+            logger.warning(f"⚠️ Redis disconnect failed: {e}")
+        
     logger.info("👋 Shutdown complete")
 
 
@@ -243,25 +288,37 @@ async def health_check():
     """
     gemini_connected = False
     mongodb_connected = False
+    redis_connected = False
+    qdrant_connected = False
     
     try:
-        from app.services.rag.gemini_client import gemini_client
         gemini_connected = gemini_client.client is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: gemini probe failed: {e}")
     
     try:
-        from app.core.database import Database
         mongodb_connected = Database._db is not None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Health check: mongodb probe failed: {e}")
+
+    try:
+        redis_connected = get_redis_client()._redis is not None
+    except Exception as e:
+        logger.debug(f"Health check: redis probe failed: {e}")
+    
+    try:
+        qdrant_connected = get_qdrant_indexer()._qdrant_client is not None
+    except Exception as e:
+        logger.debug(f"Health check: qdrant probe failed: {e}")
     
     return HealthCheckResponse(
-        status="healthy" if (gemini_connected and mongodb_connected) else "degraded",
+        status="healthy" if (gemini_connected and mongodb_connected and redis_connected and qdrant_connected) else "degraded",
         service=settings.APP_NAME,
         version=settings.APP_VERSION,
         gemini_api_connected=gemini_connected,
         mongodb_connected=mongodb_connected,
+        redis_connected=redis_connected,
+        qdrant_connected=qdrant_connected,
     )
 
 

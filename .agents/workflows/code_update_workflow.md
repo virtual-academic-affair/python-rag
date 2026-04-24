@@ -14,7 +14,7 @@ After any code modification:
 
 3. **Update Documentation**:
    - Once verified, update the following files to reflect any changes in API or logic:
-     - [api.txt](file:///Users/trangvu/Documents/Phuc/giao_vu/email/test/python-rag/docs/api.txt)
-     - [AI_Service.postman_collection.json](file:///Users/trangvu/Documents/Phuc/giao_vu/email/test/python-rag/docs/AI_Service.postman_collection.json)
-     - [project-overview.txt](file:///Users/trangvu/Documents/Phuc/giao_vu/email/test/python-rag/docs/project-overview.txt)
-     - [README.md](file:///Users/trangvu/Documents/Phuc/giao_vu/email/test/python-rag/README.md)
+     - [api.txt](python-rag/docs/api.txt)
+     - [AI_Service.postman_collection.json](python-rag/docs/AI_Service.postman_collection.json)
+     - [project-overview.txt](python-rag/docs/project-overview.txt)
+     - [README.md](python-rag/README.md)

@@ -1,24 +1,11 @@
-#!/usr/bin/env python3
 """
 Database & Storage Initialization Script for AI Service (python-rag).
 
-This script performs a full reset and initialization:
-1. Drops MongoDB database
-2. Deletes all files from R2 bucket
-3. Deletes all stores from Gemini File Search
-4. Creates database indexes
-5. Seeds system metadata types (academic_year, cohort, access_scope)
-6. Creates additional metadata types via API (e.g., department)
-7. Creates default store and uploads test files via API
-
-Usage:
-    python scripts/init_db.py [--skip-confirm]
-
-Requirements:
-    - AI Service must be running on localhost:8000
-    - R2 must be running
-    - Valid GOOGLE_API_KEY, MONGODB_URL in .env
-    - AUTH_TOKEN below must be a valid admin JWT
+Tác vụ                | Câu lệnh
+----------------------|----------------------------------------------------------------------
+Sao lưu dữ liệu      | python scripts/snapshot.py export scripts/uploads_result/rag_backup.json
+Khôi phục dữ liệu    | python scripts/init_db.py --restore scripts/uploads_result/rag_backup.json
+Khởi tạo gốc (AI)    | python scripts/init_db.py --skip-confirm
 """
 
 import asyncio
@@ -32,6 +19,10 @@ from datetime import datetime
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+from scripts.snapshot import SnapshotManager
+
+from app.core.config import settings
 
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
@@ -98,17 +89,21 @@ async def clear_r2_bucket():
     """Delete all files from R2 bucket."""
     logger.info("Clearing R2 bucket...")
 
-    from app.storage.r2_client import R2Storage
+    from app.integrations.storage.client import r2_storage
     
     try:
-        storage = R2Storage()
-        files = await storage.list_files()
+        if settings.R2_DISABLED:
+            logger.info("  R2 is disabled, skipping.")
+            return
+
+        files = await r2_storage.list_files()
         if not files:
             logger.info("  Bucket is already empty")
         else:
             delete_count = 0
             for f in files:
-                await storage.delete_file(f["name"])
+                # In modular storage, list_files returns a list of dicts with 'object_name'
+                await r2_storage.delete_file(f["object_name"])
                 delete_count += 1
             
             logger.info(f"  ✓ Deleted {delete_count} files from bucket")
@@ -117,6 +112,68 @@ async def clear_r2_bucket():
         logger.warning(f"  R2 error (continuing): {e}")
 
     logger.info("✅ R2 bucket cleared")
+
+
+async def clear_qdrant_collections():
+    """Delete all points from Qdrant collection and recreate using current settings."""
+    logger.info("Clearing Qdrant collection...")
+
+    from qdrant_client import QdrantClient
+    from app.core.config import settings
+
+    if not settings.QDRANT_URL:
+        logger.info("  QDRANT_URL not set, skipping.")
+        return
+
+    try:
+        client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY
+        )
+        collection_name = settings.QDRANT_COLLECTION_NAME
+        
+        # Check if collection exists
+        collections = client.get_collections().collections
+        exists = any(c.name == collection_name for c in collections)
+        
+        if exists:
+            client.delete_collection(collection_name=collection_name)
+            logger.info(f"  ✓ Deleted collection: {collection_name}")
+            
+        # Recreate using STRICT .env settings
+        vector_size = settings.QDRANT_VECTOR_SIZE
+        from qdrant_client.http import models as qm
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=qm.VectorParams(
+                size=vector_size,
+                distance=qm.Distance.COSINE
+            )
+        )
+        logger.info(f"  ✓ Recreated collection: {collection_name} (size={vector_size})")
+
+        # Create payload indexes for efficient filtering
+        logger.info("  Creating Qdrant payload indexes...")
+        fields_to_index = [
+            ("file_id", qm.PayloadSchemaType.KEYWORD),
+            ("metadata.access_scope", qm.PayloadSchemaType.KEYWORD),
+            ("metadata.academic_year", qm.PayloadSchemaType.KEYWORD),
+            ("metadata.cohort", qm.PayloadSchemaType.KEYWORD),
+            ("metadata.department", qm.PayloadSchemaType.KEYWORD),
+        ]
+        
+        for field_name, field_type in fields_to_index:
+            client.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=field_type
+            )
+            logger.info(f"    ✓ Created index for {field_name}")
+
+    except Exception as e:
+        logger.warning(f"  Qdrant error (continuing): {e}")
+
+    logger.info("✅ Qdrant cleared")
 
 
 async def delete_all_gemini_stores():
@@ -151,6 +208,27 @@ async def delete_all_gemini_stores():
     logger.info("✅ Gemini stores deleted")
 
 
+async def clear_pageindex_workspace():
+    """Delete all .md and .json files in PageIndex workspace."""
+    logger.info("Clearing PageIndex workspace...")
+
+    workspace_dir = Path(settings.PAGEINDEX_WORKSPACE)
+    if not workspace_dir.exists():
+        logger.info("  Workspace directory does not exist, skipping.")
+        return
+
+    try:
+        delete_count = 0
+        for ext in ["*.md", "*.json"]:
+            for f in workspace_dir.glob(ext):
+                f.unlink()
+                delete_count += 1
+        logger.info(f"  ✓ Deleted {delete_count} files from workspace")
+    except Exception as e:
+        logger.warning(f"  Workspace clearing error (continuing): {e}")
+
+    logger.info("✅ PageIndex workspace cleared")
+
 # ====================================
 # Phase 2: Initialize
 # ====================================
@@ -160,26 +238,22 @@ async def create_database_indexes():
     logger.info("Creating database indexes...")
 
     from app.core.database import Database
+    from pymongo import ASCENDING, DESCENDING
 
     await Database.connect()
     db = Database.get_db()
 
     # Files collection indexes
-    await db[Database.FILES].create_index([("store_id", 1)])
-    await db[Database.FILES].create_index([("status", 1)])
-    await db[Database.FILES].create_index([("created_at", -1)])
+    await db[Database.FILES].create_index([("status", ASCENDING)])
+    await db[Database.FILES].create_index([("created_at", DESCENDING)])
+
+    # Database.connect() already ensures indexes for FILE_CHUNKS,
+    # so we only add additional ones if needed.
 
     # Metadata types collection indexes
-    await db[Database.METADATA_TYPES].create_index([("key", 1)], unique=True)
-
-    # Stores collection indexes
-    await db[Database.STORES].create_index([("store_name", 1)], unique=True)
-    await db[Database.STORES].create_index([("is_default", 1)])
+    await db[Database.METADATA_TYPES].create_index([("key", ASCENDING)], unique=True)
 
     await Database.disconnect()
-    logger.info("✅ Database indexes created")
-
-
 async def seed_system_metadata_types():
     """Seed system metadata types by calling the central seed script."""
     from scripts.seed_metadata import seed_system_metadata
@@ -208,33 +282,7 @@ async def create_metadata_types(metadata_types: list):
 
     logger.info("✅ Metadata types created")
 
-
-async def create_default_store(store_config: dict) -> str:
-    """Create default store via API and return store_id (requires admin auth)."""
-    logger.info("Creating default store...")
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            f"{API_URL}/stores",
-            json=store_config,
-            headers=AUTH_HEADERS
-        )
-
-        if response.status_code != 201:
-            raise Exception(f"Failed to create store: {response.text}")
-
-        data = response.json()
-        store_id = data["storeId"]
-        store_name = data["storeName"]
-
-        logger.info(f"  ✓ Created store: {store_name}")
-        logger.info(f"  ✓ Store ID: {store_id}")
-
-    logger.info("✅ Default store created")
-    return store_id
-
-
-async def upload_files(store_id: str, files_config: list):
+async def upload_files(files_config: list):
     """Upload files via API (requires admin auth)."""
     logger.info("Uploading files...")
 
@@ -258,7 +306,6 @@ async def upload_files(store_id: str, files_config: list):
                 with open(file_path, "rb") as f:
                     files = {"file": (filename, f, "application/octet-stream")}
                     data = {
-                        "storeId": store_id,
                         "displayName": display_name,
                         "customMetadata": json.dumps(metadata),
                     }
@@ -313,7 +360,7 @@ async def wait_for_service():
 # Main
 # ====================================
 
-async def main(skip_confirm: bool = False):
+async def main(skip_confirm: bool = False, restore_path: str = None):
     """Main initialization function."""
     print("=" * 70)
     print("AI SERVICE (python-rag) - FULL INITIALIZATION")
@@ -352,7 +399,9 @@ async def main(skip_confirm: bool = False):
 
         await drop_mongodb_database()
         await clear_r2_bucket()
+        await clear_qdrant_collections()
         await delete_all_gemini_stores()
+        await clear_pageindex_workspace()
 
         # Phase 2: Initialize
         print("\n" + "-" * 50)
@@ -360,22 +409,29 @@ async def main(skip_confirm: bool = False):
         print("-" * 50)
 
         await create_database_indexes()
-        await seed_system_metadata_types()
+        
+        if not restore_path:
+            await seed_system_metadata_types()
+        else:
+            print("Restoration mode: Skipping metadata seeding (will be loaded from snapshot)")
 
         # Wait for service to be ready
         await wait_for_service()
 
         # Create additional metadata types via API
-        if "metadata_types" in init_data and init_data["metadata_types"]:
+        if not restore_path and "metadata_types" in init_data and init_data["metadata_types"]:
             await create_metadata_types(init_data["metadata_types"])
 
-        # Create default store
-        if "default_store" in init_data:
-            store_id = await create_default_store(init_data["default_store"])
-
-            # Upload files
+        # Upload files or Restore from snapshot
+        if restore_path:
+            print("\n" + "-" * 50)
+            print("PHASE 3: RESTORING FROM SNAPSHOT")
+            print("-" * 50)
+            snapshot_mgr = SnapshotManager()
+            await snapshot_mgr.import_data(restore_path)
+        else:
             if "files" in init_data:
-                await upload_files(store_id, init_data["files"])
+                await upload_files(init_data["files"])
 
         print("\n" + "=" * 70)
         print("✅ INITIALIZATION COMPLETE!")
@@ -391,4 +447,10 @@ async def main(skip_confirm: bool = False):
 
 if __name__ == "__main__":
     skip = "--skip-confirm" in sys.argv
-    asyncio.run(main(skip_confirm=skip))
+    restore_file = None
+    if "--restore" in sys.argv:
+        idx = sys.argv.index("--restore")
+        if idx + 1 < len(sys.argv):
+            restore_file = sys.argv[idx + 1]
+    
+    asyncio.run(main(skip_confirm=skip, restore_path=restore_file))

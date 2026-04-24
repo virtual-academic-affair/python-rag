@@ -22,12 +22,18 @@ echo "Master Test Started at: $(date)"
 echo "Output: $OUTPUT_FILE"
 
 # Run modules
-source "$(dirname "$0")/test_health.sh" || exit 1
-source "$(dirname "$0")/test_classification.sh"
-source "$(dirname "$0")/test_stores.sh"
-source "$(dirname "$0")/test_metadata.sh"
-source "$(dirname "$0")/test_files.sh"
-source "$(dirname "$0")/test_chat.sh"
+run_test "test_health.sh"
+run_test "test_classification.sh"
+run_test "test_metadata.sh"
+run_test "test_files.sh"
+run_test "test_debug.sh"
+
+log_header "RATE LIMIT PAUSE"
+echo "Sleeping for 60 seconds to avoid Gemini API rate limit before testing chat..."
+sleep 60
+
+run_test "test_chat.sh"
+run_test "test_cache_ttl.sh"
 
 # Final Summary
 log_header "FINAL SUMMARY"

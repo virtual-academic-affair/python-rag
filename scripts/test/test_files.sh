@@ -1,7 +1,7 @@
 #!/bin/bash
 source "$(dirname "$0")/common.sh"
 
-log_header "5. FILE MANAGEMENT"
+log_header "5. FILE MANAGEMENT (Store-free Modular)"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -15,15 +15,9 @@ echo "Content of test doc 2 ${TIMESTAMP}" > "$TEST_FILE_2"
 
 # 1. Upload file
 log_info "POST /api/files — Upload file (require_admin)"
-if [ -s scripts/test_results/last_store_id.txt ]; then
-    STORE_ID=$(cat scripts/test_results/last_store_id.txt)
-fi
 
 UPLOAD_ARGS=(-F "file=@${TEST_FILE}" -F "displayName=Test Doc ${TIMESTAMP}")
-if [ -n "$STORE_ID" ]; then
-    UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
-fi
-UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]}')
+UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"access_scope":["student"],"academic_year":["2025-2026"]}')
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
@@ -34,86 +28,100 @@ if check_response "$RESPONSE" "201" "Upload File"; then
     FILE_ID=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
     log_info "  -> file_id = $FILE_ID"
     echo "$FILE_ID" > scripts/test_results/last_file_id.txt
+
+    # Wait for file to be ready
+    log_info "Waiting for file $FILE_ID to be 'ready'..."
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+    STATUS="uploading"
+    
+    while [ "$STATUS" != "ready" ] && [ "$STATUS" != "failed" ] && [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; do
+        sleep 2
+        DETAIL_RESPONSE=$(curl -s -H "${AUTH_HEADER}" "${API_URL}/files/${FILE_ID}")
+        STATUS=$(echo "$DETAIL_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "unknown")
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        log_info "  -> Current status: $STATUS (attempt $RETRY_COUNT/$MAX_RETRIES)"
+    done
+
+    if [ "$STATUS" = "ready" ]; then
+        log_success "File $FILE_ID is ready"
+        
+        # 1.1 Verify TOC Tree API
+        log_info "GET /api/toc-tree/${FILE_ID} — New TOC Schema"
+        RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/toc-tree/${FILE_ID}" \
+            -H "${AUTH_HEADER}" \
+            2>/dev/null || echo -e "\n000")
+        check_response "$RESPONSE" "200" "Get TOC Tree"
+    else
+        log_error "File $FILE_ID failed to reach ready status (final: $STATUS)"
+    fi
 fi
 
 # 2. List files with filters
-log_info "GET /api/files — Default store (should not pass storeId)"
+log_info "GET /api/files — List files (Auth user)"
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?limit=5" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "List Files (Default Store)"
+check_response "$RESPONSE" "200" "List Files"
 
-if [ -n "$STORE_ID" ]; then
-    log_info "GET /api/files/admin?storeId=${STORE_ID} — Admin list by store"
-    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/admin?storeId=${STORE_ID}" \
-        -H "${AUTH_HEADER}" \
-        2>/dev/null || echo -e "\n000")
-    check_response "$RESPONSE" "200" "Admin List Files by storeId"
-fi
+log_info "GET /api/files — Admin list (using Admin header)"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?limit=5" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Admin List Files"
 
-log_info "GET /api/files?keywords=Quy+che — Search by displayName"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?keywords=Quy+che" \
+log_info "GET /api/files?keywords=Test — Search by displayName"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?keywords=Test" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Files by keywords"
 
-log_info "GET /api/files?fileStatus=active — Filter by status"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=active" \
+log_info "GET /api/files?fileStatus=ready — Filter by status"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=ready" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "List Files by status=active"
+check_response "$RESPONSE" "200" "List Files by status=ready"
 
-log_info "GET /api/files?metadataFilter=... — Filter by metadata"
-FILTER_JSON='{"academicYear":["2025-2026", "2024-2025"]}'
+log_info "GET /api/files?metadataFilter=... — Filter by metadata (Array format)"
+FILTER_JSON='{"academic_year":["2025-2026"]}'
 ENCODED_FILTER=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?metadataFilter=${ENCODED_FILTER}" \
     -H "${AUTH_HEADER}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Files by metadataFilter"
 
-# 3. Check Sync
-log_info "GET /api/files/check-sync — Comparison across DB, R2, Gemini"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/check-sync" \
-    -H "${AUTH_HEADER}" \
-    2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Check Sync Status"
-
-# 4. Detail & Download
+# 4. Detail & Update
 if [ -s scripts/test_results/last_file_id.txt ]; then
     FILE_ID=$(cat scripts/test_results/last_file_id.txt)
+    
     log_info "GET /api/files/${FILE_ID} — Detail"
     RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Get File Detail"
     
-    log_info "GET /api/files/${FILE_ID}/download — Download"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}/files/${FILE_ID}/download" \
-        -H "${AUTH_HEADER}" \
-        2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ]; then
-        log_success "Download File (HTTP 200)"
-    else
-        log_error "Download File — Expected 200, got $HTTP_CODE"
-    fi
-    
-    log_info "PATCH /api/files/${FILE_ID} — Cap nhat display_name"
+    log_info "PATCH /api/files/${FILE_ID} — Update display_name"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
         -H "Content-Type: application/json" \
         -H "${AUTH_HEADER}" \
         -d "{ \"displayName\": \"Updated File Name ${TIMESTAMP}\" }" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update File Display Name"
+
+    log_info "PATCH /api/files/${FILE_ID} — Update display_name & customMetadata"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
+        -H "Content-Type: application/json" \
+        -H "${AUTH_HEADER}" \
+        -d "{ \"displayName\": \"Full Update ${TIMESTAMP}\", \"customMetadata\": { \"academicYear\": [\"2025-2026\"], \"department\": [\"khcn\"] } }" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Update File Metadata"
     
-    log_info "POST /api/files — Upload temp file de xoa"
+    log_info "POST /api/files — Upload temp file to delete"
     TEMP_FILE="${UPLOADS_DIR}/temp_doc_delete_${TIMESTAMP}.txt"
     echo "Content to delete" > "$TEMP_FILE"
     
     TEMP_UPLOAD_ARGS=(-F "file=@${TEMP_FILE}" -F "displayName=Temp File ${TIMESTAMP}")
-    if [ -n "$STORE_ID" ]; then
-        TEMP_UPLOAD_ARGS+=(-F "storeId=${STORE_ID}")
-    fi
-    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]}')
+    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"access_scope":["student"],"academic_year":["2025-2026"]}')
     
     TEMP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
@@ -123,13 +131,39 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
         TEMP_BODY=$(echo "$TEMP_RESPONSE" | sed '$d')
         TEMP_FILE_ID=$(echo "$TEMP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('fileId',''))" 2>/dev/null || echo "")
         
-        log_info "DELETE /api/files/${TEMP_FILE_ID} — Xoa file don le"
+        log_info "DELETE /api/files/${TEMP_FILE_ID} — Delete single file"
         RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/${TEMP_FILE_ID}" \
             -H "${AUTH_HEADER}" \
             2>/dev/null || echo -e "\n000")
         check_response "$RESPONSE" "204" "Delete File by ID"
     fi
     rm -f "$TEMP_FILE"
+
+    # Ported from main: Download Markdown & Metadata Endpoint
+    log_info "GET /api/files/${FILE_ID}/download?format=markdown — Download Markdown"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}/download?format=markdown" \
+        -H "${AUTH_HEADER}" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Download Markdown"
+
+    log_info "PATCH /api/files/${FILE_ID} — Update metadata via unified endpoint"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
+        -H "Content-Type: application/json" \
+        -H "${AUTH_HEADER}" \
+        -d "{ \"customMetadata\": { \"academicYear\": [\"2024-2025\"], \"department\": [\"dao_tao\"] } }" \
+        2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Update File Metadata (unified endpoint)"
+    
+    log_info "GET /api/files/${FILE_ID} — Verify updated metadata"
+    RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
+        -H "${AUTH_HEADER}" \
+        2>/dev/null || echo -e "\n000")
+    if [[ "$RESPONSE" == *"2024-2025"* ]]; then
+        log_success "Metadata update verification success"
+    else
+        log_error "Metadata update verification failed: $RESPONSE"
+        exit 1
+    fi
 fi
 
 # 5. Batch Upload
@@ -139,25 +173,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     -F "files=@${TEST_FILE}" \
     -F "files=@${TEST_FILE_2}" \
     -F "displayNames=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
-    -F 'metadataList=[{"department":["dao_tao"],"accessScope":["student"],"academicYear":["2025-2026"]},{"department":["khcn"],"accessScope":["student"],"academicYear":["2025-2026"]}]' \
+    -F 'metadataList=[{"department":["dao_tao"],"access_scope":["student"],"academic_year":["2025-2026"]},{"department":["khcn"],"access_scope":["student"],"academic_year":["2025-2026"]}]' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 
-# 6. Trigger Sync
-log_info "POST /api/files/sync — Trigger file sync across R2/Gemini"
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/sync" \
-    -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Sync Files"
-
-# 7. Delete all in store
-if [ -n "$STORE_ID" ]; then
-    log_info "DELETE /api/files/all?storeId=${STORE_ID} — Xoa tat ca file trong store"
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_URL}/files/all?storeId=${STORE_ID}" \
-        -H "${AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
-    check_response "$RESPONSE" "200" "Delete All Files in Store"
-fi
-
-# 8. Error cases
+# Error cases
 log_info "GET /api/files/000000000000000000000000 — Not found (expect 404)"
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/000000000000000000000000" \
     -H "${AUTH_HEADER}" \
@@ -172,4 +192,4 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
 check_response "$RESPONSE" "401" "Upload File — no token"
 
 # Cleanup temp files
-rm "$TEST_FILE" "$TEST_FILE_2"
+rm -f "$TEST_FILE" "$TEST_FILE_2"

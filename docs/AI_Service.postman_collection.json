@@ -18,12 +18,6 @@
             "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
         },
         {
-            "key": "store_id",
-            "value": "",
-            "type": "string",
-            "description": "MongoDB ObjectId of store (fill after creating a store)"
-        },
-        {
             "key": "file_id",
             "value": "",
             "type": "string",
@@ -100,11 +94,13 @@
                             }
                         },
                         "url": {
-                            "raw": "{{base_url}}/process",
+                            "raw": "{{base_url}}/api/email/process",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
+                                "api",
+                                "email",
                                 "process"
                             ]
                         },
@@ -132,15 +128,17 @@
                             }
                         },
                         "url": {
-                            "raw": "{{base_url}}/process",
+                            "raw": "{{base_url}}/api/email/process",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
+                                "api",
+                                "email",
                                 "process"
                             ]
                         },
-                        "description": "Test inquiry classification. AI sẽ draft email reply sử dụng RAG (default store)."
+                        "description": "Test inquiry classification. AI sẽ draft email reply sử dụng RAG."
                     },
                     "response": []
                 },
@@ -164,262 +162,18 @@
                             }
                         },
                         "url": {
-                            "raw": "{{base_url}}/api/test/classification/ingested",
+                            "raw": "{{base_url}}/api/email/test/ingested",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
+                                "email",
                                 "test",
-                                "classification",
                                 "ingested"
                             ]
                         },
                         "description": "Test endpoint: simulate processing one RabbitMQ 'ingested' message directly without actual queue."
-                    },
-                    "response": []
-                }
-            ]
-        },
-        {
-            "name": "3. Store Management",
-            "item": [
-                {
-                    "name": "Create store",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"Văn bản Đào tạo 2026\",\n  \"setAsDefault\": true\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/stores",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores"
-                            ]
-                        },
-                        "description": "Tạo một File Search store mới trên Gemini API và MongoDB.\n\nSau khi tạo, biến {{store_id}} được tự động cập nhật."
-                    },
-                    "event": [
-                        {
-                            "listen": "test",
-                            "script": {
-                                "type": "text/javascript",
-                                "exec": [
-                                    "if (pm.response.code === 201) {",
-                                    "  var json = pm.response.json();",
-                                    "  if (json.store_id) {",
-                                    "    pm.collectionVariables.set('store_id', json.store_id);",
-                                    "    console.log('store_id cập nhật: ' + json.store_id);",
-                                    "  }",
-                                    "}"
-                                ]
-                            }
-                        }
-                    ],
-                    "response": []
-                },
-                {
-                    "name": "List stores",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/stores?page=1&limit=50",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores"
-                            ],
-                            "query": [
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "50"
-                                },
-                                {
-                                    "key": "isDefault",
-                                    "value": "true",
-                                    "disabled": true
-                                }
-                            ]
-                        },
-                        "description": "List all stores. Enable is_default=true query param to get only the default store."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Get store details",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/stores/{{store_id}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores",
-                                "{{store_id}}"
-                            ]
-                        },
-                        "description": "Get store details by MongoDB ObjectId."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update store",
-                    "request": {
-                        "method": "PATCH",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"Tên store mới\",\n  \"isDefault\": true\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/stores/{{store_id}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores",
-                                "{{store_id}}"
-                            ]
-                        },
-                        "description": "Update store displayName or set as default. Both fields are optional."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Sync store stats",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/stores/{{store_id}}/sync",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores",
-                                "{{store_id}}",
-                                "sync"
-                            ]
-                        },
-                        "description": "Sync store file_count and total_size from Gemini API to MongoDB."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete store",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/stores/{{store_id}}?force=false",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores",
-                                "{{store_id}}"
-                            ],
-                            "query": [
-                                {
-                                    "key": "force",
-                                    "value": "false",
-                                    "description": "Set true to delete even if store has files"
-                                }
-                            ]
-                        },
-                        "description": "Hard delete store (Gemini + R2 + MongoDB).\n\nforce=false: Rejected if store has files.\nforce=true: Delete store and all its files."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete all stores ⚠️",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/stores/all",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "stores",
-                                "all"
-                            ]
-                        },
-                        "description": "⚠️ DANGEROUS: Delete ALL stores (Gemini + R2 + MongoDB). Cannot be undone!"
                     },
                     "response": []
                 }
@@ -791,22 +545,10 @@
                                     "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF - max 20MB)"
                                 },
                                 {
-                                    "key": "storeId",
-                                    "value": "{{store_id}}",
-                                    "type": "text",
-                                    "description": "Optional - uses default store if empty"
-                                },
-                                {
-                                    "key": "displayName",
-                                    "value": "Quy che dao tao 2026",
-                                    "type": "text",
-                                    "description": "Optional display name"
-                                },
-                                {
                                     "key": "customMetadata",
-                                    "value": "{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}",
+                                    "value": "{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}",
                                     "type": "text",
-                                    "description": "Required: must include accessScope (private, lecture, student (No mix private and student/lecture)) AND at least one of academicYear/cohort"
+                                    "description": "Required: must include access_scope (private, lecture, student (No mix private and student/lecture)) AND at least one of academic_year/cohort"
                                 }
                             ]
                         },
@@ -820,7 +562,7 @@
                                 "files"
                             ]
                         },
-                        "description": "Upload file to R2 + Gemini File Search (always synchronous - waits for Gemini to complete).\n\nRequired metadata:\n- accessScope: mandatory\n- academicYear OR cohort: at least one required\n\nReturns status='active' and geminiDocumentName when complete.\n\nAfter upload, {{fileId}} is automatically updated."
+                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- accessScope: mandatory (single value array or multiple)\n- academicYear OR cohort: at least one required\n\nReturns file_id and message indicating background processing started."
                     },
                     "event": [
                         {
@@ -904,25 +646,18 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/files/admin?storeId={{store_id}}&fileStatus=active&keywords=quy chế&page=1&limit=50",
+                            "raw": "{{base_url}}/api/files/admin?fileStatus=ready&keywords=quy chế&page=1&limit=50",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
-                                "files",
-                                "admin"
+                                "files"
                             ],
                             "query": [
                                 {
-                                    "key": "storeId",
-                                    "value": "{{store_id}}",
-                                    "disabled": true,
-                                    "description": "Filter by store ID. If missing, lists all stores."
-                                },
-                                {
                                     "key": "fileStatus",
-                                    "value": "active",
+                                    "value": "ready",
                                     "disabled": true
                                 },
                                 {
@@ -976,6 +711,31 @@
                     "response": []
                 },
                 {
+                    "name": "Get TOC Tree",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/toc-tree/{{file_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "toc-tree",
+                                "{{file_id}}"
+                            ]
+                        },
+                        "description": "Get hierarchical Table of Contents (TOC) tree for a file."
+                    },
+                    "response": []
+                },
+                {
                     "name": "Download file",
                     "request": {
                         "method": "GET",
@@ -1021,21 +781,16 @@
                                     "description": "Multiple files (PDF, DOCX, XLSX, etc.)"
                                 },
                                 {
-                                    "key": "storeId",
-                                    "value": "{{store_id}}",
-                                    "type": "text"
-                                },
-                                {
                                     "key": "displayNames",
-                                    "value": "[\"Tài liệu 1\", null, \"Tài liệu 3\"]",
+                                    "value": "[\"Tài liệu 1\", null]",
                                     "type": "text",
                                     "description": "JSON array - use null for auto name"
                                 },
                                 {
                                     "key": "metadataList",
-                                    "value": "[{\"accessScope\":\"student\",\"academicYear\":\"2024-2025\"}, {\"accessScope\":\"lecture\",\"cohort\":\"K65\"}]",
+                                    "value": "[{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}, {\"access_scope\":[\"lecture\"],\"cohort\":[\"K65\"]}]",
                                     "type": "text",
-                                    "description": "JSON array - one object per file. accessScope (private, lecture, student (No mix private and student/lecture)) required + academicYear or cohort"
+                                    "description": "JSON array - one object per file. access_scope required + academic_year or cohort"
                                 }
                             ]
                         },
@@ -1050,7 +805,7 @@
                                 "batch"
                             ]
                         },
-                        "description": "Batch upload multiple files. Returns summary of successful and failed uploads."
+                        "description": "Batch upload multiple files. Returns summary of successful and started uploads."
                     },
                     "response": []
                 },
@@ -1075,113 +830,27 @@
                                 "{{file_id}}"
                             ]
                         },
-                        "description": "Hard delete file (R2 + Gemini + MongoDB)."
+                        "description": "Hard delete file (R2 + Qdrant + PageIndex/MongoDB)."
                     },
                     "response": []
                 },
                 {
-                    "name": "Delete all files in store ⚠️",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/all?storeId={{store_id}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "all"
-                            ],
-                            "query": [
-                                {
-                                    "key": "storeId",
-                                    "value": "{{store_id}}"
-                                }
-                            ]
-                        },
-                        "description": "⚠️ DANGEROUS: Delete ALL files in a store (R2 + Gemini + MongoDB). store_id parameter is optional (uses default if empty)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Check file sync",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/check-sync",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "check-sync"
-                            ]
-                        },
-                        "description": "Compare file state across MongoDB, R2, and Gemini.\n\nReturns is_synced flag, counts per system, and list of issues.\n\nIssue types:\n- missing_in_gemini: file in DB+R2 but not in Gemini\n- missing_in_r2: file in DB with gemini_document_name but not in R2\n- in_db_only: file in DB with no storage_path and no gemini_document_name\n- in_r2_only: object in R2 with no DB record\n- in_gemini_only: Gemini document with no DB record"
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Sync files",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/sync",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "sync"
-                            ]
-                        },
-                        "description": "Automatically resolve all detected sync issues.\n\nRules:\n- missing_in_gemini (DB+R2 present): re-upload from R2 to Gemini\n- All other issues: delete the orphan record/object\n\nReturns count of uploads, deletions, failures, and per-file results."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update file display name (PATCH)",
+                    "name": "Update file details",
                     "request": {
                         "method": "PATCH",
                         "header": [
                             {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
                                 "key": "Authorization",
                                 "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
                             }
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"Tên hiển thị mới của file\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
+                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": [\"2025-2026\"],\n    \"accessScope\": [\"lecture\"]\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/files/{{file_id}}",
@@ -1194,7 +863,7 @@
                                 "{{file_id}}"
                             ]
                         },
-                        "description": "Update the display name of a file in the MongoDB. Does not update Gemini index directly."
+                        "description": "Update file display name and/or custom metadata. Syncs metadata to Qdrant automatically."
                     },
                     "response": []
                 }
@@ -1210,7 +879,7 @@
                         "header": [
                             {
                                 "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
+                                "value": "Bearer {{token}}"
                             },
                             {
                                 "key": "Content-Type",
@@ -1219,12 +888,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ],\n    \"accessScope\": [\n      \"student\"\n    ]\n  }\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": [\"2024-2025\"]\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/query",
@@ -1236,84 +900,7 @@
                                 "chat",
                                 "query"
                             ]
-                        },
-                        "description": "RAG-based chat query. Returns complete answer with sources.\n\nmetadata_filter is optional.\n\nFor student role, access_scope is automatically enforced to ['student'].\nFor lecture role, access_scope is enforced to ['lecture'].\nFor admin role, no access_scope filter is applied (can see 'private').\n"
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chat query - Lecture role",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Tổng kết số liệu tuyển sinh năm 2025?\",\n  \"chatHistory\": []\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/query",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "query"
-                            ]
-                        },
-                        "description": "Lecture role: can see documents with scope 'lecture' and 'student'."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chat query - With history",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Vậy điểm GPA tối thiểu là bao nhiêu?\",\n  \"chatHistory\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Điều kiện tốt nghiệp của trường là gì?\",\n      \"timestamp\": \"2026-03-11T10:00:00\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Để tốt nghiệp, sinh viên cần hoàn thành 150 tín chỉ và có điểm GPA tối thiểu...\",\n      \"timestamp\": \"2026-03-11T10:00:05\"\n    }\n  ]\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/query",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "query"
-                            ]
-                        },
-                        "description": "Chat query with conversation history. NestJS manages sessions and sends history on each request."
+                        }
                     },
                     "response": []
                 },
@@ -1324,7 +911,7 @@
                         "header": [
                             {
                                 "key": "Authorization",
-                                "value": "Bearer {{student_token}}"
+                                "value": "Bearer {{token}}"
                             },
                             {
                                 "key": "Content-Type",
@@ -1337,12 +924,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"department\": [\n      \"dao_tao\"\n    ]\n  }\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": []\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/stream",
@@ -1354,8 +936,127 @@
                                 "chat",
                                 "stream"
                             ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "7. Debug & Preview",
+            "item": [
+                {
+                    "name": "Parse PDF preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": []
+                                }
+                            ]
                         },
-                        "description": "Streaming chat response via Server-Sent Events (SSE).\n\nEach chunk: {\"chunk\": \"text\", \"done\": false}\nFinal message: {\"done\": true, \"sources\": [...], \"token_usage\": {...}, \"processing_time_ms\": 1234}\n\nNote: Postman may not display SSE well. Test with curl:\ncurl -X POST http://localhost:8000/api/chat/stream \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"question\":\"...\",\"user_context\":{...},\"chat_history\":[]}'"
+                        "url": {
+                            "raw": "{{base_url}}/api/debug/files/parse-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "debug",
+                                "files",
+                                "parse-preview"
+                            ]
+                        },
+                        "description": "Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Chunk PDF preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": []
+                                },
+                                {
+                                    "key": "chunkSizeChars",
+                                    "value": "1800",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "chunkOverlapChars",
+                                    "value": "250",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/debug/files/chunk-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "debug",
+                                "files",
+                                "chunk-preview"
+                            ]
+                        },
+                        "description": "Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Retrieve preview (Qdrant)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Quy trình thôi học?\",\n  \"topK\": 5,\n  \"minScore\": 0.3,\n  \"includeExplain\": true\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/chat/retrieve-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "chat",
+                                "retrieve-preview"
+                            ]
+                        },
+                        "description": "Debug endpoint to inspect retrieved chunks and ranking before generation."
                     },
                     "response": []
                 }

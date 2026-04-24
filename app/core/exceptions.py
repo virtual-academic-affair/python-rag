@@ -124,5 +124,16 @@ class RabbitMQException(AppException):
         super().__init__(message, status_code=500, details=details)
 
 
+class ExternalServiceException(AppException):
+    """External service (API) failed."""
+    def __init__(self, message: str, status_code: int = 502, details: Optional[Any] = None):
+        super().__init__(message, status_code=status_code, details=details)
+
+
+class GrpcServerException(ExternalServiceException):
+    """gRPC service call failed."""
+    pass
+
+
 # Legacy aliases for backward compatibility
 DatabaseException = AppException

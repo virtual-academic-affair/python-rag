@@ -1,0 +1,209 @@
+"""
+Metadata Type Repository - Database operations for metadata type definitions.
+"""
+
+from typing import Optional, List, Dict, Any
+import logging
+
+from app.repositories.base import BaseRepository
+from app.core.database import Database
+from app.core.exceptions import ConflictException, NotFoundException
+
+logger = logging.getLogger(__name__)
+
+
+class MetadataRepository(BaseRepository):
+    """Repository for metadata type documents."""
+    
+    def __init__(self):
+        super().__init__(Database.METADATA_TYPES)
+    
+    async def find_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """
+        Find metadata type by key.
+        
+        Args:
+            key: Metadata key (e.g., "department")
+            
+        Returns:
+            Metadata type document or None
+        """
+        return await self.find_one({"key": key})
+    
+    async def find_all(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find all metadata types.
+        
+        Args:
+            skip: Number to skip
+            limit: Maximum results
+            
+        Returns:
+            List of metadata type documents
+        """
+        return await self.find_many(
+            query={},
+            skip=skip,
+            limit=limit,
+            sort=[("key", 1)]
+        )
+    
+    async def create_metadata_type(self, metadata_type: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create new metadata type.
+        
+        Args:
+            metadata_type: Metadata type data (key, value_type, etc.)
+            
+        Returns:
+            Created metadata type document
+            
+        Raises:
+            ConflictException: If key already exists
+        """
+        existing = await self.find_by_key(metadata_type["key"])
+        if existing:
+            raise ConflictException(f"Metadata type with key '{metadata_type['key']}' already exists")
+        
+        return await self.create(metadata_type)
+    
+    async def update_by_key(
+        self,
+        key: str,
+        update_data: Dict[str, Any]
+    ) -> bool:
+        """
+        Update metadata type by key.
+        
+        Args:
+            key: Metadata key
+            update_data: Fields to update
+            
+        Returns:
+            True if updated
+            
+        Raises:
+            NotFoundException: If key not found
+        """
+        existing = await self.find_by_key(key)
+        if not existing:
+            raise NotFoundException("Metadata type", key)
+        
+        return await self.update(
+            query={"key": key},
+            update_data=update_data
+        )
+    
+    async def delete_by_key(self, key: str) -> bool:
+        """
+        Delete metadata type by key (hard delete).
+        
+        Args:
+            key: Metadata key
+            
+        Returns:
+            True if deleted
+            
+        Raises:
+            NotFoundException: If key not found
+        """
+        existing = await self.find_by_key(key)
+        if not existing:
+            raise NotFoundException("Metadata type", key)
+        
+        return await self.delete({"key": key})
+    
+    async def get_all_keys(self) -> List[str]:
+        """
+        Get list of all metadata keys.
+        
+        Returns:
+            List of metadata keys
+        """
+        metadata_types = await self.find_all(limit=1000)
+        return [mt["key"] for mt in metadata_types]
+
+    async def push_allowed_value(self, key: str, allowed_value: Dict[str, Any]) -> bool:
+        """
+        Atomically push a new allowed value to a metadata type.
+        
+        Args:
+            key: Metadata key
+            allowed_value: Allowed value dict to append
+            
+        Returns:
+            True if updated
+            
+        Raises:
+            NotFoundException: If key not found
+        """
+        from datetime import datetime, timezone
+        existing = await self.find_by_key(key)
+        if not existing:
+            raise NotFoundException("Metadata type", key)
+            
+        result = await self.collection.update_one(
+            {"key": key},
+            {
+                "$push": {"allowed_values": allowed_value},
+                "$set": {"updated_at": datetime.now(timezone.utc)}
+            }
+        )
+        return result.modified_count > 0
+
+    async def sync_metadata_counters(self, custom_metadata: Dict[str, Any], delta: int) -> None:
+        """
+        Update total_files statistics for multiple metadata keys and their corresponding values.
+        Uses MongoDB atomic $inc to avoid race conditions.
+        
+        Args:
+            custom_metadata: Dictionary of file metadata (e.g. {"department": "IT", "year": "2024"})
+            delta: Value to add to counter (usually 1 for active/upload, -1 for delete)
+        """
+        if not custom_metadata:
+            return
+            
+        import asyncio
+        from datetime import datetime, timezone
+        from motor.motor_asyncio import AsyncIOMotorCollection
+        
+        collection = self.collection
+        tasks = []
+        
+        updated_at = datetime.now(timezone.utc)
+        
+        for key, value in custom_metadata.items():
+            # 1. Update total_files for the Metadata Type (Key) itself
+            task_key = collection.update_one(
+                {"key": key},
+                {
+                    "$inc": {"total_files": delta},
+                    "$set": {"updated_at": updated_at}
+                }
+            )
+            tasks.append(task_key)
+            
+            # 2. Update total_files for the specific Value(s) inside allowed_values
+            # Handle both single value (string) and multiple values (list)
+            values_to_update = value if isinstance(value, list) else [value]
+            
+            for v in values_to_update:
+                task_value = collection.update_one(
+                    {"key": key, "allowed_values.value": v},
+                    {
+                        "$inc": {"allowed_values.$.total_files": delta},
+                        "$set": {"updated_at": updated_at}
+                    }
+                )
+                tasks.append(task_value)
+            
+        if tasks:
+            try:
+                await asyncio.gather(*tasks)
+                logger.info(f"Synced metadata counters for keys: {list(custom_metadata.keys())} with delta={delta}")
+            except Exception as e:
+                logger.error(f"Failed to sync metadata counters: {e}")

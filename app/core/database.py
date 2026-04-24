@@ -20,9 +20,8 @@ class Database:
 
     # Collection name constants
     FILES = "files"
-    FILE_CHUNKS = "file_chunks"
+    FILE_TOC_TREES = "file_toc_trees"
     METADATA_TYPES = "metadata_types"
-    STORES = "stores"
 
     _client: Optional[Any] = None  # AsyncIOMotorClient
     _db: Optional[Any] = None  # AsyncIOMotorDatabase
@@ -54,20 +53,27 @@ class Database:
 
             logger.info("✅ MongoDB connected successfully")
 
-            # Ensure indexes for vectorless retrieval performance
-            file_chunks = cls._db[cls.FILE_CHUNKS]
-            await file_chunks.create_index([("file_id", ASCENDING)], name="idx_file_chunks_file_id")
-            await file_chunks.create_index([("chunk_id", ASCENDING)], name="idx_file_chunks_chunk_id", unique=True)
-            await file_chunks.create_index(
-                [("metadata.access_scope", ASCENDING)],
-                name="idx_file_chunks_access_scope",
-                sparse=True,
-            )
-            await file_chunks.create_index(
-                [("metadata.hoc_ky", ASCENDING), ("metadata.nam_hoc", ASCENDING)],
-                name="idx_file_chunks_hoc_ky_nam_hoc",
-                sparse=True,
-            )
+            # Ensure indexes
+            file_toc_trees = cls._db[cls.FILE_TOC_TREES]
+            await file_toc_trees.create_index([("file_id", ASCENDING)], name="idx_file_toc_trees_file_id", unique=True)
+
+            files_col = cls._db[cls.FILES]
+            
+            indexes_to_create = [
+                ([("display_name_unaccented", ASCENDING)], "idx_files_display_name"),
+                ([("status", ASCENDING)], "status_1"),
+                ([("custom_metadata.access_scope", ASCENDING)], "idx_files_access_scope")
+            ]
+            
+            for keys, name in indexes_to_create:
+                try:
+                    await files_col.create_index(keys, name=name)
+                except Exception as e:
+                    # Ignore index name conflict if it already exists, log others
+                    if getattr(e, 'code', None) == 85:
+                        pass
+                    else:
+                        logger.warning(f"⚠️ Could not create index {name}: {e}")
 
 
         except Exception as e:
