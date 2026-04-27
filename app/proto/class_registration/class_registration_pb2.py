@@ -15,17 +15,17 @@ _sym_db = _symbol_database.Default()
 from . import common_pb2 as common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x63lass_registration.proto\x12\napp_server\x1a\x0c\x63ommon.proto\"\x96\x01\n\x1d\x43reateRegistrationItemRequest\x12\x0e\n\x06\x61\x63tion\x18\x01 \x01(\t\x12\x13\n\x0bsubjectName\x18\x02 \x01(\t\x12\x11\n\tclassName\x18\x03 \x01(\t\x12\x13\n\x0bsubjectCode\x18\x04 \x01(\t\x12\x10\n\x08slotInfo\x18\x05 \x01(\t\x12\x16\n\x0eisInCurriculum\x18\x06 \x01(\x08\"\xc6\x01\n\x19\x43reateRegistrationRequest\x12\x11\n\tmessageId\x18\x01 \x01(\x05\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x13\n\x0bstudentCode\x18\x03 \x01(\t\x12\x14\n\x0c\x61\x63\x61\x64\x65micYear\x18\x04 \x01(\x05\x12\x13\n\x0bstudentName\x18\x05 \x01(\t\x12\x0c\n\x04note\x18\x06 \x01(\t\x12\x38\n\x05items\x18\x07 \x03(\x0b\x32).app_server.CreateRegistrationItemRequest2h\n\x18\x43lassRegistrationService\x12L\n\x06\x43reate\x12%.app_server.CreateRegistrationRequest\x1a\x1b.app_server.SuccessResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x63lass_registration.proto\x12\napp_server\x1a\x0c\x63ommon.proto\"l\n\x1d\x43reateRegistrationItemRequest\x12\x0e\n\x06\x61\x63tion\x18\x01 \x01(\t\x12\x13\n\x0bsubjectName\x18\x02 \x01(\t\x12\x11\n\tclassName\x18\x03 \x01(\t\x12\x13\n\x0bsubjectCode\x18\x04 \x01(\t\"h\n\x19\x43reateRegistrationRequest\x12\x11\n\tmessageId\x18\x01 \x01(\x05\x12\x38\n\x05items\x18\x04 \x03(\x0b\x32).app_server.CreateRegistrationItemRequest2h\n\x18\x43lassRegistrationService\x12L\n\x06\x43reate\x12%.app_server.CreateRegistrationRequest\x1a\x1b.app_server.SuccessResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'class_registration_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
-  _globals['_CREATEREGISTRATIONITEMREQUEST']._serialized_start=55
-  _globals['_CREATEREGISTRATIONITEMREQUEST']._serialized_end=205
-  _globals['_CREATEREGISTRATIONREQUEST']._serialized_start=208
-  _globals['_CREATEREGISTRATIONREQUEST']._serialized_end=406
-  _globals['_CLASSREGISTRATIONSERVICE']._serialized_start=408
-  _globals['_CLASSREGISTRATIONSERVICE']._serialized_end=512
+  _globals['_CREATEREGISTRATIONITEMREQUEST']._serialized_start=54
+  _globals['_CREATEREGISTRATIONITEMREQUEST']._serialized_end=162
+  _globals['_CREATEREGISTRATIONREQUEST']._serialized_start=164
+  _globals['_CREATEREGISTRATIONREQUEST']._serialized_end=268
+  _globals['_CLASSREGISTRATIONSERVICE']._serialized_start=270
+  _globals['_CLASSREGISTRATIONSERVICE']._serialized_end=374
 # @@protoc_insertion_point(module_scope)

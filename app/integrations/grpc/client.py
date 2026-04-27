@@ -9,12 +9,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from importlib import import_module
-import json
 
 import grpc
 from google.protobuf.json_format import MessageToDict
-
-from app.modules.email.schemas import SystemLabel
 from app.core.exceptions import GrpcServerException
 from app.core.config import settings
 
@@ -73,13 +70,6 @@ class GrpcClient:
     def _load_stubs(self) -> None:
         """Load generated protobuf stubs at runtime and attach them to the channel."""
         self._load_module(
-            service_key="message",
-            path_prefix="label.label",
-            request_map={"update_labels": "UpdateLabelsRequest"},
-            stub_class_name="MessageServiceStub"
-        )
-        
-        self._load_module(
             service_key="class_registration",
             path_prefix="class_registration.class_registration",
             request_map={"class_registration_create": "CreateRegistrationRequest"},
@@ -94,13 +84,6 @@ class GrpcClient:
                 "auth_verify_token": "VerifyTokenRequest"
             },
             stub_class_name="AuthServiceStub"
-        )
-        
-        self._load_module(
-            service_key="task",
-            path_prefix="task.task",
-            request_map={"task_create": "CreateTaskRequest"},
-            stub_class_name="TaskServiceStub"
         )
         
         self._load_module(
@@ -158,54 +141,6 @@ class GrpcClient:
     # Service Endpoints
     # =========================================================================
 
-    async def update_label(
-        self,
-        *,
-        message_id: int,
-        label: SystemLabel,
-        title: str | None = None,
-    ) -> bool:
-        """Service method: update classified label to external system."""
-        _ = title
-        if not self._config.enabled:
-            return True
-
-        request_cls = self._requests.get("update_labels")
-        if request_cls is None:
-            logger.warning("Skip gRPC label update because request class is not ready")
-            return False
-
-        if message_id is None:
-            logger.warning("Skip gRPC label update because message_id is missing")
-            return False
-
-        request = request_cls(
-            messageId=message_id,
-            systemLabels=[label.value],
-        )
-        logger.info(
-            "gRPC update_labels request: %s",
-            MessageToDict(request, preserving_proto_field_name=True),
-        )
-        response = await self._call(
-            service_key="message",
-            rpc_name="UpdateLabels",
-            request=request,
-        )
-        if response is None:
-            return False
-
-        logger.info(
-            "gRPC update_labels response: %s",
-            MessageToDict(response, preserving_proto_field_name=True),
-        )
-        if not response.success:
-            logger.warning("gRPC update_labels rejected: %s", getattr(response, "message", "No message"))
-            return False
-
-        logger.info("gRPC update_labels success: %s", getattr(response, "message", "Ok"))
-        return True
-
     async def create_class_registration(self, *, payload) -> bool:
         if not self._config.enabled:
             return True
@@ -221,20 +156,13 @@ class GrpcClient:
                 {
                     "action": item.action.value,
                     "subjectName": item.subject_name,
-                    "subjectCode": item.subject_code,
                     "className": item.class_name,
-                    "slotInfo": item.slot_info,
-                    "isInCurriculum": item.is_in_curriculum,
+                    "subjectCode": item.subject_code,
                 }
             )
 
         request = request_cls(
             messageId=payload.message_id or 0,
-            status=getattr(payload, "status", "") or "",
-            studentCode=payload.student_code,
-            academicYear=payload.academic_year or 0,
-            studentName=payload.student_name,
-            note=payload.note or "",
             items=items,
         )
         logger.info(
@@ -259,32 +187,6 @@ class GrpcClient:
 
         logger.info("gRPC class registration success: %s", getattr(response, "message", ""))
         return True
-
-    async def find_auth_user_by_keyword(self, keyword: str) -> dict | None:
-        if not self._config.enabled:
-            return None
-
-        request_cls = self._requests.get("auth_find_one_by_keyword")
-        if request_cls is None:
-            logger.warning("Skip gRPC auth lookup because request class is not ready")
-            return None
-
-        request = request_cls(keyword=keyword)
-        logger.info(
-            "gRPC auth FindOneByKeyword request: %s",
-            MessageToDict(request, preserving_proto_field_name=True),
-        )
-        response = await self._call(
-            service_key="auth",
-            rpc_name="FindOneByKeyword",
-            request=request,
-        )
-        if response is None:
-            return None
-
-        response_dict = MessageToDict(response, preserving_proto_field_name=True)
-        logger.info("gRPC auth FindOneByKeyword response: %s", response_dict)
-        return response_dict
 
     async def verify_token(self, token: str) -> dict | None:
         """
@@ -319,72 +221,12 @@ class GrpcClient:
             # Errors already logged in _call method
             return None
 
-    async def create_task(self, *, payload) -> bool:
-        if not self._config.enabled:
-            return True
-
-        request_cls = self._requests.get("task_create")
-        if request_cls is None:
-            logger.warning("Skip gRPC task create because request class is not ready")
-            return False
-
-        assignee_ids: list[int] = []
-        for item in payload.assignee_ids or []:
-            try:
-                value = int(item)
-            except (TypeError, ValueError):
-                logger.warning("Skip non-numeric assignee id: %s", item)
-                continue
-            if value < -(2**31) or value > 2**31 - 1:
-                logger.warning("Skip out-of-range assignee id: %s", value)
-                continue
-            assignee_ids.append(value)
-
-        priority_value = payload.priority.value if hasattr(payload.priority, "value") else payload.priority
-        normalized_priority = priority_value or "medium"
-        request = request_cls(
-            name=payload.name or "",
-            description=payload.description or "",
-            due=payload.due or "",
-            priority=normalized_priority,
-            assigners=list(payload.assigners or []),
-            assigneeIds=assignee_ids,
-            messageId=int(payload.message_id or 0),
-        )
-        logger.info(
-            "gRPC task create request: %s",
-            MessageToDict(
-                request,
-                preserving_proto_field_name=True,
-                always_print_fields_with_no_presence=True,
-            ),
-        )
-        response = await self._call(
-            service_key="task",
-            rpc_name="Create",
-            request=request,
-        )
-        if response is None:
-            return False
-
-        logger.info(
-            "gRPC task create response: %s",
-            MessageToDict(response, preserving_proto_field_name=True),
-        )
-        if hasattr(response, "success") and not response.success:
-            logger.warning("gRPC task create rejected: %s", getattr(response, "message", ""))
-            return False
-
-        logger.info("gRPC task create success: %s", getattr(response, "message", ""))
-        return True
-
     async def create_inquiry(
         self,
         message_id: int,
         answer: str,
         extracted_question: str | None = None,
         inquiry_types: list[str] | None = None,
-        sources: list[str] | None = None,
     ) -> bool:
         """Service method: create an inquiry record via gRPC."""
         if not self._config.enabled:
@@ -403,9 +245,6 @@ class GrpcClient:
             kwargs["question"] = extracted_question
         if inquiry_types is not None:
             kwargs["types"] = inquiry_types
-        if sources is not None:
-            kwargs["sources"] = [json.dumps(s, ensure_ascii=False) if isinstance(s, dict) else str(s) for s in sources]
-            
         request = request_cls(**kwargs)
         response = await self._call(
             service_key="inquiry",

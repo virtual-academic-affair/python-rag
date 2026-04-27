@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 from . import common_pb2 as common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rinquiry.proto\x12\napp_server\x1a\x0c\x63ommon.proto\"k\n\x14\x43reateInquiryRequest\x12\x11\n\tmessageId\x18\x01 \x01(\x05\x12\r\n\x05types\x18\x02 \x03(\t\x12\x10\n\x08question\x18\x03 \x01(\t\x12\x0e\n\x06\x61nswer\x18\x04 \x01(\t\x12\x0f\n\x07sources\x18\x05 \x03(\t2Y\n\x0eInquiryService\x12G\n\x06\x43reate\x12 .app_server.CreateInquiryRequest\x1a\x1b.app_server.SuccessResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rinquiry.proto\x12\napp_server\x1a\x0c\x63ommon.proto\"Z\n\x14\x43reateInquiryRequest\x12\x11\n\tmessageId\x18\x01 \x01(\x05\x12\r\n\x05types\x18\x02 \x03(\t\x12\x10\n\x08question\x18\x03 \x01(\t\x12\x0e\n\x06\x61nswer\x18\x04 \x01(\t2Y\n\x0eInquiryService\x12G\n\x06\x43reate\x12 .app_server.CreateInquiryRequest\x1a\x1b.app_server.SuccessResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -23,7 +23,7 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'inquiry_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   _globals['_CREATEINQUIRYREQUEST']._serialized_start=43
-  _globals['_CREATEINQUIRYREQUEST']._serialized_end=150
-  _globals['_INQUIRYSERVICE']._serialized_start=152
-  _globals['_INQUIRYSERVICE']._serialized_end=241
+  _globals['_CREATEINQUIRYREQUEST']._serialized_end=133
+  _globals['_INQUIRYSERVICE']._serialized_start=135
+  _globals['_INQUIRYSERVICE']._serialized_end=224
 # @@protoc_insertion_point(module_scope)

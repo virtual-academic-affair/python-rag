@@ -46,7 +46,7 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           port: 22
           script: |
-            cd /opt/sourcecode/nest-api
+            cd /opt/sourcecode/vaa
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             docker compose pull python-rag
             docker compose up -d python-rag --remove-orphans

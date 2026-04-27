@@ -13,9 +13,7 @@ class BaseSchema(BaseModel):
 
 class SystemLabel(str, Enum):
     ClassRegistration = "classRegistration"
-    Task = "task"
     Inquiry = "inquiry"
-    Other = "other"
 
 class RequestData(BaseSchema):
     title: str = Field(..., description="Email title/subject")
@@ -67,19 +65,6 @@ class ClassRegistrationExtractResponse(BaseLabelResponse):
     label: SystemLabel = Field(default=SystemLabel.ClassRegistration)
     extracted: ClassRegistrationPayload
 
-class TaskPayload(BaseSchema):
-    name: str = Field(default="")
-    description: str = Field(default="")
-    due: Optional[str] = Field(default=None)
-    priority: str = Field(default="")
-    assigners: List[str] = Field(default_factory=list)
-    assignee_ids: List[str] = Field(default_factory=list)
-    message_id: Optional[int] = Field(default=None)
-
-class TaskExtractResponse(BaseSchema):
-    label: SystemLabel = Field(default=SystemLabel.Task)
-    extracted: TaskPayload
-
 class InquiryIntent(BaseSchema):
     question: str = Field(description="The main question or intent extracted from the email.")
 
@@ -102,7 +87,7 @@ class InquiryResponse(BaseLabelResponse):
     label: SystemLabel = Field(default=SystemLabel.Inquiry)
     inquiry: InquiryPayload
 
-ResponseModel = Union[LabelClassificationResponse, ClassRegistrationExtractResponse, InquiryResponse, TaskExtractResponse]
+ResponseModel = Union[LabelClassificationResponse, ClassRegistrationExtractResponse, InquiryResponse]
 
 class ProcessResponse(BaseSchema):
     success: bool

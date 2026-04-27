@@ -9,18 +9,11 @@ message CreateRegistrationItemRequest {
   string subjectName = 2;
   string className = 3;
   string subjectCode = 4;
-  string slotInfo = 5;
-  bool isInCurriculum = 6;
 }
 
 message CreateRegistrationRequest {
   int32 messageId = 1;
-  string status = 2;
-  string studentCode = 3;
-  int32 academicYear = 4;
-  string studentName = 5;
-  string note = 6;
-  repeated CreateRegistrationItemRequest items = 7;
+  repeated CreateRegistrationItemRequest items = 4;
 }
 
 service ClassRegistrationService {

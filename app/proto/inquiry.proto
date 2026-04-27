@@ -8,7 +8,6 @@ message CreateInquiryRequest {
   repeated string types = 2;
   string question = 3;
   string answer = 4;
-  repeated string sources = 5;
 }
 
 service InquiryService {

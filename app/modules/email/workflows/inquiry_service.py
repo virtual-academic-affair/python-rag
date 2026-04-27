@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_chat_llm, build_extraction_llm, chain_prompt
-from app.integrations.grpc.client import get_grpc_client
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.email.utils import extract_structured_data, remove_accents, extract_inquiry_filters
 from app.modules.metadata.service import get_metadata_service
@@ -117,21 +116,6 @@ class InquiryService:
             }
 
         logger.info(f"Inquiry RAG complete. Answer length: {len(rag_result['answer'])}")
-
-        # 4. Integrate with Gmail Draft creation if message_id exists
-        if message_id is not None:
-            try:
-                grpc = get_grpc_client()
-                if grpc is not None:
-                    await grpc.create_inquiry(
-                        message_id=message_id,
-                        answer=rag_result["answer"],
-                        extracted_question=extracted_question,
-                        inquiry_types=inquiry_types,
-                        sources=rag_result["sources"]
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to create Gmail draft via gRPC: {e}")
 
         return {
             "answer": rag_result["answer"],

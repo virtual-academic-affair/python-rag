@@ -39,10 +39,8 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
     proto_root = root / "app" / "proto"
     proto_targets = {
-        "label": "label.proto",
         "class_registration": "class_registration.proto",
         "auth": "auth.proto",
-        "task": "task.proto",
         "inquiry": "inquiry.proto",
     }
 
