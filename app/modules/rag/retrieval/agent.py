@@ -3,6 +3,7 @@ Shared RAG Agent logic: Prompt and Tools for Gemini GenAI.
 Used by both Chat and Email Inquiry services.
 """
 import logging
+import time
 from typing import List, Callable, Dict, Any
 from app.integrations.pageindex.client import get_page_index_client
 import re
@@ -37,6 +38,7 @@ QUY TẮC CÂU TRẢ LỜI CUỐI CÙNG CHO NGƯỜI DÙNG:
 [Nội dung tư vấn đi thẳng vào trọng tâm, không chào hỏi]
 </answer>
 - KHÔNG để lộ `doc_id` hoặc chi tiết hệ thống với sinh viên. Khi cần trích dẫn, hãy nhắc tên tệp được cung cấp phía trên.
+- TUYỆT ĐỐI KHÔNG nhắc đến tên các thẻ XML (như <answer>) trong phần suy nghĩ/lập luận của bạn.
 - Nếu không tìm thấy thông tin trong tài liệu, hãy nói rõ: "Hệ thống không tìm thấy quy định này trong tài liệu hiện có." và đề nghị sinh viên liên hệ trực tiếp văn phòng.
 """
 
@@ -71,30 +73,31 @@ def build_pindex_tools(allow_ids: List[str]) -> List[Callable]:
 def parse_agent_response(text: str) -> tuple[str, str]:
     """
     Parse the agent's text response to separate reasoning (pre-thought) and the final answer.
-    Looks for <answer>...</answer> tags.
+    Looks for the LAST <answer>...</answer> tags for robust parsing.
     Returns:
         tuple: (reasoning_text, final_answer_text)
     """
 
-    
-    # Strip common Gemini thinking artifacts leaked into the text block
+    # Strip common Gemini thinking artifacts
     text = re.sub(r"^`\.\n?", "", text).strip()
     
-    # TH1: Có cả cặp thẻ đóng/mở
-    match_closed = re.search(r'<answer>(.*?)</answer>', text, flags=re.DOTALL | re.IGNORECASE)
-    if match_closed:
-        pre_think = text[:match_closed.start()].strip()
-        answer = match_closed.group(1).strip()
+    # 1. Try to find the last valid <answer>...</answer> block
+    matches = list(re.finditer(r'<answer>(.*?)</answer>', text, flags=re.DOTALL | re.IGNORECASE))
+    if matches:
+        last_match = matches[-1]
+        pre_think = text[:last_match.start()].strip()
+        answer = last_match.group(1).strip()
         return pre_think, answer
         
-    # TH2: Có thẻ mở nhưng bị đứt thẻ đóng (do LLM sinh lỗi hoặc đứt đoạn)
-    match_open = re.search(r'<answer>(.*)', text, flags=re.DOTALL | re.IGNORECASE)
-    if match_open:
-        pre_think = text[:match_open.start()].strip()
-        answer = match_open.group(1).strip()
+    # 2. Try to find the last <answer> tag if no closing tag exists (truncation case)
+    all_opens = list(re.finditer(r'<answer>', text, flags=re.IGNORECASE))
+    if all_opens:
+        last_open = all_opens[-1]
+        pre_think = text[:last_open.start()].strip()
+        answer = text[last_open.end():].strip()
         return pre_think, answer
         
-    # TH3: Không có thẻ nào, đành gom hết làm answer
+    # 3. Fallback: return everything as answer
     return "", text.strip()
 
 
@@ -314,11 +317,14 @@ async def run_agent_loop(
 
     for turn_idx in range(max_turns):
         logger.info(f"[Agent] Bắt đầu Turn {turn_idx + 1}")
+        start_gen = time.perf_counter()
         resp = await gemini_client.client.aio.models.generate_content(
             model=settings.GEMINI_MODEL,
             contents=history,
             config=config,
         )
+        gen_dur = time.perf_counter() - start_gen
+        logger.info(f"[Agent] Gemini generation Turn {turn_idx + 1} completed in {gen_dur:.2f}s")
 
         if hasattr(resp, "usage_metadata") and resp.usage_metadata:
             total_prompt_tokens += getattr(resp.usage_metadata, 'prompt_token_count', 0)
@@ -358,11 +364,14 @@ async def run_agent_loop(
         for call in tool_calls:
             try:
                 tool_func = tool_map.get(call.name)
+                start_tool = time.perf_counter()
                 result = (
                     await tool_func(**call.args)
                     if tool_func
                     else f"Error: Tool {call.name} not found."
                 )
+                tool_dur = time.perf_counter() - start_tool
+                logger.info(f"[Agent] Tool {call.name} completed in {tool_dur:.2f}s")
                 logger.debug(f"[Agent] Kết quả tool {call.name}: {str(result)[:200]}...")
                 steps.append({"type": "tool_output", "name": call.name, "output": str(result)})
                 tool_response_parts.append(

@@ -22,6 +22,10 @@ class Database:
     FILES = "files"
     FILE_TOC_TREES = "file_toc_trees"
     METADATA_TYPES = "metadata_types"
+    FAQS = "faqs"
+    FAQ_CANDIDATES = "faq_candidates"
+    INTERACTION_LOGS = "interaction_logs"
+    FORMS = "forms"
 
     _client: Optional[Any] = None  # AsyncIOMotorClient
     _db: Optional[Any] = None  # AsyncIOMotorDatabase
@@ -62,7 +66,6 @@ class Database:
             indexes_to_create = [
                 ([("display_name_unaccented", ASCENDING)], "idx_files_display_name"),
                 ([("status", ASCENDING)], "status_1"),
-                ([("custom_metadata.access_scope", ASCENDING)], "idx_files_access_scope")
             ]
             
             for keys, name in indexes_to_create:
@@ -75,6 +78,29 @@ class Database:
                     else:
                         logger.warning(f"⚠️ Could not create index {name}: {e}")
 
+            # Ensure FAQ indexes
+            interaction_col = cls._db[cls.INTERACTION_LOGS]
+            await interaction_col.create_index(
+                [("expires_at", ASCENDING)],
+                expireAfterSeconds=0,
+                name="idx_interaction_logs_ttl"
+            )
+            await interaction_col.create_index(
+                [("question_unaccented", ASCENDING), ("expires_at", ASCENDING)],
+                name="idx_interaction_logs_dedup"
+            )
+            await interaction_col.create_index(
+                [("source_type", ASCENDING), ("expires_at", ASCENDING)],
+                name="idx_interaction_logs_source"
+            )
+
+            faqs_col = cls._db[cls.FAQS]
+            await faqs_col.create_index([("is_active", ASCENDING), ("sort_order", ASCENDING)], name="idx_faqs_active")
+            await faqs_col.create_index([("question_unaccented", "text"), ("answer_unaccented", "text")], name="idx_faqs_text")
+
+            cands_col = cls._db[cls.FAQ_CANDIDATES]
+            await cands_col.create_index([("status", ASCENDING), ("created_at", ASCENDING)], name="idx_faq_cands_status")
+            await cands_col.create_index([("question_unaccented", "text"), ("answer_draft_unaccented", "text")], name="idx_faq_cands_text")
 
         except Exception as e:
             logger.error(f"❌ Failed to connect to MongoDB: {e}")

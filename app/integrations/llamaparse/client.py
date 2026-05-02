@@ -10,6 +10,7 @@ Scope of Sprint 1:
 from __future__ import annotations
 
 import logging
+import asyncio
 from llama_parse import LlamaParse
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -44,12 +45,7 @@ class LlamaParseClient:
                 "LLAMA_CLOUD_API_KEY is not configured. Please set it in environment to use LlamaParse."
             )
 
-        try:
-            pass
-        except Exception as exc:  # pragma: no cover - import/runtime env issue
-            raise ValidationException(
-                "llama-parse package is not installed or cannot be imported."
-            ) from exc
+
 
         parser = LlamaParse(
             api_key=settings.LLAMA_CLOUD_API_KEY,
@@ -60,7 +56,13 @@ class LlamaParseClient:
         logger.info("LlamaParse: parsing file %s", file_path)
 
         try:
-            documents = await parser.aload_data(file_path)
+            documents = await asyncio.wait_for(
+                parser.aload_data(file_path),
+                timeout=300.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("LlamaParse parse timeout for file %s", file_path)
+            raise ExternalServiceException(f"LlamaParse timeout: failed to parse PDF {file_path} within 300s")
         except Exception as exc:
             logger.error("LlamaParse parse failed: %s", exc, exc_info=True)
             raise ExternalServiceException(f"LlamaParse failed to parse PDF: {exc}") from exc

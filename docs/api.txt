@@ -1,6 +1,5 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         AI SERVICE API DOCUMENTATION                         ║
-║                                  VERSION 4.8.0                               ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 BASE URL: http://localhost:8000
@@ -16,8 +15,7 @@ Việc xác thực được thực hiện thông qua gRPC call tới NestJS Back
 
 ROLE LEVELS:
   - 🔒 admin: Toàn quyền truy cập, quản lý Metadata và Tệp tin.
-  - 🔒 lecture: CHỈ xem được các tệp có gắn nhãn `lecture`. (Không thấy tệp Student hay Nội bộ).
-  - 🔒 student: CHỈ xem được các tệp có gắn nhãn `student`. (Không thấy tệp Lecture hay Nội bộ).
+  - 🔒 auth: Mọi người dùng đã xác thực (Student/Lecture) đều có quyền xem toàn bộ tài liệu công khai và metadata tags. Phân quyền chỉ áp dụng ở tầng bảo mật Auth chung, không lọc theo file scope.
 
 HEADER BẮT BUỘC:
   Authorization: Bearer <jwt_token>
@@ -32,13 +30,15 @@ MỤC LỤC
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
  3. Metadata Type Management   (9 endpoints) [🔒 admin / 🔒 auth]
- 4. File Management APIs       (8 endpoints) [🔒 admin / 🔒 auth]
+ 4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (3 endpoints) [🔒 auth]
- 6. Debug & Preview APIs       (2 endpoints) [🔒 admin]
- 7. Real-time Notifications    (1 websocket) [🔒 auth]
- 8. Appendix: Error Codes & Formatting
+ 6. FAQ MODULE APIs            (11 endpoints) [🔒 admin / 🔒 auth]
+ 7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
+ 8. Debug & Preview APIs       (2 endpoints) [🔒 admin]
+ 9. Real-time Notifications    (1 websocket) [🔒 auth]
+ 10. Appendix: Error Codes & Formatting
 
-TỔNG: 27 ENDPOINTS
+ TỔNG: 44 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -55,7 +55,7 @@ TỔNG: 27 ENDPOINTS
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "4.8.0",                                                      │
+│     "version": "5.3.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
 │     "qdrantConnected": true,                                                 │
@@ -90,13 +90,19 @@ TỔNG: 27 ENDPOINTS
 │ REQUEST EXAMPLE:                                                             │
 │   {                                                                          │
 │     "title": "Hỏi về quy trình tốt nghiệp",                                  │
-│     "content": "Chào thầy cô, khóa K62 khi nào làm đồ án?"                   │
+│     "content": "Chào thầy cô, khóa K62 khi nào làm đồ án?",                  │
+│     "messageId": 12345                                                       │
 │   }                                                                          │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
 │     "label": "inquiry",                                                      │
-│     "inquiry": { "answer": "...", "sources": [...] }                         │
+│     "inquiry": {                                                             │
+│        "answer": "...",                                                      │
+│        "question": "...",                                                    │
+│        "sources": [...],                                                     │
+│        "messageId": 12345                                                    │
+│     }                                                                        │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
@@ -112,13 +118,14 @@ TỔNG: 27 ENDPOINTS
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Debug xử lý RabbitMQ payload trực tiếp qua HTTP.                      │
 │                                                                              │
-│ REQUEST: { "pattern": "ingested", "data": { "subject": "...", "content": "..." }}│
+│ REQUEST: { "pattern": "ingested", "data": { "messageId": 1, "subject": "...", "content": "..." }}│
 │                                                                              │
 │ RESPONSE 200 OK: { "success": true, "data": { ... } }                        │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Giả lập việc nhận một message từ queue 'email_ingest_queue'.             │
 │   2. Giải nén payload 'data' và truyền vào Orchestrator xử lý như email thực. │
+│   3. Kết quả trả về bọc trong object `ProcessResponse`.                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -155,16 +162,14 @@ TỔNG: 27 ENDPOINTS
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
 │   - isActive: bool (optional) - Lọc nhãn đang hoạt động.                     │
-│   - keywords: string (optional) - Tìm kiếm tên nhãn.                         │
+│   - keywords: string (optional) - Tìm kiếm tên nhãn hoặc giá trị.            │
 │                                                                              │
 │ RESPONSE 200 OK: { "metadataTypes": [...], "total": 5 }                      │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Controller gọi Service lấy tất cả Metadata Types.                       │
-│   2. [MASKING]: Duyệt từng loại nhãn, lọc bỏ các `allowedValues` có          │
-│      `visibleRoles` không chứa role của User hiện tại.                       │
-│   3. [SECURITY]: Nếu User không phải Admin, ép buộc `isActive=true`.         │
-│   4. Trả về danh sách đã được lọc bảo mật.                                   │
+│   2. [SECURITY]: Nếu User không phải Admin, ép buộc `isActive=true`.         │
+│   3. Trả về toàn bộ danh sách Metadata đã được định nghĩa.                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -181,7 +186,7 @@ TỔNG: 27 ENDPOINTS
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy thông tin chi tiết một nhãn metadata theo Key.                    │
 │ RESPONSE 200 OK: { "key": "...", "allowedValues": [...], ... }               │
-│ LUỒNG XỬ LÝ: Áp dụng logic lọc bảo mật (Masking) tương tự như API List.      │
+│ LUỒNG XỬ LÝ: Truy vấn chi tiết Metadata Type.                                │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -205,8 +210,8 @@ TỔNG: 27 ENDPOINTS
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ PATCH /api/metadata/{key}/values/{value} [🔒 ADMIN]                          │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Sửa thông tin hiển thị hoặc phân quyền của một giá trị nhãn.          │
-│ REQUEST: { "visibleRoles": ["lecture"] }                                     │
+│ MÔ TẢ: Sửa thông tin hiển thị của một giá trị nhãn.                         │
+│ REQUEST: { "displayName": "Tên mới" }                                        │
 │ RESPONSE 200 OK: MetadataType đã cập nhật.                                   │
 │ LUỒNG XỬ LÝ: Dùng array filters của MongoDB để update phần tử trong mảng.    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -235,7 +240,7 @@ TỔNG: 27 ENDPOINTS
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        4. FILE MANAGEMENT
+                        4. FILE MANAGEMENT APIs
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -246,10 +251,16 @@ TỔNG: 27 ENDPOINTS
 │ REQUEST (Multipart):                                                         │
 │   - file: <binary>                                                           │
 │   - displayName: "Văn bản A"                                                 │
-│   - customMetadata: JSON string (vd: '{"access_scope":["student"], "academic_year":["2025-2026"]}') │
+│   - customMetadata: JSON string (vd: '{"department":["cntt"], "academicYear":["2025-2026"]}') │
 │                                                                              │
-│ RESPONSE 201: { "fileId": "67...", "status": "uploading", ... }              │
-│   - Bao gồm: tableOfContents (list phẳng), summary (tóm tắt văn bản).        │
+│ RESPONSE 201:                                                                │
+│   {                                                                          │
+│     "fileId": "67...",                                                       │
+│     "status": "uploading",                                                   │
+│     "tableOfContents": [...],                                                │
+│     "summary": "...",                                                        │
+│     "createdAt": "ISO Date"                                                  │
+│   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. FileService.upload_file_quick: Lưu tạm -> Upload R2 -> Tạo Mongo record.│
@@ -259,7 +270,6 @@ TỔNG: 27 ENDPOINTS
 │   5. Hoàn tất: Sử dụng `find_one_and_update` để chuyển status sang "ready"    │
 │      nguyên tử. Chỉ khi transition thành công mới tăng bộ đếm Metadata.      │
 └──────────────────────────────────────────────────────────────────────────────┘
-
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/files                   [🔒 AUTH]                                   │
@@ -272,16 +282,12 @@ TỔNG: 27 ENDPOINTS
 │   - keywords: string (Tìm theo tên tệp)                                      │
 │   - page/limit: Phân trang (mặc định 1/50)                                   │
 │                                                                              │
-│ RESPONSE 200 OK: { "files": [...], "total": 120 }                            │
+│ RESPONSE 200 OK: { "files": [FileDetailResponse], "total": 120 }             │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Phân tích JWT Rule -> Nếu không phải Admin: ép thêm filter accessScope. │
-│   2. Chú ý: Tệp không có nhãn accessScope sẽ bị ẩn đối với Student/Lecture.  │
-│   3. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
-│   4. Truy vấn MongoDB trả về danh sách tệp Metadata Masked.                  │
+│   1. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
+│   2. Truy vấn MongoDB trả về danh sách tệp tin.                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-
-
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ PATCH /api/files/{file_id}       [🔒 ADMIN]                                  │
@@ -293,7 +299,7 @@ TỔNG: 27 ENDPOINTS
 │     "displayName": "Tên mới.pdf",                                            │
 │     "customMetadata": {                                                      │
 │       "academicYear": ["2025-2026"],                                         │
-│       "accessScope": ["lecture"]                                             │
+│       "department": ["dao_tao"]                                              │
 │     }                                                                        │
 │   }                                                                          │
 │                                                                              │
@@ -316,7 +322,7 @@ TỔNG: 27 ENDPOINTS
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/toc-tree/{fileId}       [🔒 AUTH]                                   │
-│ ├──────────────────────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy cấu trúc mục lục (TOC Tree) chi tiết theo PageIndex Schema.        │
 │ RESPONSE: { "docName": "...", "structure": [...], "markdownStoragePath": "..." } │
 │ LUỒNG XỬ LÝ: Truy vấn collection `file_toc_trees` theo fileId.                │
@@ -327,7 +333,7 @@ TỔNG: 27 ENDPOINTS
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy thông tin chi tiết một tệp tin.                                   │
 │ RESPONSE: FileDetailResponse kèm Download URLs, tableOfContents và summary.  │
-│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2 (Public hoặc Presigned).    │
+│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2.                            │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -337,6 +343,8 @@ TỔNG: 27 ENDPOINTS
 │ RESPONSE: Binary file stream.                                                │
 │ LUỒNG XỬ LÝ: FileService tải bytes từ R2 và trả về qua StreamingResponse.    │
 └──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
 │ DELETE /api/files/{fileId}       [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
@@ -405,15 +413,337 @@ TỔNG: 27 ENDPOINTS
 │                                                                              │
 │ REQUEST: { "question": "...", "topK": 5, "minScore": 0.3 }                   │
 │                                                                              │
-│ RESPONSE: { "items": [{"rank": 1, "score": 0.85, "text": "...", ...}] }      │
-│                                                                              │
-│ LUỒNG XỬ LÝ: Thực thi Vector Search nguyên bản trên Qdrant và trả về metadata.│
+│ RESPONSE:                                                                    │
+│   {                                                                          │
+│     "query": "...",                                                          │
+│     "topK": 5,                                                               │
+│     "count": 5,                                                              │
+│     "items": [                                                               │
+│        { "rank": 1, "score": 0.85, "text": "...", "fileName": "..." }        │
+│     ]                                                                        │
+│   }                                                                          │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Tạo embedding cho câu hỏi đầu vào.                                      │
+│   2. Thực thi Vector Search (Coarse Search) trên Qdrant collection chính.    │
+│   3. Trả về nội dung thô của các Chunks tìm được kèm metadata của từng tệp.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
+════════════════════════════════════════════════════════════════════════════════
+                        6. FAQ MODULE APIs
+════════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/faqs                    [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy danh sách các FAQ đang hoạt động có hỗ trợ filter và phân trang.  │
+│        Sử dụng Native MongoDB Full-Text Search (FTS) khi có tham số `search`.│
+│                                                                              │
+│ REQUEST QUERY: ?is_active=true&metadataFilter={"cohort":["k63"]}&search=...&page=1&limit=20 │
+│   - is_active: bool (optional)                                               │
+│   - metadataFilter: JSON string (optional) - VD: {"cohort": ["k63"]}         │
+│   - search: string (optional) - Tìm kiếm Full-Text (không dấu/có dấu)        │
+│   - page/limit: Phân trang (mặc định 1/20)                                   │
+│                                                                              │
+│ RESPONSE: { "items": [FaqResponse], "total": 10, "page": 1, "limit": 20 }    │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Nhận các tham số filter và phân trang.                                  │
+│   2. Nếu có `search`: Thực hiện tìm kiếm Full-Text trên MongoDB index.       │
+│      - Tự động chuẩn hóa câu hỏi về dạng không dấu trước khi query.          │
+│      - Sắp xếp kết quả theo độ liên quan (textScore) thay vì thời gian.      │
+│   3. Nếu không có `search`: Truy vấn thông thường, sắp xếp theo LIFO.        │
+│   4. Trả về danh sách FAQ và tổng số lượng.                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/faqs/{id}               [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy chi tiết một câu hỏi FAQ theo ID.                                 │
+│ RESPONSE 200 OK: FaqResponse object.                                         │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Tìm kiếm FAQ theo ID trong MongoDB.                                     │
+│   2. Tăng bộ đếm `view_count` thêm 1.                                        │
+│   3. Trả về thông tin chi tiết câu hỏi và câu trả lời.                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs                   [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tạo một FAQ thủ công. Hệ thống sẽ tự động tạo embedding vector lưu    │
+│        vào Qdrant faqs collection.                                           │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "question": "...",                                                       │
+│     "answerRichText": "...",                                                 │
+│     "metadataFilter": { "academicYear": [], "cohort": [] }                   │
+│   }                                                                          │
+│ RESPONSE: FaqResponse object                                                 │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Lưu document vào MongoDB collection `faqs`.                             │
+│   2. Gọi LLM Service để tạo Embedding Vector cho nội dung câu hỏi.           │
+│   3. Upsert vector và metadata vào Qdrant collection `faqs` để search.       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/faqs/{id}              [🔒 ADMIN]                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Cập nhật nội dung câu hỏi, câu trả lời hoặc metadata của FAQ.        │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "question": "...",                                                       │
+│     "answerRichText": "...",                                                 │
+│     "metadataFilter": {...},                                                 │
+│     "isActive": true                                                         │
+│   }                                                                          │
+│ RESPONSE: FaqResponse object đã cập nhật.                                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Cập nhật các trường dữ liệu mới vào MongoDB.                            │
+│   2. Nếu câu hỏi thay đổi, re-generate embedding và cập nhật lại Qdrant.     │
+│   3. Nếu chỉ thay đổi metadata, đồng bộ lại payload trên Qdrant.             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/faqs/{id}             [🔒 ADMIN]                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa hoàn toàn một FAQ khỏi MongoDB và Qdrant collection.              │
+│ RESPONSE 204: No Content.                                                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xóa bản ghi trong MongoDB collection `faqs`.                            │
+│   2. Xóa vector tương ứng trong Qdrant collection `faqs`.                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/match             [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Đầu API Debug để thử nghiệm thuật toán Semantic Search trên kho FAQ.  │
+│ REQUEST BODY: { "question": "...", "threshold": 0.85, "metadataFilter": {} } │
+│ RESPONSE: FaqResponse object (câu hỏi khớp nhất) hoặc 404 (Không tìm thấy).  │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Chuyển đổi câu hỏi đầu vào thành vector embedding.                      │
+│   2. Tìm kiếm trên Qdrant collection `faqs` kèm filter và threshold.         │
+│   3. Trả về FAQ có độ tương đồng cao nhất nếu vượt qua ngưỡng.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/synthesis         [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Kích hoạt tiến trình phân tích gom cụm (Clustering) các Interaction   │
+│        Logs (Chat/Email) và dùng LLM tổng hợp ra các FAQ Candidates.         │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "dateFrom": "ISO Date",                                                  │
+│     "dateTo": "ISO Date",                                                    │
+│     "sources": ["chat", "inquiry_email"]                                     │
+│   }                                                                          │
+│ RESPONSE:                                                                    │
+│   {                                                                          │
+│     "batchId": "...",                                                        │
+│     "candidatesCreated": 5,                                                  │
+│     "totalLogsProcessed": 100,                                               │
+│     "clustersFound": 10,                                                     │
+│     "failedClusters": 0                                                      │
+│   }                                                                          │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Truy vấn Interaction Logs trong khoảng thời gian yêu cầu.               │
+│   2. Gom cụm (Clustering) các câu hỏi tương đồng dựa trên vector.            │
+│   3. Với mỗi cụm, gọi LLM tổng hợp câu trả lời chung và tạo FAQ Candidate.   │
+│   4. Lưu các ứng viên vào collection `faq_candidates` để chờ Admin duyệt.    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/faqs/candidates/list    [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy danh sách các Candidate chờ duyệt từ quá trình Synthesis.         │
+│        Hỗ trợ tìm kiếm Full-Text trên câu hỏi và bản thảo trả lời.           │
+│                                                                              │
+│ REQUEST QUERY: ?status=pending&search=...&page=1&limit=20                    │
+│   - status: string (pending|approved|rejected|null) - null trả về tất cả.    │
+│   - search: string (optional) - Tìm kiếm Full-Text trên Candidates.          │
+│   - page/limit: Phân trang (mặc định 1/20)                                   │
+│                                                                              │
+│ RESPONSE: { "items": [FaqCandidateResponse], "total": 5, "page": 1, "limit": 20 } │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Truy vấn danh sách trong collection `faq_candidates`.                   │
+│   2. Nếu có `search`: Sử dụng MongoDB $text search và sắp xếp theo trọng số. │
+│   3. Trả về kết quả phân trang kèm metadata.                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/candidates/{candidateId}/review [🔒 ADMIN]                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Phê duyệt (Approve) hoặc Từ chối (Reject) một FAQ Candidate. Nếu      │
+│        Approve, hệ thống sẽ tự động tạo thành FAQ chính thức.                │
+│        Hỗ trợ 'delete' để xóa ứng viên khỏi danh sách.                       │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "action": "approve | reject | delete",                                   │
+│     "questionOverride": "...",                                               │
+│     "answerRichTextOverride": "...",                                         │
+│     "metadataFilterOverride": {...},                                         │
+│     "note": "Review note"                                                    │
+│   }                                                                          │
+│ RESPONSE: FaqCandidateResponse (ID alias: candidateId)                       │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Cập nhật trạng thái của Candidate trong MongoDB.                         │
+│   2. Nếu `action=approve`: Gọi logic tạo FAQ chính thức (Mongo + Qdrant).    │
+│   3. Trả về dữ liệu ứng viên sau khi xử lý.                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/import/preview    [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tải lên tệp Excel và xem trước các câu hỏi FAQ sẽ được trích xuất.    │
+│        Hệ thống tự động bảo toàn định dạng và chuyển sang Markdown.         │
+│        Hỗ trợ: In đậm, In nghiêng, Gạch chân và Hyperlink.                   │
+│ REQUEST (Multipart):                                                         │
+│   - file: <binary .xlsx>                                                     │
+│   - question_col: string (Tên hoặc chữ cái cột câu hỏi, vd: "Câu hỏi", "B")  │
+│   - answer_col: string (Tên hoặc chữ cái cột trả lời, vd: "Trả lời", "C")    │
+│   - metadataFilterJson: JSON string (VD: {"academic_year": "D", "cohort": "E"})│
+│   - sheet_name: string (Tùy chọn, tên sheet cần đọc)                         │
+│   - skip_rows: int (Số dòng bỏ qua ở đầu, mặc định: 1)                       │
+│                                                                              │
+│ LƯU Ý: Hệ thống tự động xử lý số nguyên từ Excel (vd: 2020.0 -> 2020) và      │
+│ bảo toàn Rich Text (In đậm, In nghiêng, Gạch chân, Hyperlinks).              │
+│ Tất cả các liên kết (<a>) sẽ được xử lý để mở trong tab mới.                │
+│                                                                              │
+│ RESPONSE:                                                                    │
+│   {                                                                          │
+│     "totalRows": 4,                                                          │
+│     "validRows": 3,                                                          │
+│     "invalidRows": 1,                                                        │
+│     "rows": [                                                                │
+│        { "question": "...", "answerRichText": "...", "metadata": {...}, ... }│
+│     ]                                                                        │
+│   }                                                                          │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Đọc file Excel bằng thư viện `openpyxl`.                                │
+│   2. Duyệt từng dòng, trích xuất Rich Text và convert sang Markdown/HTML.    │
+│   3. Kiểm tra tính hợp lệ của dữ liệu (Câu hỏi/Trả lời không trống).         │
+│   4. Trả về danh sách preview để người dùng xác nhận trước khi import.       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/import            [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Import hàng loạt FAQ từ tệp Excel vào hệ thống.                       │
+│        Bảo toàn định dạng Rich Text (Bold, Italic, Underline, Links).        │
+│        Hỗ trợ song song embedding và bỏ qua các câu hỏi bị trùng lặp.        │
+│ REQUEST (Multipart): Tương tự endpoint preview.                              │
+│   - skip_duplicates: bool (Mặc định: true)                                   │
+│ RESPONSE: { "total": 10, "created": 8, "skipped": 2, "failed": 0, "errors": []}│
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Thực hiện bóc tách dữ liệu tương tự endpoint preview.                   │
+│   2. Lọc danh sách câu hỏi hợp lệ.                                           │
+│   3. Thực hiện Bulk Insert vào MongoDB và Bulk Upsert vào Qdrant.            │
+│   4. Trả về báo cáo chi tiết số lượng thành công/thất bại/trùng lặp.         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/bulk              [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tạo hàng loạt FAQ từ dữ liệu JSON.                                    │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "items": [                                                               │
+│       { "question": "...", "answerRichText": "...", "metadataFilter": {...} }│
+│     ],                                                                       │
+│     "skipDuplicates": true                                                   │
+│   }                                                                          │
+│ RESPONSE: Tương tự endpoint import.                                          │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Nhận mảng dữ liệu FAQ dưới dạng JSON.                                   │
+│   2. Thực hiện quy trình Bulk Create (Lưu Mongo + Embed + Qdrant).           │
+│   3. Trả về kết quả xử lý hàng loạt.                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+
 
 ════════════════════════════════════════════════════════════════════════════════
-                        6. DEBUG & PREVIEW APIs
+                        7. FORMS MODULE APIs
+════════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/forms                   [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy danh sách các biểu mẫu học thuật (link hướng dẫn, mẫu đơn).       │
+│        Hỗ trợ tìm kiếm theo tên biểu mẫu.                                   │
+│                                                                              │
+│ REQUEST QUERY: ?search=...&page=1&limit=20                                   │
+│   - search: string (optional) - Tìm kiếm theo Loại văn bản (Document Type)   │
+│   - page/limit: Phân trang (mặc định 1/20)                                   │
+│                                                                              │
+│ RESPONSE: { "items": [FormResponse], "pagination": {...} }                   │
+│                                                                              │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Truy vấn MongoDB collection `forms`.                                    │
+│   2. Nếu có `search`: Thực hiện regex search trên trường `document_type`.    │
+│   3. Trả về kết quả phân trang kèm thông tin link và ghi chú.                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/forms                  [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tạo mới một biểu mẫu học thuật.                                       │
+│                                                                              │
+│ REQUEST BODY:                                                                │
+│   {                                                                          │
+│     "documentType": "Đơn xin nghỉ học",                                      │
+│     "contentLink": "<a href='...'>Tải về</a>",                               │
+│     "notes": "Ghi chú bổ sung..."                                            │
+│   }                                                                          │
+│                                                                              │
+│ RESPONSE 201: FormResponse object.                                           │
+│                                                                              │
+│ LUỒNG XỬ LÝ: Lưu dữ liệu vào MongoDB collection `forms`.                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PUT /api/forms/{id}              [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Cập nhật thông tin biểu mẫu.                                          │
+│ REQUEST BODY: Tương tự POST /api/forms.                                      │
+│ RESPONSE 200 OK: FormResponse object đã cập nhật.                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/forms/{id}           [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa một biểu mẫu khỏi hệ thống.                                       │
+│ RESPONSE 204: No Content.                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/forms/import-preview   [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xem trước dữ liệu biểu mẫu trích xuất từ file Excel.                  │
+│                                                                              │
+│ REQUEST (Multipart):                                                         │
+│   - file: <binary .xlsx>                                                     │
+│   - document_type_col: string (Cột loại văn bản, vd: "A")                    │
+│   - content_link_col: string (Cột link nội dung, vd: "B")                    │
+│   - notes_col: string (Cột ghi chú, vd: "C" - Optional)                      │
+│   - start_row: int (Dòng bắt đầu đọc dữ liệu, mặc định: 2)                   │
+│                                                                              │
+│ RESPONSE: { "rows": [FormImportRow], "totalPreviewed": 10 }                  │
+│                                                                              │
+│ LUỒNG XỬ LÝ: Tương tự FAQ import, bảo toàn Rich Text và chuẩn hóa số.        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/forms/import           [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Import hàng loạt biểu mẫu từ Excel vào hệ thống.                       │
+│        Sử dụng cơ chế Upsert (Cập nhật nếu trùng Document Type).             │
+│                                                                              │
+│ REQUEST: Tương tự endpoint preview.                                          │
+│ RESPONSE: { "message": "...", "count": 10 }                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════
+                        8. DEBUG & PREVIEW APIs
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -435,7 +765,7 @@ TỔNG: 27 ENDPOINTS
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        7. REAL-TIME NOTIFICATIONS
+                        9. REAL-TIME NOTIFICATIONS
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -450,11 +780,12 @@ TỔNG: 27 ENDPOINTS
 │      - {"step": "parsing_markdown", ...}                                     │
 │      - {"step": "ready", ...}                                                │
 │   3. Socket tự động đóng khi hoàn tất hoặc lỗi.                              │
+│   4. Link liên kết trong thông báo (nếu có) sẽ mở trong tab mới.             │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        7. APPENDIX: ERROR CODES
+                        10. APPENDIX: ERROR CODES
 ════════════════════════════════════════════════════════════════════════════════
 
 - 400 Bad Request: Lỗi tham số (ValidationException).
@@ -471,6 +802,7 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Background Task: Hệ thống tự động quét và dọn dẹp các tệp quá hạn mỗi 30 phút.
 - R2 Fallback: Nếu cache bị dọn dẹp, hệ thống sẽ tự động tải lại từ R2 khi có yêu cầu.
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
+- Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-Hoàn tất bản Đặc tả API chi tiết v4.8.0 (Full Compliance).
+Hoàn tất bản Đặc tả API chi tiết v5.3.0 (Full Compliance).
 --------------------------------------------------------------------------------

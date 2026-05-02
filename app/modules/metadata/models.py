@@ -11,8 +11,6 @@ class AllowedValue:
     is_active: bool = True              
     color: Optional[str] = None         
     total_files: int = 0                
-    visible_roles: List[str] = field(default_factory=list)
-    
     def to_dict(self) -> Dict[str, Any]:
         from app.core.text_utils import remove_accents
         return {
@@ -22,7 +20,6 @@ class AllowedValue:
             "is_active": self.is_active,
             "color": self.color,
             "total_files": self.total_files,
-            "visible_roles": self.visible_roles,
         }
     
     @staticmethod
@@ -33,7 +30,6 @@ class AllowedValue:
             is_active=data.get("is_active", True),
             color=data.get("color"),
             total_files=data.get("total_files", 0),
-            visible_roles=data.get("visible_roles", []),
         )
 
 

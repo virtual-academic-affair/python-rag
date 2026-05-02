@@ -3,21 +3,42 @@ source "$(dirname "$0")/common.sh"
 
 log_header "6. CHAT"
 
-# 1. Chat query
-log_info "POST /api/chat/query"
-
-QUERY_BODY='{"question": "Hi", "chatHistory": []}'
-
+# 1. Chat query - Small Talk (Bypass RAG)
+log_info "POST /api/chat/query — Small Talk"
+QUERY_BODY='{"question": "Xin chào, bạn là ai?", "chatHistory": []}'
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -H "${STUDENT_AUTH_HEADER}" \
     -d "$QUERY_BODY" 2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "200" "Chat Query"
+check_response "$RESPONSE" "200" "Chat Query — Small Talk"
+# Verify source is 'llm' and no sources provided (bypass RAG)
+echo "$RESPONSE" | sed '$d' | grep -q '"source":[[:space:]]*"llm"' && log_success "  -> Source check: llm (Correct)" || log_warning "  -> Source check failed or different"
 
-# 2. Chat streaming (SSE)
+# 2. Chat query - FAQ Match (Direct answer)
+log_info "POST /api/chat/query — FAQ Match"
+QUERY_BODY='{"question": "Thủ tục xin bảo lưu kết quả học tập?", "chatHistory": []}'
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" \
+    -d "$QUERY_BODY" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Chat Query — FAQ Match"
+# Verify source is 'faq'
+echo "$RESPONSE" | sed '$d' | grep -q '"source":[[:space:]]*"faq"' && log_success "  -> Source check: faq (Correct)" || log_warning "  -> Source check failed or different"
+
+# 3. Chat query - RAG Search (Document-based)
+log_info "POST /api/chat/query — RAG Search"
+QUERY_BODY='{"question": "Điều kiện tốt nghiệp của trường là gì, GPA bao nhiêu?", "chatHistory": []}'
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" \
+    -d "$QUERY_BODY" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Chat Query — RAG Search"
+# Verify has sources
+echo "$RESPONSE" | sed '$d' | grep -q '"citationId"' && log_success "  -> Citation check: Found sources (Correct)" || log_warning "  -> Citation check failed: No sources found"
+
+# 4. Chat streaming (SSE)
 log_info "POST /api/chat/stream — Streaming (max 60s)"
-# Capture stream and grep for key indicators
-# Use curl's internal --max-time for better stream handling
+QUERY_BODY='{"question": "GPA bao nhiêu thì được tốt nghiệp?", "chatHistory": []}'
 RESPONSE_STREAM=$(curl -s -N --max-time 60 -X POST "${API_URL}/chat/stream" \
     -H "Content-Type: application/json" \
     -H "${STUDENT_AUTH_HEADER}" \

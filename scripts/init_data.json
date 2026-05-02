@@ -26,8 +26,7 @@
       "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
         "department": ["dao_tao"],
-        "academic_year": ["2024-2025"],
-        "access_scope": ["student"]
+        "academic_year": ["2024-2025"]
       }
     },
     {
@@ -35,8 +34,7 @@
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
         "department": ["dao_tao"],
-        "academic_year": ["2024-2025"],
-        "access_scope": ["student"]
+        "academic_year": ["2024-2025"]
       }
     },
     {
@@ -44,8 +42,7 @@
       "displayName": "Quy định học bổng sinh viên",
       "metadata": {
         "department": ["ctsv"],
-        "academic_year": ["all"],
-        "access_scope": ["student"]
+        "academic_year": ["all"]
       }
     },
     {
@@ -53,8 +50,7 @@
       "displayName": "Quy chế nghiên cứu khoa học",
       "metadata": {
         "department": ["khcn"],
-        "academic_year": ["all"],
-        "access_scope": ["lecture"]
+        "academic_year": ["all"]
       }
     },
     {
@@ -62,8 +58,7 @@
       "displayName": "Hướng dẫn sinh hoạt công dân",
       "metadata": {
         "department": ["ctsv"],
-        "academic_year": ["all"],
-        "access_scope": ["student"]
+        "academic_year": ["all"]
       }
     }
   ]

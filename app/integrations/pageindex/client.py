@@ -75,16 +75,20 @@ class PageIndexClient:
         return self._toc_repo
 
     async def _save_doc_to_cache(self, doc_id: str, data: dict):
-        """Save document metadata to Redis cache with TTL."""
-        await self.redis.connect()
-        # Ensure we don't store double nesting or sensitive internal paths if possible, 
-        # but for now we follow the existing structure.
-        await self.redis.set_json(f"pageindex:doc:{doc_id}", data, ex=MD_CACHE_TTL_SECONDS)
+        try:
+            await self.redis.connect()
+            await self.redis.set_json(f"pageindex:doc:{doc_id}", data, ex=MD_CACHE_TTL_SECONDS)
+        except Exception as e:
+            logger.warning(f"Failed to save doc {doc_id} to Redis cache: {e}")
 
     async def _get_doc_from_cache(self, doc_id: str) -> Optional[dict]:
         """Retrieve document metadata from Redis cache."""
-        await self.redis.connect()
-        return await self.redis.get_json(f"pageindex:doc:{doc_id}")
+        try:
+            await self.redis.connect()
+            return await self.redis.get_json(f"pageindex:doc:{doc_id}")
+        except Exception as e:
+            logger.warning(f"Failed to get doc {doc_id} from Redis cache: {e}")
+            return None
 
     async def index(self, file_path: str, mode: str = "auto", doc_id: str = None) -> str:
         """Index a document. Returns a document_id."""

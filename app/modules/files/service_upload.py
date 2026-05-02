@@ -1,6 +1,7 @@
 import io
 import os
 import logging
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Awaitable, Tuple
 
@@ -38,6 +39,7 @@ class FileUploadMixin:
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> tuple[FileDocument, dict[str, Any]]:
         """Create DB record + upload original to R2, then return immediately with pending status."""
+        start_quick = time.perf_counter()
         state, file_info = await self._prepare_upload_state(
             file_path, original_filename, display_name, custom_metadata
         )
@@ -78,6 +80,10 @@ class FileUploadMixin:
             await _notify("queued_background", "Đã lưu file lên storage, đang xử lý nền")
 
             file_doc = await self.get_file_by_id(state.file_id)
+            
+            quick_dur = time.perf_counter() - start_quick
+            logger.info(f"[Upload] Quick upload for {original_filename} (ID: {state.file_id}) completed in {quick_dur:.2f}s")
+            
             return file_doc, {
                 "file_id": state.file_id,
                 "display_name": display_name or original_filename,
@@ -97,6 +103,7 @@ class FileUploadMixin:
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> None:
         """Continue processing after original file is stored in R2."""
+        start_bg = time.perf_counter()
         async def _notify(step: str, message: str):
             if progress_callback:
                 await progress_callback({"step": step, "message": message, "file_id": file_id})
@@ -159,6 +166,8 @@ class FileUploadMixin:
             if updated_file and sync_meta:
                 await self.metadata_svc.sync_metadata_counters(sync_meta, delta=1)
 
+            bg_dur = time.perf_counter() - start_bg
+            logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")
             await _notify("completed", "Upload hoàn tất")
         except Exception as e:
             logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)

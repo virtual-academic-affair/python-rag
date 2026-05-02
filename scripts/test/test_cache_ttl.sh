@@ -17,7 +17,7 @@ UPLOAD_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
     -F "file=@${TEST_FILE}" \
     -F "displayName=Cache Test ${TIMESTAMP}" \
-    -F 'customMetadata={"access_scope":["student"],"academic_year":["2025-2026"]}' \
+    -F 'customMetadata={"academic_year":["2025-2026"]}' \
     2>/dev/null || echo -e "\n000")
 
 if ! check_response "$UPLOAD_RESPONSE" "201" "Upload Cache Test File"; then

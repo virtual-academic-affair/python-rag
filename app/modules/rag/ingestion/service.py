@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,17 +53,31 @@ class IngestionService:
         chunk_overlap_chars: int = 250,
     ) -> dict[str, Any]:
         """Ingest a PDF file by parsing, chunking, embedding, and storing."""
+        start_total = time.perf_counter()
+        
         # 1. Parse PDF to Markdown
+        start_parse = time.perf_counter()
         pages = await self._parser.parse_pdf_to_markdown(file_path)
         markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
+        parse_dur = time.perf_counter() - start_parse
+        logger.info(f"[Ingestion] Phase 1: Parse PDF to Markdown completed in {parse_dur:.2f}s")
 
         # 2. Generate TOC and Summary
+        start_toc = time.perf_counter()
         toc_result = await self._build_toc(file_id, file_name, markdown_content)
+        toc_dur = time.perf_counter() - start_toc
+        logger.info(f"[Ingestion] Phase 2: Build TOC/Summary completed in {toc_dur:.2f}s")
 
         # 3. Chunk and Index to Qdrant
+        start_index = time.perf_counter()
         chunk_count, indexed_count = await self._chunk_and_index(
             file_id, file_name, pages, metadata, chunk_size_chars, chunk_overlap_chars
         )
+        index_dur = time.perf_counter() - start_index
+        logger.info(f"[Ingestion] Phase 3: Chunking & Qdrant indexing completed in {index_dur:.2f}s")
+        
+        total_dur = time.perf_counter() - start_total
+        logger.info(f"[Ingestion] Total ingestion for file {file_id} completed in {total_dur:.2f}s")
 
         return {
             "file_id": file_id,

@@ -9,8 +9,6 @@ from app.core.config import settings
 
 
 PROTO_STUBS = (
-    Path(__file__).resolve().parent / "app" / "proto" / "label" / "label_pb2.py",
-    Path(__file__).resolve().parent / "app" / "proto" / "label" / "label_pb2_grpc.py",
     Path(__file__).resolve().parent
     / "app"
     / "proto"
@@ -21,6 +19,8 @@ PROTO_STUBS = (
     / "proto"
     / "class_registration"
     / "class_registration_pb2_grpc.py",
+    Path(__file__).resolve().parent / "app" / "proto" / "inquiry" / "inquiry_pb2.py",
+    Path(__file__).resolve().parent / "app" / "proto" / "inquiry" / "inquiry_pb2_grpc.py",
 )
 
 

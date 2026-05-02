@@ -12,6 +12,8 @@ from app.modules.files.ws import router as files_ws
 from app.modules.metadata.router import router as metadata_router
 from app.modules.files.debug_router import router as debug_router
 from app.modules.files.toc_tree.router import router as toc_tree_router
+from app.modules.faq.router import router as faq_router
+from app.modules.forms.router import router as forms_router
 
 logger = logging.getLogger(__name__)
 
@@ -36,5 +38,7 @@ api_router.include_router(metadata_router, prefix="/api")
 api_router.include_router(files_ws, prefix="/api")
 api_router.include_router(debug_router, prefix="/api")
 api_router.include_router(toc_tree_router, prefix="/api")
+api_router.include_router(faq_router, prefix="/api")
+api_router.include_router(forms_router, prefix="/api")
 
-logger.info("✅ All modular routers included (email, chat, files, metadata)")
+logger.info("✅ All modular routers included (email, chat, files, metadata, forms)")

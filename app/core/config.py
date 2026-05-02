@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # RAG settings (from rag-service)
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     GEMINI_TEMPERATURE: float = 0.7
     GEMINI_MAX_OUTPUT_TOKENS: int = 2048
     GEMINI_TOP_P: float = 0.95
@@ -79,7 +80,17 @@ class Settings(BaseSettings):
     PAGEINDEX_IF_ADD_DOC_DESCRIPTION: str = "no"
     PAGEINDEX_IF_ADD_NODE_TEXT: str = "no"
 
-
+    # ====================================
+    # FAQ Configuration
+    # ====================================
+    FAQ_QDRANT_COLLECTION: str = "faqs"
+    FAQ_SEMANTIC_THRESHOLD: float = 0.90
+    FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
+    FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7
+    FAQ_SYNTHESIS_MIN_CLUSTER_SIZE: int = 10
+    FAQ_SYNTHESIS_LOOKBACK_DAYS: int = 30
+    FAQ_LOG_RETENTION_DAYS: int = 90
+    FAQ_LOG_MIN_QUESTION_LENGTH: int = 15
 
 
     # ====================================

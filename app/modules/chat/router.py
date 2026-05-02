@@ -63,7 +63,7 @@ async def chat_query(
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            cohort="Unknown",  # Requires further alignment if cohort is needed from token
+            cohort=user.get("cohort", user.get("class", "Unknown")),
             role=user_role,
         )
 
@@ -125,7 +125,7 @@ async def chat_stream(
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            cohort="Unknown",  # Requires further alignment if cohort is needed from token
+            cohort=user.get("cohort", user.get("class", "Unknown")),
             role=user_role,
         )
 

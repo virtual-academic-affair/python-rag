@@ -26,6 +26,7 @@ run_test "test_health.sh"
 run_test "test_classification.sh"
 run_test "test_metadata.sh"
 run_test "test_files.sh"
+run_test "test_faq.sh"
 run_test "test_debug.sh"
 
 log_header "RATE LIMIT PAUSE"

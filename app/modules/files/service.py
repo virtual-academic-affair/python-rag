@@ -50,7 +50,6 @@ from app.modules.files.upload_state import (
     UploadStep,
     UploadState,
 )
-from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
@@ -241,31 +240,7 @@ class FileService(FileUploadMixin):
             
         return None
 
-    async def _apply_role_filters_and_metadata_masking(self, files: List[Dict[str, Any]], user_role: str) -> List[Dict[str, Any]]:
-        """
-        Centrally handles both access permission filtering (access_scope)
-        and custom_metadata masking (visible_roles).
-        """
-        if not files or not user_role:
-            return files
 
-        # 1. Filter by access_scope (scope empty means internal file => admin only)
-        if user_role == "student":
-            files = [
-                f for f in files
-                if "student" in ((f.get("custom_metadata") or {}).get("access_scope") or [])
-            ]
-        elif user_role == "lecture":
-            files = [
-                f for f in files
-                if "lecture" in ((f.get("custom_metadata") or {}).get("access_scope") or [])
-            ]
-        # Admin sees all, no filter needed
-
-        # 2. Mask custom_metadata based on visible_roles via MetadataService
-        await self.metadata_svc.filter_custom_metadata_by_role(files, user_role)
-
-        return files
 
 
 
@@ -308,39 +283,17 @@ class FileService(FileUploadMixin):
                 # Wrap keyword $or inside $and so it doesn't get overwritten
                 filters["$and"] = filters.get("$and", []) + [{"$or": keyword_or}]
 
-        # Add role-based access filtering directly to DB query (Fix pagination)
-        if user_role == "student":
-            filters["custom_metadata.access_scope"] = "student"
-        elif user_role == "lecture":
-            filters["custom_metadata.access_scope"] = "lecture"
-        # Admin sees all, no filter needed
-
         file_dicts = await self.file_repo.find_many(filters, skip, limit, sort=[("created_at", -1)])
         total = await self.file_repo.count(filters)
-
-        # Apply metadata masking (visible_roles), access filtering is now handled by the DB
-        await self.metadata_svc.filter_custom_metadata_by_role(file_dicts, user_role)
 
         files = [_to_file_model(f) for f in file_dicts]
         return files, total
 
     async def get_file_by_id(self, file_id: str, user_role: Optional[str] = None) -> Optional[FileDocument]:
-        """
-        Get a single file by ID.
-        If user_role is provided, validates access permissions and masks metadata.
-        """
+        """Get a single file by ID."""
         file_dict = await self.file_repo.find_by_id(file_id)
         if not file_dict:
             return None
-
-        if user_role:
-            # _apply_role_filters_and_metadata_masking expects a list and returns a filtered list
-            filtered_files = await self._apply_role_filters_and_metadata_masking([file_dict], user_role)
-            if not filtered_files:
-                # If the file was filtered out due to access_scope, it's not found for this user
-                return None
-            file_dict = filtered_files[0]
-
         return _to_file_model(file_dict)
 
     async def get_file_data(self, file_id: str, user_role: str = "student") -> tuple[Any, FileDocument]:
@@ -349,12 +302,7 @@ class FileService(FileUploadMixin):
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
 
-        # Apply role filtering to verify access
-        filtered_files = await self._apply_role_filters_and_metadata_masking([file_doc_dict], user_role)
-        if not filtered_files:
-            raise NotFoundException("File access denied", file_id)
-
-        file_doc = _to_file_model(filtered_files[0])
+        file_doc = _to_file_model(file_doc_dict)
         
         from app.integrations.storage.client import r2_storage
         file_data = await r2_storage.download_file(file_doc.storage_path)

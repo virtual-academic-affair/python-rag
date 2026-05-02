@@ -113,13 +113,15 @@ class QdrantIndexer:
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
             payload={"metadata": new_metadata},
-            points=qm.Filter(
-                must=[
-                    qm.FieldCondition(
-                        key="file_id",
-                        match=qm.MatchValue(value=file_id)
-                    )
-                ]
+            points_selector=qm.FilterSelector(
+                filter=qm.Filter(
+                    must=[
+                        qm.FieldCondition(
+                            key="file_id",
+                            match=qm.MatchValue(value=file_id)
+                        )
+                    ]
+                )
             ),
             wait=True,
         )

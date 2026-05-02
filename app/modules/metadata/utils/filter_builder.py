@@ -7,11 +7,7 @@ Logic:
 - Array value → OR same key: (key="v1" OR key="v2")
 - has AllowedValue(value="all") → auto add OR key="all"
 - Keys joined with AND
-- Enforce access_scope by role:
-    * student → access_scope="student"
-    * lecture → access_scope="lecture" or "student"
-    * admin → no access_scope filter
-
+- Keys joined with AND
 Uses AllowedValue.value (NOT display_name) for filter string.
 """
 
@@ -96,7 +92,7 @@ class FilterBuilder:
         
         Args:
             metadata: Metadata dict (e.g., {"academic_year": "2024-2025", "cohort": ["K20", "K21"]})
-            user_role: User role (student, lecture, admin) for access_scope enforcement
+            user_role: User role (student, lecture, admin)
             skip_validation: If True, skip validation (useful when metadata already validated at upload)
         
         Returns:
@@ -104,10 +100,6 @@ class FilterBuilder:
         
         Raises:
             ValueError: If metadata validation fails (when skip_validation=False)
-        
-        Note:
-            For student role, access_scope is enforced to "student" regardless of input.
-            For admin, access_scope filter is removed (can see all documents).
         """
         # Load metadata types cache
         await self._load_metadata_types_cache()
@@ -119,20 +111,6 @@ class FilterBuilder:
                 raise ValueError(f"Invalid metadata: {', '.join(errors)}")
 
         filter_metadata = dict(metadata) if metadata else {}
-        
-        # Enforce access_scope by role AFTER validation
-        # Only inject the user's explicit role, not generic "public"
-        if user_role == "student":
-            filter_metadata["access_scope"] = ["student"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['student']")
-        elif user_role == "lecture":
-            filter_metadata["access_scope"] = ["lecture"]
-            logger.debug(f"Role={user_role}: enforcing access_scope=['lecture']")
-        elif user_role == "admin":
-            if "access_scope" in filter_metadata:
-                logger.debug(f"Role={user_role}: using provided access_scope={filter_metadata['access_scope']}")
-            else:
-                logger.debug(f"Role={user_role}: no access_scope filter")
         
         # Build filter parts for each key
         filter_parts = []
@@ -182,18 +160,12 @@ class FilterBuilder:
 
         filter_metadata = dict(metadata) if metadata else {}
         
-        # Enforce access_scope by role AFTER validation
-        if user_role == "student":
-            filter_metadata["access_scope"] = ["student"]
-        elif user_role == "lecture":
-            filter_metadata["access_scope"] = ["lecture"]
-        
         from qdrant_client.http import models as qm
         must_conditions = []
         
         for key, value in filter_metadata.items():
             meta_type = self._metadata_types_cache.get(key)
-            if not meta_type and key != "access_scope": # access_scope is a system level key treated implicitly or explicitly cached
+            if not meta_type:
                 logger.warning(f"Metadata key '{key}' not found in cache for qdrant filter, skipping")
                 continue
                 
@@ -233,16 +205,10 @@ class FilterBuilder:
 
         filter_metadata = dict(metadata) if metadata else {}
         
-        # Enforce access_scope by role AFTER validation
-        if user_role == "student":
-            filter_metadata["access_scope"] = ["student"]
-        elif user_role == "lecture":
-            filter_metadata["access_scope"] = ["lecture"]
-            
         mongo_filter = {}
         for key, value in filter_metadata.items():
             meta_type = self._metadata_types_cache.get(key)
-            if not meta_type and key != "access_scope":
+            if not meta_type:
                 logger.warning(f"Metadata key '{key}' not found in cache for mongo filter, skipping")
                 continue
                 

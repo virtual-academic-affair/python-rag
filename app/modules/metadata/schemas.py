@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -15,10 +15,6 @@ class AllowedValueSchema(BaseSchema):
     is_active: bool = Field(True, description="Active status (hidden if False)")
     color: Optional[str] = Field(None, description="Hex color code (e.g., #E74C3C)")
     total_files: int = Field(default=0, description="Count of files using this value")
-    visible_roles: List[Literal["lecture", "student"]] = Field(
-        default_factory=list,
-        description="Roles that can see this value: ['lecture', 'student']. Empty list = Only visible to Admin."
-    )
 
 class AllowedValueResponse(AllowedValueSchema):
     pass
@@ -39,13 +35,11 @@ class AllowedValueCreateRequest(BaseSchema):
     display_name: str = Field(..., description="Display name for UI")
     is_active: bool = Field(True, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
-    visible_roles: List[Literal["lecture", "student"]] = Field(default_factory=list, description="Roles that can see this value")
 
 class AllowedValueUpdateRequest(BaseSchema):
     display_name: Optional[str] = Field(None, description="Display name for UI")
     is_active: Optional[bool] = Field(None, description="Active status")
     color: Optional[str] = Field(None, description="Hex color code")
-    visible_roles: Optional[List[Literal["lecture", "student"]]] = Field(None, description="Roles that can see this value")
 
 class MetadataTypeResponse(BaseSchema):
     metadata_id: str = Field(..., description="MongoDB ObjectId")

@@ -84,3 +84,7 @@ litellm==1.83.4
 
 # Redis for shared caching
 redis==5.0.1
+
+openpyxl==3.1.5
+markdown==3.10.2
+markdownify==1.2.2

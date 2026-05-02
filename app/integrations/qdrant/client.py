@@ -14,6 +14,7 @@ from google import genai
 from google.genai import types
 
 from app.core.config import settings
+from app.integrations.llm.embedding import get_embedding_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,8 +26,6 @@ _qdrant_lock = asyncio.Lock()
 class QdrantRetrievalService:
     def __init__(self):
         self._client: Optional[QdrantClient] = None
-        self._genai_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-        self._embed_model_name = "models/gemini-embedding-001" # User specified embedding model
 
     @property
     def qdrant_client_instance(self) -> QdrantClient:
@@ -39,13 +38,8 @@ class QdrantRetrievalService:
         return self._client
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding using new google-genai SDK (native async)."""
-        response = await self._genai_client.aio.models.embed_content(
-            model=self._embed_model_name,
-            contents=text,
-            config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
-        )
-        return response.embeddings[0].values
+        """Get embedding using shared EmbeddingService."""
+        return await get_embedding_service().embed(text)
 
     async def ensure_collection(self) -> None:
         """Ensure collection and indexes exist (only once per process)."""
@@ -58,37 +52,36 @@ class QdrantRetrievalService:
             if _collection_ready:
                 return
 
-        def _ensure() -> None:
-            collections = self.qdrant_client_instance.get_collections().collections
-            names = {c.name for c in collections}
-            if settings.QDRANT_COLLECTION_NAME not in names:
-                self.qdrant_client_instance.create_collection(
-                    collection_name=settings.QDRANT_COLLECTION_NAME,
-                    vectors_config=qm.VectorParams(
-                        size=settings.QDRANT_VECTOR_SIZE,
-                        distance=qm.Distance.COSINE,
-                    ),
-                )
-            
-            # Ensure payload indexes
-            fields = [
-                "file_id", 
-                "metadata.access_scope", 
-                "metadata.academic_year", 
-                "metadata.department"
-            ]
-            for field in fields:
-                try:
-                    self.qdrant_client_instance.create_payload_index(
+            def _ensure() -> None:
+                collections = self.qdrant_client_instance.get_collections().collections
+                names = {c.name for c in collections}
+                if settings.QDRANT_COLLECTION_NAME not in names:
+                    self.qdrant_client_instance.create_collection(
                         collection_name=settings.QDRANT_COLLECTION_NAME,
-                        field_name=field,
-                        field_schema=qm.PayloadSchemaType.KEYWORD,
+                        vectors_config=qm.VectorParams(
+                            size=settings.QDRANT_VECTOR_SIZE,
+                            distance=qm.Distance.COSINE,
+                        ),
                     )
-                except Exception:
-                    pass
+                
+                # Ensure payload indexes
+                fields = [
+                    "file_id", 
+                    "metadata.academic_year", 
+                    "metadata.department"
+                ]
+                for field in fields:
+                    try:
+                        self.qdrant_client_instance.create_payload_index(
+                            collection_name=settings.QDRANT_COLLECTION_NAME,
+                            field_name=field,
+                            field_schema=qm.PayloadSchemaType.KEYWORD,
+                        )
+                    except Exception:
+                        pass
 
-        await asyncio.to_thread(_ensure)
-        _collection_ready = True
+            await asyncio.to_thread(_ensure)
+            _collection_ready = True
 
     async def retrieve(
         self,

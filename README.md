@@ -1,6 +1,6 @@
 # AI Service - Unified Modular RAG & Email Classification
 
-**Version 4.7.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
+**Version 5.3.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
 
 ---
 
@@ -16,6 +16,16 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
     *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets (`/api/files/progress/{clientId}`).
     *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks và cấu trúc mục lục.
     *   **Tiêu chuẩn Ingestion Flow**: Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant (Chunks/Embeddings).
+3.  **Semantic FAQ Module (v2)**: Hệ thống quản lý câu hỏi thường gặp thông minh:
+    *   **Hybrid Search**: Kết hợp **Semantic Match** (Gemini Embeddings) và **Native MongoDB Full-Text Search (FTS)** trên các trường không dấu (`unaccented`), đảm bảo tìm kiếm chính xác cả từ khóa thô và ý nghĩa ngữ nghĩa.
+    *   **Auto-Synthesis**: Tự động gom cụm các tương tác người dùng (Clustering) và sử dụng LLM để tổng hợp FAQ mới từ dữ liệu thực tế.
+    *   **Bulk Import & Management**: Hỗ trợ nạp hàng loạt FAQ từ Excel (.xlsx) hoặc JSON với hiệu suất cao (parallel embeddings).
+    *   **[NEW] Formatting Preservation**: Tự động giữ nguyên định dạng Rich Text (Bold, Italic, Underline) và Hyperlinks từ file Excel, chuyển đổi sang Markdown để hiển thị đồng nhất.
+    *   **Interaction Logging**: Theo dõi lịch sử chat/email để phục vụ cải tiến hệ thống và tổng hợp kiến thức.
+4.  **Forms Management Module**: Quản lý các liên kết biểu mẫu và quy trình học thuật:
+    *   **Unified Content**: Gộp tên hiển thị và đường dẫn vào một trường Rich Text duy nhất, hỗ trợ định dạng linh hoạt.
+    *   **Link Optimization**: Tự động xử lý mọi liên kết trong Rich Text để mở trong tab mới (`target="_blank"`), đảm bảo trải nghiệm người dùng không bị gián đoạn.
+    *   **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
 
 ---
 
@@ -42,12 +52,14 @@ python-rag/
 ├── app/
 │   ├── api/                    # Cổng vào API tổng hợp (router.py)
 │   ├── core/                   # Cấu hình lõi (Database, Exceptions, Converters)
-│   ├── integrations/           # Client wrappers (R2, Qdrant, PageIndex, gRPC)
+│   ├── integrations/           # Client wrappers (R2, Qdrant, PageIndex, gRPC, Excel)
 │   ├── modules/                # Business Logic phân mảnh theo Domain
 │   │   ├── chat/               # Agentic Chat RAG & Streaming
 │   │   ├── email/              # Orchestrator & Workflow classification
+│   │   ├── faq/                # [NEW] Quản lý FAQ, Semantic Search & Synthesis
+│   │   ├── forms/              # [NEW] Quản lý biểu mẫu và liên kết học thuật
 │   │   ├── files/              # Quản lý tệp (Upload, Delete, TOC Tree)
-│   │   ├── metadata/           # Quản lý nhãn và Role-based masking
+│   │   ├── metadata/           # Quản lý nhãn và Validation
 │   │   └── rag/                # RAG Service & Tool-use logic
 │   ├── pipelines/              # Quy trình xử lý phức tạp (Ingestion)
 │   ├── proto/                  # Protobuf definitions & generated stubs
@@ -82,11 +94,14 @@ Sao chép `.env.example` thành `.env` và điền các tham số:
 Đây là bước bắt buộc trước khi chạy hệ thống lần đầu:
 
 ```bash
-# Xóa và tạo mới Database/Vector/R2
+# Xóa và tạo mới Database/Vector/R2, sau đó tự động nạp FAQ mẫu
 python scripts/init_db.py --skip-confirm
 
-# Seed các nhãn metadata hệ thống (academic_year, cohort, access_scope)
+# Seed các nhãn metadata hệ thống (academic_year, cohort)
 python scripts/seed_metadata.py
+
+# [Optional] Seed dữ liệu FAQ mẫu thủ công từ file JSON khác
+python scripts/seed_faqs.py --file scripts/sample_faqs.json
 ```
 
 ### 4. Chạy Service
@@ -100,20 +115,14 @@ python run.py
 
 Hệ thống có bộ tài liệu cực kỳ chi tiết tại thư mục `docs/`:
 
-*   👉 **[Đặc tả API (docs/api.txt)](file:///Users/trangvu/Documents/Phuc/giao_vu/email/refactor/python-rag/docs/api.txt)**: Danh sách đầy đủ 25 endpoints kèm Workflow, Request/Response mẫu (Chuẩn CamelCase).
-*   👉 **[Kiến trúc hệ thống (docs/project-overview.txt)](file:///Users/trangvu/Documents/Phuc/giao_vu/email/refactor/python-rag/docs/project-overview.txt)**: Mô tả chuyên sâu về pipeline nạp liệu, logic Agentic RAG và cơ chế xác thực gRPC.
+*   👉 **[Đặc tả API (docs/api.txt)]**: Danh sách đầy đủ các endpoints kèm Workflow, Request/Response mẫu (Chuẩn CamelCase).
+*   👉 **[Kiến trúc hệ thống (docs/project-overview.txt)]**: Mô tả chuyên sâu về pipeline nạp liệu, logic Agentic RAG và cơ chế xác thực gRPC.
 
 ---
 
 ## 🔐 Bảo mật & Phân quyền
 
-Hệ thống sử dụng gRPC để xác thực JWT Token từ NestJS. Các mức truy cập:
-*   **Public**: Health check.
-*   **Student**: Truy vấn chat RAG & xem tệp mang chính xác nhãn `student`.
-*   **Lecture**: Truy vấn chat RAG & xem tệp mang chính xác nhãn `lecture`. (Không thấy tệp của Student trừ khi tệp đó được gán cả 2 nhãn).
-*   **ADMIN**: Quản lý toàn bộ hệ thống, xem được mọi tệp kể cả tệp nội bộ (Empty/Internal scope).
-
-**Cơ chế Masking**: Một số giá trị nhãn Metadata (như "Phòng ban nội bộ") sẽ tự động bị ẩn đối với vai trò `student` dựa trên cấu hình `visibleRoles` trong Metadata Type.
+Hệ thống sử dụng gRPC để xác thực JWT Token từ NestJS. Mọi người dùng hợp lệ đều có quyền truy vấn kho tài liệu chung. Quyền quản trị (ADMIN) được yêu cầu cho các tác vụ thay đổi cấu hình hệ thống và Metadata Types.
 
 ---
 

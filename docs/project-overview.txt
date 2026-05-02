@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 4.8.0 | April 2026
+Version 5.3.0 | April 2026
 ================================================================================
 
 MUC LUC (DETAILED INDEX)
@@ -21,37 +21,40 @@ MUC LUC (DETAILED INDEX)
      - 8.2. InquiryService (Intent, RAG Reply, Gmail Draft)
      - 8.3. TaskService (User Lookup & Task dispatching)
      - 8.4. OtherService (Log & Sink)
- 9.  Email Draft Service (RAG-based Reply Generation)
- 10.  Modular RAG Ingestion Pipeline (Phase-by-Phase)
-     - 10.1. R2 Storage (Original Document Storage)
-     - 10.2. LlamaParse (PDF-to-Markdown High-Quality Conversion)
-     - 10.3. PageIndex Indexing (Structural Tree & Description)
-     - 10.4. Qdrant Indexer (Semantic Chunking & Qdrant Push)
- 11.  Hệ thống Metadata Types (Definitions & Rules)
-     - 11.1. System Metadata (academic_year, cohort, access_scope)
-     - 11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY)
- 12.  Filter Builder Logic (Metadata-to-Vector Query Mapping)
-     - 12.1. Role-based Access Scope Expansion
- 13.  RAG Service (Strategy & Search Flow)
- 14.  PageIndex Integration — Agentic Tools (get_document, tree, content)
- 15.  Chat Service & Agentic RAG logic
-     - 15.1. SSE (Server-Sent Events) Streaming Protocol details
- 16.  Auth Service & Security Layer
-     - 16.1. gRPC VerifyToken Request & Response payload mapping
- 17.  Cấu trúc MongoDB Schema (Detailed Field-by-field)
-     - 17.1. Collection: files
-     - 17.2. Collection: file_toc_trees
-     - 17.3. Collection: metadata_types
- 18.  Repository Layer & BaseRepository CRUD pattern
- 19.  Storage Management (Cloudflare R2 Service details)
- 20.  RabbitMQ Ingest Consumer (Consumer Resilience & Retry Logic)
- 21.  Hệ thống Exception Hierarchy & HTTP Status Mapping
- 22.  Danh lục REST API Endpoints đầy đủ
- 23.  Real-time Notifications (WebSocket Progress channel)
- 24.  Cấu hình hệ thống (Settings Table & .env impacts)
- 25.  Scripts hỗ trợ bảo trì (Maintenance & Debug Tools)
- 26.  AI Prompts Tập trung hóa (Propmts.py Context)
- 27.  Hệ thống Snapshot & Restore (Data Persistence)
+ 9.  Forms Management Module (Unified Links & Excel Processing)
+ 10. Email Draft Service (RAG-based Reply Generation)
+ 11. Modular RAG Ingestion Pipeline (Phase-by-Phase)
+     - 11.1. R2 Storage (Original Document Storage)
+     - 11.2. LlamaParse (PDF-to-Markdown High-Quality Conversion)
+     - 11.3. PageIndex Indexing (Structural Tree & Description)
+     - 11.4. Qdrant Indexer (Semantic Chunking & Qdrant Push)
+ 12. FAQ Module v2 (Semantic FAQ & Auto-Synthesis)
+ 13. Hệ thống Metadata Types (Definitions & Rules)
+     - 13.1. System Metadata (academic_year, cohort)
+     - 13.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY)
+ 14. Filter Builder Logic (Metadata-to-Vector Query Mapping)
+     - 14.1. Metadata Filter Construction Logic
+ 15. RAG Service (Strategy & Search Flow)
+ 16. PageIndex Integration — Agentic Tools (get_document, tree, content)
+ 17. Chat Service & Agentic RAG logic
+     - 17.1. SSE (Server-Sent Events) Streaming Protocol details
+ 18. Auth Service & Security Layer
+     - 18.1. gRPC VerifyToken Request & Response payload mapping
+ 19. Cấu trúc MongoDB Schema (Detailed Field-by-field)
+     - 19.1. Collection: files
+     - 19.2. Collection: file_toc_trees
+     - 19.3. Collection: metadata_types
+     - 19.4. Collection: faqs
+     - 19.5. Collection: faq_candidates
+ 20. Repository Layer & BaseRepository CRUD pattern
+ 21. Storage Management (Cloudflare R2 Service details)
+ 22. RabbitMQ Ingest Consumer (Consumer Resilience & Retry Logic)
+ 23. Hệ thống Exception Hierarchy & HTTP Status Mapping
+ 24. Danh lục REST API Endpoints đầy đủ
+ 25. Real-time Notifications (WebSocket Progress channel)
+ 26. Cấu hình hệ thống (Settings Table & .env impacts)
+ 27. Scripts hỗ trợ bảo trì (Maintenance & Debug Tools)
+ 28. Phụ lục: Quy chuẩn xử lý Excel & Rich Text (Integration/Excel)
 
 
 ================================================================================
@@ -79,9 +82,9 @@ SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT (Upload -> R2 -> LlamaParse -> PageInde
     - PageIndex: Đóng vai trò kiến trúc sư mục lục. Nó không lấy text thô mà xây dựng một cây Phân cấp (Building an Heirarchical Tree).
     - Qdrant Indexer (app/pipelines/ingestion/chunking.py): Chịu trách nhiệm chia mảnh (Chunking) và đẩy Vector lên Qdrant kèm Metadata gắn sẵn.
 3.  RAG LAYER:
-    - Khi có Query: Hệ thống kiểm tra JWT User Role -> Mở rộng Filter (vd: Student chỉ thấy file scope \"student\").
+    - Khi có Query: Hệ thống thực hiện Vector search dựa trên query ngữ nghĩa.
     - Qdrant: Trả về Top-K Chunks liên quan nhất.
-    - MongoDB: Trả về \"doc_description\" (1 câu tóm tắt file) để AI định hướng context.
+    - MongoDB: Trả về "doc_description" (1 câu tóm tắt file) để AI định hướng context.
 4.  AGENTIC CHAT LAYER:
     - [NEW] RAG Gate: Hệ thống sử dụng AI để đánh giá câu hỏi. Nếu là câu hỏi xã giao (Small Talk), AI sẽ trả lời trực tiếp mà không cần gọi RAG, giúp tiết kiệm tài nguyên.
     - AI Agent (Gemini) không nhận hàng tấn text. Nó nhận danh sách File IDs.
@@ -107,14 +110,17 @@ app/
 │   ├── storage/              : Client Cloudflare R2 (aioboto3).
 │   ├── grpc/                 : Client gRPC giao tiếp Nest-api.
 │   ├── rabbitmq/             : Logic kết nối và consume RabbitMQ.
-│   └── llm/                  : Factory khởi tạo Gemini/GenAI SDK.
+│   ├── llm/                  : Factory khởi tạo Gemini/GenAI SDK.
+│   └── excel/                : [NEW] Tiện ích xử lý Excel (Rich Text, Numeric Formatting).
 ├── modules/ (Business Domain Logic)
 │   ├── files/                : Quản lý tệp tin, upload, delete, metadata sync.
 │   │   └── toc_tree/         : [Moved] Repo & Model chuyên biệt cho cấu trúc tài liệu.
 │   ├── chat/                 : Controller của Agentic Chat & SSE Streaming.
 │   ├── rag/                  : RAG Service & Tool-use Agent logic.
 │   ├── email/                : Hệ thống phân loại & Workflows xử lý (Inquiry, etc.).
-│   └── metadata/             : Quản lý Metadata Types & Validation.
+│   ├── metadata/             : Quản lý Metadata Types & Validation.
+│   ├── faq/                  : Quản lý FAQ, Synthesis (Interaction Logs Clustering).
+│   └── forms/                : [NEW] Quản lý biểu mẫu học thuật & Links.
 ├── pipelines/ (Multi-step Async Processes)
 │   └── ingestion/            : [NEW] Toàn bộ quy trình nạp liệu (LlamaParse -> Chunking -> Vector Push).
 ├── repositories/             : Implement lớp truy cập dữ liệu (BaseRepository pattern).
@@ -249,12 +255,61 @@ CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_DRAFT_REPLY_PROMPT):
 10. MODULAR RAG INGESTION PIPELINE (PIHASE-BY-PHASE)
 ================================================================================
 
+[Chi tiết RAG ingestion không đổi, đã tóm tắt phía trên]
+
+
+================================================================================
+11. FAQ MODULE V2 (SEMANTIC FAQ & AUTO-SYNTHESIS)
+================================================================================
+
+Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho các câu hỏi thường gặp, giúp giảm tải cho LLM và tăng tốc độ phản hồi.
+
+11.1. MANUAL FAQ MANAGEMENT (Quản lý thủ công):
+- Hỗ trợ thao tác CRUD (Tạo, Sửa, Xóa) cho FAQ.
+- Semantic Search: Sử dụng Gemini Embeddings để match câu hỏi người dùng với FAQ có sẵn thông qua Qdrant (cosine similarity).
+- Danh sách FAQ giờ đây được sắp xếp mặc định theo `created_at` (giảm dần).
+- Metadata Filter: Hỗ trợ lọc theo `academic_year` và `cohort`. Nếu mảng rỗng (empty array), FAQ áp dụng cho toàn bộ sinh viên.
+- [NEW] Bulk Management: 
+  - Hỗ trợ Import hàng loạt từ file Excel (.xlsx) với cơ chế map cột linh hoạt (theo tên hoặc ký tự).
+  - [FORMATTING]: Hệ thống tự động bảo toàn định dạng Rich Text (In đậm, In nghiêng, Gạch chân) và các Hyperlink từ Excel, chuyển đổi chúng sang định dạng Markdown chuẩn.
+  - Kỹ thuật: Sử dụng `openpyxl` với tham số `rich_text=True` để truy cập các fragments văn bản và thuộc tính font, kết hợp xử lý `cell.hyperlink`.
+  - Tự động bóc tách Metadata từ các cột Excel chỉ định.
+  - Tối ưu hiệu suất: Sử dụng `asyncio.gather` để sinh Embedding song song cho toàn bộ danh sách câu hỏi.
+  - Cơ chế Skip & Continue: Tự động bỏ qua câu hỏi trùng lặp và ghi nhận chi tiết các dòng lỗi mà không làm gián đoạn tiến trình import chung.
+  - Hỗ trợ API Bulk Create qua JSON để tích hợp với các hệ thống bên ngoài.
+
+11.2. INTERACTION LOGGING (Theo dõi tương tác):
+- Hệ thống tự động ghi lại lịch sử Chat và Email Inquiry thành `InteractionLogs`.
+- Deduplication: Tự động lọc trùng lặp nếu câu hỏi (unaccented) xuất hiện trong vòng 24 giờ.
+- TTL Index: Lịch sử tự động xóa sau 90 ngày (cấu hình qua `FAQ_LOG_RETENTION_DAYS`) nhờ MongoDB TTL.
+
+11.3. AUTO FAQ SYNTHESIS (Tự động tổng hợp FAQ):
+- Gom cụm (Clustering): Gom các lịch sử tương tác có cùng Metadata và có độ tương đồng ngữ nghĩa cao (threshold `0.85`).
+- Generation: Dùng LLM (Gemini) đóng vai "Senior Academic Advisor" để phân tích cụm, tự động đặt câu hỏi tổng quát và soạn câu trả lời chuẩn.
+- Admin Review Workflow: Các FAQ được tổng hợp sẽ nằm ở trạng thái `pending`. Admin cần Review (Approve/Reject) và có thể Override nội dung trước khi xuất bản thành FAQ chính thức.
+
+11.4. FORMS MANAGEMENT MODULE (Quản lý biểu mẫu):
+- Module này quản lý danh sách các liên kết biểu mẫu và quy trình học thuật, giúp sinh viên/giảng viên truy cập nhanh các mẫu đơn cần thiết.
+- **Unified Schema**: Gộp tên hiển thị và đường dẫn thành một trường Rich Text (HTML), cho phép AI và người dùng linh hoạt trong việc trình bày.
+- **Link Processing**: Mọi liên kết trong Rich Text được tự động xử lý bởi Frontend (hàm `fixRichTextLinks`) để mở trong tab mới, đảm bảo tính nhất quán với module FAQ.
+- **Shared Excel Integration**: Sử dụng module `app/integrations/excel` mới để nạp hàng loạt dữ liệu.
+- **Data Integrity**: Tự động xử lý các lỗi số nguyên từ Excel (vd: `2020.0` -> `2020`) và ép kiểu dữ liệu để vượt qua Pydantic validation (vd: `document_type` bắt buộc là string).
+
+11.4. HYBRID SEARCH STRATEGY (Tìm kiếm kết hợp):
+- Hệ thống áp dụng chiến lược Hybrid Search cho FAQ để đảm bảo độ chính xác tối đa:
+  - **Full-Text Search (FTS)**: Sử dụng MongoDB `$text` index trên các trường `question_unaccented` và `answer_unaccented`. Ưu tiên các kết quả khớp từ khóa chính xác (vd: "GPA", "học bổng").
+  - **Semantic Match**: Sử dụng Qdrant Vector Search để tìm các câu hỏi có cùng ý nghĩa nhưng dùng từ ngữ khác nhau.
+- Sắp xếp (Ranking): Khi người dùng sử dụng tham số `search`, hệ thống ưu tiên hiển thị kết quả theo `textScore` (trọng số liên quan) từ MongoDB FTS.
+
+11.5. PIPELINE TÍCH HỢP:
+- Chat Service / Inquiry Service: Trước khi gọi RAG Agent, hệ thống kiểm tra `find_best_match` từ kho FAQ. Nếu tìm thấy (`threshold >= 0.90`), trả lời ngay lập tức (Source: `faq`) bỏ qua LLM calls. Nếu không, tiến hành RAG và lưu log (Async fire-and-forget).
+
 Quy trình \"Nạp kiến thức\" cực kỳ chi tiết của hệ thống:
 
 BƯỚC 1: UPLOAD & QUICK ACK (`FileService.upload_file_quick`)
 - Nhận file qua FastAPI multipart.
 - Validate: Max 20MB, đuôi file (.pdf, .md, .docx, .html). Mime type check.
-- Metadata check: Bắt buộc có academic_year/cohort + access_scope.
+- Metadata check: Bắt buộc có academic_year/cohort.
 - R2 Storage: Đẩy file binary lên storage.
 - MongoDB: Tạo record ban đầu status=\"uploading\". Trả về Object thông tin file ngay lập tức.
 
@@ -287,12 +342,6 @@ PHÂN LOẠI METADATA (Types):
 - System Metadata: `is_system=True`. Không thể xóa qua API. Bao gồm:
   - academic_year: (v2024, v2025...).
   - cohort: (K62, K63...). 
-  - access_scope: (student, lecture).
-    - Quy tắc: 
-        * Tệp có `student` -> CHỈ Student & Admin xem được.
-        * Tệp có `lecture` -> CHỈ Lecture & Admin xem được.
-        * Tệp có cả `[\"student\", \"lecture\"]` -> Cả Student, Lecture & Admin xem được.
-        * Tệp rỗng `[]` hoặc `null` -> CHỈ Admin xem được (Tài liệu nội bộ).
 - Custom Metadata: (department, document_type, v.v.) dành cho người dùng tự định nghĩa.
 
 DỮ LIỆU CỦA MỘT AllowedValue:
@@ -319,15 +368,9 @@ Hệ thống sử dụng cơ chế cập nhật bộ đếm nguyên tử để t
 
 Chịu trách nhiệm chuyển đổi JSON Metadata Filter sang cú pháp Vector Query của Qdrant.
 
-CƠ CHẾ MỞ RỘNG QUYỀN TRUY CẬP (ACCESS SCOPE):
-Hệ thống tự động chèn filter bảo mật dựa trên vai trò User:
-1.  Nếu USER Role = \"student\":
-    - Phải chứa: `metadata.access_scope` IN [\"student\"].
-2.  Nếu USER Role = \"lecture\":
-    - Phải chứa: `metadata.access_scope` IN [\"lecture\"]. 
-    - (Lưu ý: Khác với bản cũ, Lecture không tự động thấy file Student trừ khi metadata filter yêu cầu cả hai).
-3.  Nếu USER Role = \"admin\":
-    - Bypass: Có quyền truy cập mọi tài liệu, kể cả tài liệu nội bộ (empty access_scope).
+CƠ CHẾ LỌC DỮ LIỆU:
+Hệ thống tin tưởng vào xác thực người dùng ở tầng API Gateway. Khi đã vào đến AI Service, mọi người dùng hợp lệ đều có quyền truy vấn kho tài liệu chung.
+FilterBuilder xây dựng query dựa trên `metadataFilter` do người dùng cung cấp (nếu có).
 
 THUẬT TOÁN OR-LOGIC CÙNG KEY:
 - Hệ thống hỗ trợ tìm kiếm linh hoạt: `Condition(key=\"metadata.academic_year\", match={\"any\": [\"2024\", \"2025\", \"all\"]})`.
@@ -435,7 +478,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - mime_type           : str (vd: application/pdf)
   - table_of_contents   : list (Mảng các tiêu đề văn bản phẳng)
   - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
-  - custom_metadata     : dict (Dạng {"academic_year": ["2025"], "access_scope": ["student"]})
+  - custom_metadata     : dict (Dạng {"academic_year": ["2025"], "department": ["cntt"]})
   - status              : str (uploading, processing, ready, failed)
   - created_at / updated_at: datetime.
 
@@ -456,13 +499,35 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
         "display_name": str (Tên hiển thị),
         "total_files": int (Biến đếm tệp),
         "color": str (Mã hex),
-        "visible_roles": list (Loại Role được thấy),
         "is_active": bool
       }
     ]
   - total_files         : int (Tổng tệp mang tag cha này)
   - is_system           : bool (Nếu true, cấm xóa nhãn này)
   - is_active           : bool (Soft delete toàn bộ nhãn)
+
+17.4. Collection: `faqs`
+  - _id                 : ObjectId
+  - question            : str (Câu hỏi gốc có dấu)
+  - question_unaccented : str (Câu hỏi không dấu - Dùng cho FTS)
+  - answer_rich_text    : str (HTML/Rich text trả lời)
+  - answer_markdown     : str (Markdown trả lời)
+  - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
+  - metadata_filter     : dict (Bộ lọc academic_year/cohort)
+  - is_active           : bool
+  - view_count          : int
+  - source              : str (manual, synthesized, seed)
+  - qdrant_point_id     : str (UUID map sang Qdrant vector)
+
+17.5. Collection: `faq_candidates`
+  - _id                 : ObjectId
+  - question            : str
+  - question_unaccented : str
+  - answer_draft_rich_text : str
+  - answer_draft_unaccented: str
+  - status              : str (pending, approved, rejected)
+  - similarity_count    : int (Số lượng log tương đồng gom cụm)
+  - source_log_ids      : array (Danh sách IDs interaction logs)
 
 
 ================================================================================
@@ -596,6 +661,7 @@ Các biến môi trường quan trọng:
 | MAX_FILE_SIZE_MB      | 20                   | Chặn dung lượng upload |
 | LLM_MODEL             | gemini-2.5-flash     | Model dùng cho Email Classification |
 | GEMINI_MODEL          | gemini-2.5-flash     | Model dùng cho RAG Agentic Chat |
+| GEMINI_EMBEDDING_MODEL| models/gemini-embedding-001 | Model dùng cho Vector Embeddings |
 | LLAMA_CLOUD_API_KEY   | (Required)           | Dùng cho LlamaParse PDF Parsing |
 
 
@@ -607,14 +673,14 @@ Các biến môi trường quan trọng:
    Sử dụng cờ `--skip-confirm` để chạy tự động. Lệnh sẽ:
    - Thử drop database hiện tại.
    - Xóa sạch toàn bộ objects trong R2 bucket.
-   - Xóa toàn bộ Collection trên Qdrant.
+   - Xóa toàn bộ Collection trên Qdrant (Bao gồm files và faqs).
    - Xóa sạch thư mục workspace địa phương.
    - Khởi tạo lại Indexes MongoDB.
+   - [PHASE 2.5]: Tự động gọi `scripts/seed_faqs.py` để nạp dữ liệu FAQ & Candidates mẫu.
 
 2. scripts/seed_metadata.py:
    - Nạp Academic Year (2020 -> 2026).
    - Nạp Cohort (K62 -> K68).
-   - Nạp Access Scope (student, lecture, private).
 
 3. scripts/check_qdrant.py:
    - Kết nối Qdrant và in ra số lượng points.
@@ -659,5 +725,26 @@ LƯU Ý KỸ THUẬT:
 - Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 4.8.0 (Added RAG Gate & Metadata Sync).
+Xác nhận bản thảo Overview Version 5.3.0 (Rich Text & Hyperlink Preservation).
 --------------------------------------------------------------------------------
+
+================================================================================
+28. PHU LUC: QUY CHUAN XU LY EXCEL & RICH TEXT
+================================================================================
+
+Để đảm bảo tính nhất quán giữa các module FAQ và Forms, hệ thống sử dụng một bộ tiện ích chung tại `app/integrations/excel/utils.py`.
+
+CÁC QUY TẮC XỬ LÝ CHÍNH:
+1.  Numeric Normalization: 
+    - Excel thường lưu số nguyên dưới dạng float (vd: 2020 thành 2020.0).
+    - Hệ thống tự động chuyển đổi các giá trị này về chuỗi số nguyên sạch (vd: "2020").
+2.  Rich Text Preservation:
+    - Sử dụng `openpyxl` để duyệt từng `InlineFont` fragment trong ô Excel.
+    - Chuyển đổi các định dạng (Bold, Italic, Underline, Color) sang HTML tương ứng.
+3.  Hyperlink Extraction:
+    - Tự động trích xuất URL từ các ô có gắn Link.
+    - Gộp URL và text hiển thị thành thẻ `<a>`.
+4.  Security & UX:
+    - Tất cả các thẻ `<a>` được gán `target="_blank"` và `rel="noopener noreferrer"` (xử lý ở tầng Frontend hoặc API Response).
+5.  Pydantic Compatibility:
+    - Mọi dữ liệu bóc tách từ Excel được ép kiểu về `str` trước khi đưa vào Pydantic model để tránh lỗi `Input should be a valid string`.

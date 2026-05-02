@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 email_orchestrator = None
 rabbitmq_service = None
 _cleanup_task = None
+email_consumer_thread = None
 
 
 async def _run_artifact_cleanup():
@@ -70,6 +71,7 @@ async def lifespan(_: FastAPI):
     global email_orchestrator
     global rabbitmq_service
     global _cleanup_task
+    global email_consumer_thread
 
     # Startup
     print("=" * 80)
@@ -138,7 +140,7 @@ async def lifespan(_: FastAPI):
     if rabbitmq_service is not None:
         try:
             loop = asyncio.get_running_loop()
-            start_email_ingest_consumer(email_orchestrator, loop=loop)
+            email_consumer_thread = start_email_ingest_consumer(email_orchestrator, loop=loop)
             logger.info("Email ingest consumer started")
         except Exception as e:
             logger.warning(f"⚠️  Email consumer not started: {e}")

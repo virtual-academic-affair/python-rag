@@ -120,6 +120,7 @@ class BaseRepository:
         skip: int = 0,
         limit: int = 20,
         sort: List[tuple] = None,
+        projection: Dict[str, Any] = None,
     ) -> List[Dict[str, Any]]:
         """
         Find multiple documents.
@@ -129,13 +130,14 @@ class BaseRepository:
             skip: Number of documents to skip
             limit: Maximum number of documents to return
             sort: Sort criteria [(field, direction), ...]
+            projection: Fields to return (default: all)
             
         Returns:
             List of documents with _id as string
         """
         try:
             query = query or {}
-            cursor = self.collection.find(query).skip(skip).limit(limit)
+            cursor = self.collection.find(query, projection).skip(skip).limit(limit)
             
             if sort:
                 cursor = cursor.sort(sort)

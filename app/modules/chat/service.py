@@ -16,8 +16,11 @@ from app.modules.rag.retrieval.agent import (
     run_agent_loop,
     get_agent_config,
     parse_agent_response,
+    CitationStreamFormatter,
 )
 from app.integrations.llm.gemini import gemini_client
+from app.modules.faq.service import get_faq_service
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,15 @@ class ChatService:
 
     def __init__(self):
         self._retrieval = get_retrieval_service()
+        self._faq_svc = None
+
+    async def _get_faq_svc(self):
+        if self._faq_svc is None:
+            self._faq_svc = await get_faq_service()
+        return self._faq_svc
+
+    async def _embed(self, text: str) -> list[float]:
+        return await self._retrieval._qdrant._get_embedding(text)
 
     async def _prepare_chat_state(
         self,
@@ -141,16 +153,37 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         Delegates fully to shared run_agent_loop; returns answer, steps, and sources.
         """
         start_time = time.time()
+        
+        # [0] Embed question once
+        question_vector = await self._embed(question)
+        meta_dict = metadata_filter or {}
+
+        # [1] FAQ Pre-check
+        faq_svc = await self._get_faq_svc()
+        faq = await faq_svc.find_best_match(question_vector, meta_dict)
+        if faq:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat] FAQ hit: '{faq['question']}' ({processing_time_ms}ms)")
+            return {
+                "answer": faq["answer_markdown"],
+                "source": "faq",
+                "sources": [],
+                "steps": [],
+                "token_usage": None,
+                "processing_time_ms": processing_time_ms,
+            }
 
         needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
         if not needs_rag:
             logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
             return {
                 "answer": direct_answer,
                 "sources": [],
                 "steps": [],
                 "token_usage": gate_usage,
-                "processing_time_ms": int((time.time() - start_time) * 1000),
+                "processing_time_ms": processing_time_ms,
             }
 
         state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
@@ -169,12 +202,27 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             prompt_contents=state["history"],
         )
 
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"[Chat] Final answer for user {user_context.name}: '{result['final_answer'][:200]}...' (Completed in {processing_time_ms}ms)")
+
+        # Log async interaction
+        faq_svc = await self._get_faq_svc()
+        asyncio.create_task(faq_svc.log_interaction(
+            question=question,
+            question_vector=question_vector,
+            answer_markdown=result["final_answer"],
+            metadata_filter=meta_dict,
+            source_type="chat",
+            processing_time_ms=processing_time_ms,
+        ))
+
         return {
             "answer": result["final_answer"],
+            "source": "llm",
             "sources": result["sources"],
             "steps": result["steps"],
             "token_usage": result.get("tokenUsage"),
-            "processing_time_ms": int((time.time() - start_time) * 1000),
+            "processing_time_ms": processing_time_ms,
         }
 
     async def stream_chat_response(
@@ -199,16 +247,39 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
           - {done: true, sources: [...], processing_time_ms: ...}
         """
         start_time = time.time()
+        
+        # [0] Embed question once
+        question_vector = await self._embed(question)
+        meta_dict = metadata_filter or {}
+
+        # [1] FAQ Pre-check
+        faq_svc = await self._get_faq_svc()
+        faq = await faq_svc.find_best_match(question_vector, meta_dict)
+        if faq:
+            logger.info("[Chat-Stream] FAQ hit. Sending direct answer.")
+            yield json.dumps({"type": "text", "content": faq["answer_markdown"], "done": False})
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq['question']}' (Completed in {processing_time_ms}ms)")
+            yield json.dumps({
+                "done": True, 
+                "source": "faq",
+                "sources": [], 
+                "tokenUsage": None,
+                "processing_time_ms": processing_time_ms
+            })
+            return
 
         needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
         if not needs_rag:
             logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
             yield json.dumps({"type": "text", "content": direct_answer, "done": False})
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat-Stream] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
             yield json.dumps({
                 "done": True, 
                 "sources": [], 
                 "token_usage": gate_usage,
-                "processing_time_ms": int((time.time() - start_time) * 1000)
+                "processing_time_ms": processing_time_ms
             })
             return
 
@@ -230,6 +301,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         
         total_prompt_tokens = 0
         total_candidates_tokens = 0
+        final_answer_accumulated = ""
         
         logger.info(f"[Chat] Bắt đầu stream response về cho người dùng (Khởi động Agent Stream)")
 
@@ -290,7 +362,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                             
                             if in_answer_block:
                                 if stream_formatter is None:
-                                    from app.modules.rag.retrieval.agent import CitationStreamFormatter
                                     current_sources = await build_sources_from_steps(stream_steps, candidate_files)
                                     stream_formatter = CitationStreamFormatter(current_sources)
 
@@ -306,6 +377,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                                             formatted_flush = stream_formatter.flush()
                                             combined = formatted + formatted_flush
                                             if combined:
+                                                final_answer_accumulated += combined
                                                 yield json.dumps({"type": "text", "content": combined, "done": False})
                                             yielded_text_length += len(new_text)
                                     else:
@@ -330,7 +402,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                     if len(final_text) > yielded_text_length:
                         new_text = final_text[yielded_text_length:]
                         if stream_formatter is None:
-                            from app.modules.rag.retrieval.agent import CitationStreamFormatter
                             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
                             stream_formatter = CitationStreamFormatter(current_sources)
                         
@@ -338,12 +409,12 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                         formatted_flush = stream_formatter.flush()
                         combined = formatted + formatted_flush
                         if combined:
+                            final_answer_accumulated += combined
                             yield json.dumps({"type": "text", "content": combined, "done": False})
                     
                     if not final_text and not pre_think and len(turn_text_buffer) > 0 and yielded_text_length == 0:
                         # Fallback IF somehow parse returns empty but we have data
                         if stream_formatter is None:
-                            from app.modules.rag.retrieval.agent import CitationStreamFormatter
                             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
                             stream_formatter = CitationStreamFormatter(current_sources)
                             
@@ -351,6 +422,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                         formatted_flush = stream_formatter.flush()
                         combined = formatted + formatted_flush
                         if combined:
+                            final_answer_accumulated += combined
                             yield json.dumps({"type": "text", "content": combined, "done": False})
 
             # History fragmentation fix: combine text parts into one
@@ -389,17 +461,30 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         if current_sources is None:
             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
             
-        logger.info(f"[Chat-Stream] Kết thúc stream thành công tổng {int((time.time() - start_time) * 1000)}ms. Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"[Chat-Stream] Kết thúc stream thành công. Final answer: '{final_answer_accumulated[:200]}...' (Completed in {processing_time_ms}ms). Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
+        
+        # Log async interaction
+        faq_svc = await self._get_faq_svc()
+        asyncio.create_task(faq_svc.log_interaction(
+            question=question,
+            question_vector=question_vector,
+            answer_markdown=final_answer_accumulated,
+            metadata_filter=meta_dict,
+            source_type="chat",
+            processing_time_ms=processing_time_ms,
+        ))
             
         yield json.dumps({
             "done": True,
+            "source": "llm",
             "sources": current_sources,
             "tokenUsage": {
                 "promptTokens": total_prompt_tokens,
                 "completionTokens": total_candidates_tokens,
                 "totalTokens": total_prompt_tokens + total_candidates_tokens
             },
-            "processing_time_ms": int((time.time() - start_time) * 1000),
+            "processing_time_ms": processing_time_ms,
         })
 
 

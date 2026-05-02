@@ -28,6 +28,7 @@ class ChatQueryRequest(BaseSchema):
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
+    source: str = Field(default="llm", description="Source of the answer: 'llm', 'faq', or 'bypass'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
     token_usage: Optional[dict] = Field(default=None, description="Token consumption statistics")

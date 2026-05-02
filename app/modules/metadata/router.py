@@ -43,40 +43,12 @@ def _convert_allowed_values_to_schema(allowed_values_list) -> list[AllowedValueS
             is_active=av.is_active,
             color=av.color,
             total_files=av.total_files,
-            visible_roles=av.visible_roles,
         )
         for av in allowed_values_list
     ]
 
 
-def _filter_allowed_values_by_role(
-    allowed_values_list,
-    user_role: str,
-) -> list[AllowedValueSchema] | None:
-    """
-    Filter allowed_values to only include entries visible to the given role.
-    An entry is visible if its visible_roles is empty (no restriction) OR
-    contains the user_role.
-    Returns None if the source list is None.
-    Returns empty list if all values are filtered out (caller should hide the key).
-    """
-    if allowed_values_list is None:
-        return None
-    visible = [
-        av for av in allowed_values_list
-        if user_role == "admin" or (av.is_active and user_role in av.visible_roles)
-    ]
-    return [
-        AllowedValueSchema(
-            value=av.value,
-            display_name=av.display_name,
-            is_active=av.is_active,
-            color=av.color,
-            total_files=av.total_files,
-            visible_roles=av.visible_roles,
-        )
-        for av in visible
-    ]
+
 
 
 def _convert_schema_to_allowed_values(schemas: list[AllowedValueSchema] | None) -> list[AllowedValue] | None:
@@ -89,7 +61,6 @@ def _convert_schema_to_allowed_values(schemas: list[AllowedValueSchema] | None) 
             display_name=s.display_name,
             is_active=s.is_active,
             color=s.color,
-            visible_roles=s.visible_roles,
         )
         for s in schemas
     ]
@@ -180,12 +151,6 @@ async def list_metadata_types(
 ):
     """
     List all metadata type definitions.
-    
-    Values inside each metadata type are filtered by the requesting user's role:
-    - `visible_roles` is empty → visible to all roles
-    - `visible_roles` contains the user's role → visible
-    - Otherwise the value is hidden
-    Metadata types where ALL values are hidden for the user's role are excluded entirely.
     """
     try:
         user_role: str = _user.get("role", "student")
@@ -199,17 +164,13 @@ async def list_metadata_types(
         
         type_responses = []
         for mt in metadata_types:
-            filtered_avs = _filter_allowed_values_by_role(mt.get_allowed_values(), user_role)
-            # If the type has allowed_values defined but none are visible, skip the whole key
-            if filtered_avs is not None and len(filtered_avs) == 0:
-                continue
             type_responses.append(
                 MetadataTypeResponse(
                     metadata_id=str(mt.id),
                     key=mt.key,
                     display_name=mt.display_name,
                     description=mt.description,
-                    allowed_values=filtered_avs,
+                    allowed_values=_convert_allowed_values_to_schema(mt.get_allowed_values()),
                     is_active=mt.is_active,
                     is_system=mt.is_system,
                     total_files=mt.total_files,
@@ -261,8 +222,6 @@ async def get_metadata_type(
 ):
     """
     Get metadata type details by key.
-    Values are filtered by the requesting user's role (same rules as list endpoint).
-    Returns 404 if the type exists but all values are hidden for the user's role.
     """
     try:
         user_role: str = _user.get("role", "student")
@@ -273,21 +232,12 @@ async def get_metadata_type(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Metadata type '{key}' not found",
             )
-        
-        filtered_avs = _filter_allowed_values_by_role(metadata_type.get_allowed_values(), user_role)
-        # If defined but all filtered out → treat as not visible (404)
-        if filtered_avs is not None and len(filtered_avs) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Metadata type '{key}' not found",
-            )
-        
         return MetadataTypeResponse(
             metadata_id=str(metadata_type.id),
             key=metadata_type.key,
             display_name=metadata_type.display_name,
             description=metadata_type.description,
-            allowed_values=filtered_avs,
+            allowed_values=_convert_allowed_values_to_schema(metadata_type.get_allowed_values()),
             is_active=metadata_type.is_active,
             is_system=metadata_type.is_system,
             total_files=metadata_type.total_files,
@@ -380,7 +330,6 @@ async def add_metadata_value(
             display_name=request.display_name,
             is_active=request.is_active,
             color=request.color,
-            visible_roles=request.visible_roles,
         )
         
         metadata_type = await metadata_svc.add_metadata_value(key, allowed_value)
@@ -429,7 +378,6 @@ async def update_metadata_value(
             display_name=request.display_name,
             is_active=request.is_active,
             color=request.color,
-            visible_roles=request.visible_roles,
         )
         return MetadataTypeResponse(
             metadata_id=str(metadata_type.id),
@@ -486,7 +434,6 @@ async def delete_metadata_value(
                     is_active=av.get("is_active", True),
                     color=av.get("color"),
                     total_files=av.get("total_files", 0),
-                    visible_roles=av.get("visible_roles", []),
                 ) for av in updated_metadata.allowed_values
             ]
             

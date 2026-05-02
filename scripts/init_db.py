@@ -14,6 +14,7 @@ import os
 import sys
 import httpx
 from pathlib import Path
+import time
 from datetime import datetime
 
 # Add project root to path
@@ -47,8 +48,8 @@ INIT_DATA_FILE = SCRIPT_DIR / "init_data.json"
 AUTH_TOKEN = os.getenv(
     "INIT_AUTH_TOKEN",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-    ".eyJzdWIiOjEsImVtYWlsIjoiYmx1ZWxvb3AudXNAZ21haWwuY29tIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNzcxOTEzOTgzLCJleHAiOjM3NzcxOTEzOTgzLCJhdWQiOiJ2YWEtYXVkIiwiaXNzIjoidmFhLWlzcyJ9"
-    ".RtRCZsru6KuCkHUt06cr0v31z9SG0lWWdOORTo47-j4"
+    ".eyJzdWIiOjEzLCJlbWFpbCI6Im5kbWFuaDIyQGNsYy5maXR1cy5lZHUudm4iLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3NzcyMjQyNjMsImV4cCI6MzYwMDE3NzcyMjQyNjMsImF1ZCI6InZhYSIsImlzcyI6InZhYS1hcGkifQ"
+    ".aRAaOBJvHS9g9SmpZEZWCaculOs9vHLkSXF7PVhGE9o"
 )
 AUTH_HEADERS = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
@@ -140,6 +141,13 @@ async def clear_qdrant_collections():
             client.delete_collection(collection_name=collection_name)
             logger.info(f"  ✓ Deleted collection: {collection_name}")
             
+        # Check and delete FAQ collection
+        faq_collection_name = settings.FAQ_QDRANT_COLLECTION
+        faq_exists = any(c.name == faq_collection_name for c in collections)
+        if faq_exists:
+            client.delete_collection(collection_name=faq_collection_name)
+            logger.info(f"  ✓ Deleted FAQ collection: {faq_collection_name}")
+            
         # Recreate using STRICT .env settings
         vector_size = settings.QDRANT_VECTOR_SIZE
         from qdrant_client.http import models as qm
@@ -156,7 +164,6 @@ async def clear_qdrant_collections():
         logger.info("  Creating Qdrant payload indexes...")
         fields_to_index = [
             ("file_id", qm.PayloadSchemaType.KEYWORD),
-            ("metadata.access_scope", qm.PayloadSchemaType.KEYWORD),
             ("metadata.academic_year", qm.PayloadSchemaType.KEYWORD),
             ("metadata.cohort", qm.PayloadSchemaType.KEYWORD),
             ("metadata.department", qm.PayloadSchemaType.KEYWORD),
@@ -282,12 +289,13 @@ async def create_metadata_types(metadata_types: list):
 
     logger.info("✅ Metadata types created")
 
-async def upload_files(files_config: list):
-    """Upload files via API (requires admin auth)."""
+async def upload_files(files_config: list) -> list[str]:
+    """Upload files via API (requires admin auth). Returns list of file IDs."""
     logger.info("Uploading files...")
 
     success_count = 0
     fail_count = 0
+    uploaded_ids = []
 
     async with httpx.AsyncClient(timeout=120) as client:
         for file_config in files_config:
@@ -319,7 +327,9 @@ async def upload_files(files_config: list):
 
                 if response.status_code == 201:
                     result = response.json()
-                    logger.info(f"  ✓ Uploaded: {display_name} (ID: {result['fileId']})")
+                    file_id = result['fileId']
+                    logger.info(f"  ✓ Uploaded: {display_name} (ID: {file_id})")
+                    uploaded_ids.append(file_id)
                     success_count += 1
                 else:
                     logger.warning(f"  ⚠ Failed to upload {filename}: {response.text}")
@@ -332,6 +342,58 @@ async def upload_files(files_config: list):
                 fail_count += 1
 
     logger.info(f"✅ File upload complete: {success_count} success, {fail_count} failed")
+    return uploaded_ids
+
+
+async def wait_for_ingestion(file_ids: list[str]):
+    """Wait for all files to reach 'ready' or 'failed' status."""
+    if not file_ids:
+        return
+
+    logger.info(f"Waiting for {len(file_ids)} files to complete ingestion...")
+    
+    pending_ids = set(file_ids)
+    completed_ids = set()
+    failed_ids = set()
+    
+    max_wait_minutes = 15
+    start_time = time.time()
+    
+    async with httpx.AsyncClient(timeout=30) as client:
+        while pending_ids:
+            if (time.time() - start_time) > (max_wait_minutes * 60):
+                logger.warning(f"  ⚠ Timeout waiting for ingestion after {max_wait_minutes} minutes")
+                break
+                
+            for file_id in list(pending_ids):
+                try:
+                    response = await client.get(
+                        f"{API_URL}/files/{file_id}",
+                        headers=AUTH_HEADERS
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        status = data.get("status")
+                        
+                        if status == "ready":
+                            logger.info(f"    ✓ File {file_id} is READY")
+                            completed_ids.add(file_id)
+                            pending_ids.remove(file_id)
+                        elif status == "failed":
+                            error_msg = data.get("errorMessage", "Unknown error")
+                            logger.error(f"    ❌ File {file_id} FAILED: {error_msg}")
+                            failed_ids.add(file_id)
+                            pending_ids.remove(file_id)
+                except Exception as e:
+                    logger.warning(f"    ⚠ Error checking status for {file_id}: {e}")
+            
+            if pending_ids:
+                logger.info(f"  ... still waiting for {len(pending_ids)} files ...")
+                await asyncio.sleep(10)
+    
+    logger.info("-" * 50)
+    logger.info(f"INGESTION STATUS: {len(completed_ids)} ready, {len(failed_ids)} failed, {len(pending_ids)} timed out")
+    logger.info("-" * 50)
 
 
 async def wait_for_service():
@@ -431,7 +493,19 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
             await snapshot_mgr.import_data(restore_path)
         else:
             if "files" in init_data:
-                await upload_files(init_data["files"])
+                uploaded_ids = await upload_files(init_data["files"])
+                if uploaded_ids:
+                    await wait_for_ingestion(uploaded_ids)
+                    
+            from scripts.seed_faqs import main as seed_faqs_main
+            sample_faqs_path = SCRIPT_DIR / "sample_faqs.json"
+            if sample_faqs_path.exists():
+                print("\n" + "-" * 50)
+                print("PHASE 2.5: SEEDING FAQs")
+                print("-" * 50)
+                await seed_faqs_main(str(sample_faqs_path))
+            else:
+                print(f"\nWarning: {sample_faqs_path} not found, skipping FAQ seeding.")
 
         print("\n" + "=" * 70)
         print("✅ INITIALIZATION COMPLETE!")

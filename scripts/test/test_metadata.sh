@@ -16,15 +16,15 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata" \
         "displayName": "Phong ban Test",
         "description": "Phong ban phu trach tai lieu",
         "allowedValues": [
-            { "value": "dao_tao", "displayName": "Dao tao", "isActive": true, "color": "#3498DB", "visibleRoles": ["lecture", "student"] },
-            { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6", "visibleRoles": ["lecture", "student"] }
+            { "value": "dao_tao", "displayName": "Dao tao", "isActive": true, "color": "#3498DB" },
+            { "value": "all",     "displayName": "Tat ca",  "isActive": true, "color": "#95A5A6" }
         ]
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Create Metadata Type"
 
 # 2. Get system metadata
-log_info "GET /api/metadata/access_scope — Xac nhan system type"
-RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/access_scope" \
+log_info "GET /api/metadata/academic_year — Xac nhan system type"
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "${AUTH_HEADER}" "${API_URL}/metadata/academic_year" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Get System Metadata Type"
 
@@ -107,7 +107,7 @@ log_info "POST /api/metadata/${METADATA_KEY}/values — Them gia tri ${VAL_KEY}"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/metadata/${METADATA_KEY}/values" \
     -H "Content-Type: application/json" \
     -H "${AUTH_HEADER}" \
-    -d "{ \"value\": \"${VAL_KEY}\", \"displayName\": \"Test Val\", \"isActive\": true, \"color\": \"#9B59B6\", \"visibleRoles\": [\"student\"] }" \
+    -d "{ \"value\": \"${VAL_KEY}\", \"displayName\": \"Test Val\", \"isActive\": true, \"color\": \"#9B59B6\" }" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Add Metadata Value"
 

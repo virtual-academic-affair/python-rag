@@ -9,6 +9,8 @@ from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.email.utils import extract_structured_data, remove_accents, extract_inquiry_filters
 from app.modules.metadata.service import get_metadata_service
 from app.modules.email.schemas import InquiryIntent, InquiryTypesResult, InquiryFilters
+from app.modules.faq.service import get_faq_service
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,8 @@ class InquiryService:
         
         # 3. RAG Step
         rag_query = extracted_question or f"{title}\n{content}"
+        faq_svc = await get_faq_service()
+        question_vector = await faq_svc.embed(rag_query)
         
         # Retrieval Step
         candidate_files = await self._retrieval.retrieve_candidate_files(
@@ -116,6 +120,17 @@ class InquiryService:
             }
 
         logger.info(f"Inquiry RAG complete. Answer length: {len(rag_result['answer'])}")
+        
+        # Log async interaction
+        if candidate_files:
+            asyncio.create_task(faq_svc.log_interaction(
+                question=rag_query,
+                question_vector=question_vector,
+                answer_markdown=rag_result["answer"],
+                metadata_filter=metadata_filter,
+                source_type="inquiry_email",
+                email_message_id=message_id,
+            ))
 
         return {
             "answer": rag_result["answer"],

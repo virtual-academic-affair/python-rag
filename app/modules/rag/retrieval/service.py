@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
+from app.modules.files.repository import FileRepository
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ class RetrievalService:
         self._filter_builder = get_filter_builder()
         self._page_index = get_page_index_client()
         self._toc_repo = FileTocTreeRepository()
+        self._file_repo = FileRepository()
 
     @property
     def page_index(self):
@@ -45,19 +48,21 @@ class RetrievalService:
         )
 
         logger.info(f"[Retrieval] Bắt đầu semantic search cho query: '{query[:50]}...', role: {user_role}, filter: {qdrant_meta_filter}")
-
+        
+        start_qdrant = time.perf_counter()
         hits = await self._qdrant.retrieve(
             query=query,
             top_k=top_k_chunks,
             metadata_filter=qdrant_meta_filter,
             # user_role đã được xử lý bên trong filter_builder
         )
+        qdrant_dur = time.perf_counter() - start_qdrant
 
         if not hits:
-            logger.info(f"[Retrieval] Không tìm thấy dữ liệu vector nào cho query '{query}'")
+            logger.info(f"[Retrieval] Không tìm thấy dữ liệu vector nào cho query '{query}' (Qdrant duration: {qdrant_dur:.2f}s)")
             return []
             
-        logger.info(f"[Retrieval] Đã quét được {len(hits)} chunks từ Qdrant. Đang tính điểm DocScore...")
+        logger.info(f"[Retrieval] Đã quét được {len(hits)} chunks từ Qdrant trong {qdrant_dur:.2f}s. Đang tính điểm DocScore...")
 
         doc_info = {}
         doc_chunks = defaultdict(list)
@@ -92,10 +97,7 @@ class RetrievalService:
         toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
         toc_map = {t["file_id"]: t for t in toc_docs}
         
-        from app.modules.files.repository import FileRepository
-        file_repo = FileRepository()
-        
-        file_docs = await file_repo.find_by_ids(top_ids)
+        file_docs = await self._file_repo.find_by_ids(top_ids)
         file_map = {str(f.get("_id")): f for f in file_docs}
 
         for d in top_docs:

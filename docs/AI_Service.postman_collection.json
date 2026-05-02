@@ -1,7 +1,7 @@
 {
     "info": {
         "name": "AI Service API",
-        "description": "Complete API collection for AI Service (python-rag).\n\nIncludes:\n- Health Check\n- Email Classification\n- Store Management\n- Metadata Types\n- File Management\n- Chat (Query + Stream)\n\nBase URL: http://localhost:8000\nSwagger: http://localhost:8000/docs",
+        "description": "Complete API collection for AI Service (python-rag).\n\nIncludes:\n- Health Check\n- Email Classification\n- Store Management\n- Metadata Types\n- File Management\n- Chat (Query + Stream)\n- FAQ Module (Semantic search & Synthesis)\n\nBase URL: http://localhost:8000\nSwagger: http://localhost:8000/docs",
         "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
         "version": "1.0.0"
     },
@@ -198,7 +198,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [\"lecture\", \"student\"] },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\", \"visibleRoles\": [\"lecture\", \"student\"] }\n  ]\n}",
+                            "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\" },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\" },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\" },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\" }\n  ]\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -219,43 +219,7 @@
                     },
                     "response": []
                 },
-                {
-                    "name": "Create access_scope (system)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"key\": \"access_scope\",\n  \"displayName\": \"Access Scope\",\n  \"description\": \"Document access level\",\n  \"allowedValues\": [\n    { \"value\": \"private\", \"displayName\": \"Admin Only (Private)\", \"isActive\": true, \"color\": \"#E74C3C\", \"visibleRoles\": [] },\n    { \"value\": \"lecture\", \"displayName\": \"Lecture Only\", \"isActive\": true, \"color\": \"#F39C12\", \"visibleRoles\": [\"lecture\"] },\n    { \"value\": \"student\", \"displayName\": \"Student Only\", \"isActive\": true, \"color\": \"#27AE60\", \"visibleRoles\": [\"student\"] }\n  ]\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata"
-                            ]
-                        },
-                        "description": "Tạo access_scope metadata type. Được seed sẵn trong DB, gọi endpoint này nếu muốn tạo lại."
-                    },
-                    "response": []
-                },
+
                 {
                     "name": "List metadata types",
                     "request": {
@@ -405,7 +369,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\",\n  \"visibleRoles\": [\"lecture\", \"student\"]\n}",
+                            "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -546,9 +510,9 @@
                                 },
                                 {
                                     "key": "customMetadata",
-                                    "value": "{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}",
+                                    "value": "{\"department\":[\"dao_tao\"],\"academic_year\":[\"2024-2025\"]}",
                                     "type": "text",
-                                    "description": "Required: must include access_scope (private, lecture, student (No mix private and student/lecture)) AND at least one of academic_year/cohort"
+                                    "description": "Required: must include at least one of academic_year/cohort"
                                 }
                             ]
                         },
@@ -562,7 +526,7 @@
                                 "files"
                             ]
                         },
-                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- accessScope: mandatory (single value array or multiple)\n- academicYear OR cohort: at least one required\n\nReturns file_id and message indicating background processing started."
+                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- academicYear OR cohort: at least one required\n\nReturns file_id and message indicating background processing started."
                     },
                     "event": [
                         {
@@ -631,7 +595,7 @@
                                 }
                             ]
                         },
-                        "description": "List files with optional filters and pagination. Metadata fields in the response are automatically filtered based on visibleRoles logic configured in MetadataTypes. Users only see fields meant for their role, while ADMIN bypasses this filtering and see all fields."
+                        "description": "List files with optional filters and pagination."
                     },
                     "response": []
                 },
@@ -788,9 +752,9 @@
                                 },
                                 {
                                     "key": "metadataList",
-                                    "value": "[{\"access_scope\":[\"student\"],\"academic_year\":[\"2024-2025\"]}, {\"access_scope\":[\"lecture\"],\"cohort\":[\"K65\"]}]",
+                                    "value": "[{\"department\":[\"dao_tao\"],\"academic_year\":[\"2024-2025\"]}, {\"cohort\":[\"K65\"]}]",
                                     "type": "text",
-                                    "description": "JSON array - one object per file. access_scope required + academic_year or cohort"
+                                    "description": "JSON array - one object per file. academic_year or cohort required"
                                 }
                             ]
                         },
@@ -850,7 +814,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": [\"2025-2026\"],\n    \"accessScope\": [\"lecture\"]\n  }\n}"
+                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": [\"2025-2026\"],\n    \"department\": [\"dao_tao\"]\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/files/{{file_id}}",
@@ -1057,6 +1021,546 @@
                             ]
                         },
                         "description": "Debug endpoint to inspect retrieved chunks and ranking before generation."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "7. FAQ Module",
+            "item": [
+                {
+                    "name": "List FAQs",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs?page=1&limit=20",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs"
+                            ],
+                            "query": [
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "20"
+                                },
+                                {
+                                    "key": "search",
+                                    "value": "giấy chứng nhận",
+                                    "disabled": true,
+                                    "description": "Full-text search (unaccented/accented)"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create FAQ",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadata_filter\": {\n    \"academic_year\": [\"2024-2025\"],\n    \"cohort\": []\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update FAQ",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Updated question?\",\n  \"answer\": \"Updated answer.\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/{{faq_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "{{faq_id}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete FAQ",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/{{faq_id}}",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "{{faq_id}}"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Match FAQ (Semantic Search)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"Xin giấy xác nhận sinh viên ở đâu?\",\n  \"threshold\": 0.85\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/match",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "match"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Trigger Synthesis",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"date_from\": \"2024-04-01\",\n  \"sources\": [\"chat\", \"inquiry_email\"]\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/synthesis",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "synthesis"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "List Candidates",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/candidates/list?status=pending&page=1&limit=20",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "candidates",
+                                "list"
+                            ],
+                            "query": [
+                                {
+                                    "key": "status",
+                                    "value": "pending"
+                                },
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "20"
+                                },
+                                {
+                                    "key": "search",
+                                    "value": "bảng điểm",
+                                    "disabled": true,
+                                    "description": "Full-text search on candidates"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Review Candidate",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"action\": \"approve\",\n  \"question_override\": \"Updated question?\",\n  \"answer_override\": \"Updated answer.\",\n  \"metadata_filter_override\": {\n    \"academic_year\": [],\n    \"cohort\": []\n  },\n  \"note\": \"Review note\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "candidates",
+                                "{{candidate_id}}",
+                                "review"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Import FAQ Preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Excel file (.xlsx)"
+                                },
+                                {
+                                    "key": "question_col",
+                                    "value": "Câu hỏi",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "answer_col",
+                                    "value": "Trả lời",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "academic_year_col",
+                                    "value": "Năm học",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "cohort_col",
+                                    "value": "Khóa",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/import/preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "import",
+                                "preview"
+                            ]
+                        },
+                        "description": "Xem trước dữ liệu trích xuất từ Excel."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Import FAQ (Excel)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Excel file (.xlsx)"
+                                },
+                                {
+                                    "key": "question_col",
+                                    "value": "B",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "answer_col",
+                                    "value": "C",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "skip_duplicates",
+                                    "value": "true",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/import",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "import"
+                            ]
+                        },
+                        "description": "Import FAQ hàng loạt từ Excel."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Bulk Create FAQ (JSON)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Câu hỏi 1?\",\n      \"answer\": \"Câu trả lời 1\",\n      \"metadata_filter\": {\"academic_year\": [\"2024-2025\"], \"cohort\": []}\n    },\n    {\n      \"question\": \"Câu hỏi 2?\",\n      \"answer\": \"Câu trả lời 2\"\n    }\n  ],\n  \"skip_duplicates\": true\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/faqs/bulk",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "faqs",
+                                "bulk"
+                            ]
+                        },
+                        "description": "Tạo FAQ hàng loạt từ JSON."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "8. Forms Module",
+            "item": [
+                {
+                    "name": "List Forms",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/forms?page=1&limit=20",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "forms"
+                            ],
+                            "query": [
+                                {
+                                    "key": "page",
+                                    "value": "1"
+                                },
+                                {
+                                    "key": "limit",
+                                    "value": "20"
+                                },
+                                {
+                                    "key": "search",
+                                    "value": "Đơn xin",
+                                    "disabled": true
+                                }
+                            ]
+                        },
+                        "description": "Lấy danh sách biểu mẫu."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Form",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"documentType\": \"Đơn xin nghỉ học tạm thời\",\n  \"contentLink\": \"<a href='https://example.com/form.pdf'>Tải về</a>\",\n  \"notes\": \"Dành cho sinh viên bảo lưu kết quả học tập.\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/forms",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "forms"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Import Forms Preview",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "file",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Excel file (.xlsx)"
+                                },
+                                {
+                                    "key": "document_type_col",
+                                    "value": "A",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "content_link_col",
+                                    "value": "B",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "notes_col",
+                                    "value": "C",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/forms/import-preview",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "forms",
+                                "import-preview"
+                            ]
+                        }
                     },
                     "response": []
                 }

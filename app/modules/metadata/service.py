@@ -148,9 +148,6 @@ class MetadataService:
         if not existing:
             raise NotFoundException("MetadataType", key)
             
-        if existing.get("is_system", False) and key == "access_scope":
-            raise ForbiddenException(f"Cannot add values to system metadata type '{key}'")
-            
         existing_values = existing.get("allowed_values") or []
         
         # Check if value already exists
@@ -171,7 +168,6 @@ class MetadataService:
         display_name: Optional[str] = None,
         is_active: Optional[bool] = None,
         color: Optional[str] = None,
-        visible_roles: Optional[list[str]] = None,
     ) -> MetadataTypeDocument:
         """Update properties of an existing allowed value."""
         # Normalize key and value_key
@@ -206,8 +202,6 @@ class MetadataService:
             av["is_active"] = is_active
         if color is not None:
             av["color"] = color
-        if visible_roles is not None:
-            av["visible_roles"] = visible_roles
 
         await self.metadata_repo.update_by_key(key, {"allowed_values": existing_values})
         updated = await self.metadata_repo.find_by_key(key)
@@ -261,8 +255,6 @@ class MetadataService:
             raise NotFoundException("MetadataType", key)
             
         if existing.get("is_system", False):
-            if key == "access_scope":
-                raise ForbiddenException(f"Cannot delete values from system metadata type '{key}'")
             if key in ["academic_year", "cohort"] and value == "all":
                 raise ForbiddenException(f"Cannot delete value 'all' from system metadata type '{key}'")
             
@@ -440,13 +432,6 @@ class MetadataService:
                         f"Allowed active values: {active_values}"
                     )
             
-            # Specific validation for access_scope values
-            if key == "access_scope":
-                allowed_access_scopes = {"student", "lecture"}
-                invalid_scopes = [v for v in normalized_values if v not in allowed_access_scopes]
-                if invalid_scopes:
-                    errors.append(f"Metadata '{key}' only accepts values: 'student', 'lecture'. Found: {invalid_scopes}")
-
         return len(errors) == 0, errors
 
     async def sync_metadata_counters(self, custom_metadata: dict, delta: int) -> None:
@@ -513,69 +498,14 @@ class MetadataService:
                 "Metadata must include at least one of 'academic_year' or 'cohort'."
             )
 
-        # 5. Access scope rule for file upload
-        # - Required as system metadata key
-        # - Allowed values: student, lecture
-        # - Null/empty means internal file (handled by access filtering layer)
-        access_scope = custom_metadata.get("access_scope")
-        if isinstance(access_scope, list) and len(access_scope) > 0:
-            invalid_scopes = [v for v in access_scope if v not in {"student", "lecture"}]
-            if invalid_scopes:
-                raise ValidationException(
-                    f"Metadata 'access_scope' only accepts ['student', 'lecture']. Found: {invalid_scopes}"
-                )
-
-        # 6. Value validation against registered metadata types
+        # 5. Value validation against registered metadata types
         is_valid, errors = await self.validate_metadata(custom_metadata)
 
         if not is_valid:
             error_msg = "; ".join(errors)
             raise ValidationException(f"Metadata validation failed: {error_msg}")
 
-    async def filter_custom_metadata_by_role(self, file_dicts: List[Dict[str, Any]], user_role: str) -> None:
-        """Filter out metadata keys from custom_metadata based on visible_roles."""
-        if not file_dicts:
-            return
-            
-        # Collect all metadata keys
-        keys_to_fetch = set()
-        for f in file_dicts:
-            cm = f.get("custom_metadata") or {}
-            keys_to_fetch.update(cm.keys())
-            
-        if not keys_to_fetch:
-            return
-            
-        all_metadata = await self.get_metadata_types_by_keys(list(keys_to_fetch))
-        
-        meta_map = {}
-        for meta in all_metadata:
-            key = meta.key
-            allowed_values = meta.get_allowed_values() or []
-            values_map = {av.value: av.visible_roles for av in allowed_values}
-            meta_map[key] = values_map
-            
-        for f in file_dicts:
-            cm = f.get("custom_metadata") or {}
-            if not cm:
-                continue
-                
-            filtered_cm = {}
-            for k, v_list in cm.items():
-                if not isinstance(v_list, list):
-                    continue
-                visible_values = []
-                for val in v_list:
-                    roles = meta_map.get(k, {}).get(val)
-                    if roles is None:
-                        # Value not found in allowed_values, keep it
-                        visible_values.append(val)
-                    elif user_role == "admin" or user_role in roles:
-                        visible_values.append(val)
-                if visible_values:
-                    filtered_cm[k] = visible_values
-            f["custom_metadata"] = filtered_cm
-        
+
 
 _metadata_service_instance: Optional[MetadataService] = None
 
