@@ -217,6 +217,7 @@ async def list_files(
                     custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
                     file_url=get_download_url(f.storage_path),
                     markdown_file_url=get_download_url(f.markdown_storage_path),
+                    table_of_contents=f.table_of_contents,
                     created_at=f.created_at.isoformat() if f.created_at else "",
                     updated_at=f.updated_at.isoformat() if f.updated_at else "",
                 )
@@ -364,6 +365,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            table_of_contents=file_doc.table_of_contents,
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
@@ -445,6 +447,7 @@ async def update_file(
             custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
+            table_of_contents=file_doc.table_of_contents,
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
         )
