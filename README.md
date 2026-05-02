@@ -6,7 +6,7 @@
 
 ## 🚀 Tổng quan
 
-Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nhiệm vụ cốt lõi:
+Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nhiệm vụ cốt lõi: 
 
 1.  **Phân loại & Xử lý Email**: Nhận thông tin từ RabbitMQ, tự động nhận diện ý định (Classification) và trích xuất dữ liệu (Extraction) để gọi các workflows gRPC (ClassRegistration, Task, Inquiry).
 2.  **Modular RAG Ecosystem**: Hệ thống Modular RAG độc lập, lưu trữ dữ liệu tại chỗ (State-free), sử dụng pipeline mạnh mẽ:
