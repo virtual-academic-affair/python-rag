@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 5.3.0 | April 2026
+Version 5.4.0 | May 2026
 ================================================================================
 
 MUC LUC (DETAILED INDEX)
@@ -77,6 +77,7 @@ Dự án sử dụng kiến trúc RAG Modular (phi tập trung), kiểm soát ho
 SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT (Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant):
 1.  UPLOAD LAYER: Nhận file -> Validate Metadata (Required fields) -> R2 (Lưu file gốc) -> MongoDB (Status: uploading).
     - [NEW]: Hỗ trợ clientId để đẩy thông báo tiến trình real-time qua WebSocket.
+    - [NEW]: Mọi API Multipart/Form-data đều hỗ trợ song song `snake_case` và `camelCase` cho các trường dữ liệu đầu vào.
 2.  INDEXING LAYER (ASYNC):
     - LlamaParse: Trình phân tích PDF tốt nhất hiện nay, xử lý được bảng biểu (tables) trong quy chế.
     - PageIndex: Đóng vai trò kiến trúc sư mục lục. Nó không lấy text thô mà xây dựng một cây Phân cấp (Building an Heirarchical Tree).
@@ -225,10 +226,10 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 - Payload: Chứa đầy đủ các trường Pydantic của NestJS để tạo Entry hỗ trợ SV.
 
 8.2. INQUIRY SERVICE:
-- B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự là gì).
-- B2: Phân loại thắc mắc (`training`, `procedure`, `graduation`).
-- B3: RAG service lấy context từ tài liệu trường.
-- B4: Gemini soạn câu trả lời (Email Draft Body).
+- B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự) và các bộ lọc Metadata (Khóa, Năm học).
+- B2: [NEW] FAQ Pre-check: Tìm kiếm ngữ nghĩa trong FAQ Module v2. Nếu có câu trả lời sẵn -> Trả về ngay lập tức để tiết kiệm tài nguyên.
+- B3: Nếu FAQ không khớp, hệ thống gọi RAG service lấy context từ tài liệu trường dựa trên Vector Search.
+- B4: Gemini soạn câu trả lời (Email Draft Body). Đặc biệt: Các trích dẫn `(^...)` được tự động chuyển thành Link Markdown dẫn đến file gốc (original_url) của tài liệu.
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
 8.3. TASK SERVICE:
@@ -297,7 +298,7 @@ Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho cá
 
 11.4. HYBRID SEARCH STRATEGY (Tìm kiếm kết hợp):
 - Hệ thống áp dụng chiến lược Hybrid Search cho FAQ để đảm bảo độ chính xác tối đa:
-  - **Full-Text Search (FTS)**: Sử dụng MongoDB `$text` index trên các trường `question_unaccented` và `answer_unaccented`. Ưu tiên các kết quả khớp từ khóa chính xác (vd: "GPA", "học bổng").
+  - **Full-Text Search (FTS)**: Sử dụng MongoDB `$text` index. Hệ thống sử dụng tìm kiếm mềm dẻo (không bao ngoặc kép), ưu tiên kết quả khớp từ khóa chính xác nhưng vẫn hỗ trợ tìm kiếm linh hoạt (vd: "GPA", "học bổng").
   - **Semantic Match**: Sử dụng Qdrant Vector Search để tìm các câu hỏi có cùng ý nghĩa nhưng dùng từ ngữ khác nhau.
 - Sắp xếp (Ranking): Khi người dùng sử dụng tham số `search`, hệ thống ưu tiên hiển thị kết quả theo `textScore` (trọng số liên quan) từ MongoDB FTS.
 
@@ -414,20 +415,28 @@ PageIndex cung cấp 3 công cụ \"mắt thần\" cho AI Agent, giúp nó chủ
 
 Sử dụng vòng lặp `agent_loop` tích hợp lớp bảo vệ tối ưu:
 
-0.  RAG GATE (GATEKEEPER):
-    - Hệ thống sử dụng một lớp LLM phân tích nhanh ý định người dùng.
-    - Nếu câu hỏi là xã giao (Chào hỏi, cảm ơn) hoặc không cần dữ liệu chuyên môn -> Trả lời trực tiếp và ngắt luồng RAG ngay lập tức.
-    - Lợi ích: Tiết kiệm Token, giảm độ trễ, tránh nhiễu từ các tài liệu không liên quan.
+B0. AUTO-EXTRACT METADATA: 
+    - Nếu người dùng không gửi filter, hệ thống tự bóc tách "Khóa" hoặc "Năm học" từ câu hỏi (ví dụ: "K22" -> enrollmentYear: 2022).
 
-1.  Input: Câu hỏi + Chat History + Metadata Context.
-2.  Loop:
+B1. FAQ PRE-CHECK:
+    - Tìm kiếm nhanh trong FAQ Vector DB. Nếu trúng (Hit) với độ tin cậy cao -> Trả về câu trả lời FAQ ngay lập tức.
+
+B2. RAG GATE (GATEKEEPER):
+    - Hệ thống sử dụng một lớp LLM phân tích nhanh ý định người dùng.
+    - Nếu câu hỏi là xã giao (Chào hỏi, cảm ơn) hoặc không cần dữ liệu chuyên môn -> Trả về trực tiếp.
+    - Lợi ích: Tiết kiệm Token, giảm độ trễ.
+
+B3. Input: Câu hỏi + Chat History + Metadata Context.
+B4. Loop:
     - AI Agent phân tích câu hỏi. Nếu cần đọc tài liệu, nó sẽ gọi Tool.
     - PageIndex thực thi tool -> Trả lại kết quả văn bản.
     - AI Agent phân tích văn bản -> Nếu chưa đủ, lại gọi Tool tiếp; nếu đủ, sinh câu trả lời.
-3.  Final Answer Construction:
+B5. Final Answer Construction:
     - Câu trả lời được định dạng Markdown.
+    - Chèn trích dẫn `(^Tên mục lục)` ngay sau khi dùng xong thông tin từ một mục tài liệu (không chèn ở từng câu).
     - Danh sách `sources` trích dẫn gồm: fileId, title, page_numbers.
-    - Hệ thống dùng `r2_storage.generate_presigned_url` tạo link tải file \"nóng\" (expire sau 3600s) cho sv.
+    - Hệ thống dùng `r2_storage.generate_presigned_url` tạo link tải file "nóng" (expire sau 3600s) cho sv.
+    - Với Inquiry Email: Tự động chuyển đổi `(^...)` thành `(Xem thêm tại [Tên mục lục](url_file_gốc))`.
 
 15.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
 - Content-Type: `text/event-stream`.
@@ -471,7 +480,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - mime_type           : str (vd: application/pdf)
   - table_of_contents   : list (Mảng các tiêu đề văn bản phẳng)
   - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
-  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 2025, "toYear": 2026}, "type": "cong_van"})
+  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024}, "type": "cong_van"})
   - status              : str (uploading, processing, ready, failed)
   - createdAt / updatedAt: datetime.
 
@@ -482,7 +491,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - doc_description     : str (Tóm tắt 1 câu nội dung)
   - structure           : array (Mảng các node JSON cây phân cấp mục lục)
 
-17.3. Collection: `metadataTypes`
+17.3. Collection: `metadata_types` (Core Schema)
   - key                 : str (Mã duy nhất, vd: academicYear, unique index)
   - displayName         : str (Tên UI, vd: Năm học)
   - description         : str (Mô tả nhãn)
@@ -506,7 +515,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - answer_rich_text    : str (HTML/Rich text trả lời)
   - answer_markdown     : str (Markdown trả lời)
   - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
-  - metadata_filter     : dict (Bộ lọc academicYear/cohort)
+  - metadata_filter     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
   - isActive           : bool
   - viewCount          : int
   - source              : str (manual, synthesized, seed)
@@ -713,7 +722,7 @@ LƯU Ý KỸ THUẬT:
 - Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.3.0 (Rich Text & Hyperlink Preservation).
+Xác nhận bản thảo Overview Version 5.4.0 (Granular Citations & Improved Search).
 --------------------------------------------------------------------------------
 
 ================================================================================

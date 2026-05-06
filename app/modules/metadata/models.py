@@ -105,12 +105,10 @@ class FaqMetadata(BaseModel):
 
     enrollment_year: YearRange = YearRange()
     academic_year: YearRange = YearRange()
-    type: Optional[DocumentType] = None   # None → applies to all types
 
     def to_qdrant_payload(self) -> dict:
         payload = {}
         payload.update(self.enrollment_year.to_flat_dict("enrollment_year"))
         payload.update(self.academic_year.to_flat_dict("academic_year"))
-        payload["type"] = self.type.value if self.type else ""
         return payload
 

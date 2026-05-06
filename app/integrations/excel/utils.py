@@ -6,9 +6,10 @@ from openpyxl.cell.rich_text import CellRichText
 
 logger = logging.getLogger(__name__)
 
-def get_column_index(sheet, col_identifier: str) -> Optional[int]:
+def get_column_index(sheet, col_identifier: str, header_row: int = 1) -> Optional[int]:
     """
     Convert a column letter (e.g., 'A') or a header name to a 1-based index.
+    Searches in row 1 and also in header_row if provided.
     """
     if not col_identifier:
         return None
@@ -27,12 +28,17 @@ def get_column_index(sheet, col_identifier: str) -> Optional[int]:
         except ValueError:
             pass
             
-    # 3. Try to find the name in the first row (header)
-    for row in sheet.iter_rows(min_row=1, max_row=1):
-        for idx, cell in enumerate(row, start=1):
-            cell_value = cell.value
-            if cell_value and str(cell_value).strip().lower() == col_identifier.lower():
-                return idx
+    # 3. Try to find the name in the header rows
+    rows_to_check = {1}
+    if header_row and header_row > 1:
+        rows_to_check.add(header_row)
+        
+    for r_idx in sorted(list(rows_to_check)):
+        for row in sheet.iter_rows(min_row=r_idx, max_row=r_idx):
+            for idx, cell in enumerate(row, start=1):
+                cell_value = cell.value
+                if cell_value and str(cell_value).strip().lower() == col_identifier.lower():
+                    return idx
             
     return None
 

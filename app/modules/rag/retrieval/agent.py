@@ -31,11 +31,12 @@ QUY TẮC CÂU TRẢ LỜI CUỐI CÙNG CHO NGƯỜI DÙNG:
 - Mọi suy nghĩ, lập luận rút ra, báo cáo trung gian ("Tôi đã tìm thấy...", "Từ tài liệu...", "Tôi có đủ thông tin...") BẮT BUỘC phải viết bên ngoài, TRƯỚC thẻ `<answer>`.
 - Luôn xưng hô chuyên nghiệp là "Phòng Giáo vụ" hoặc "chúng tôi" ở trong phần `<answer>`.
 - TUYỆT ĐỐI KHÔNG DÙNG CÂU CHÀO (không dùng "Chào bạn", "Xin chào"). Đi thẳng vào nội dung tư vấn ngay lập tức.
-- YÊU CẦU TRÍCH DẪN: Đối với các đoạn văn có sử dụng thông tin từ tài liệu, BẮT BUỘC chèn tham chiếu ở CUỐI MỖI ĐOẠN VĂN bằng cú pháp: `(^Tên mục lục tương ứng)` (Ví dụ: `(^Điều 2: Điều kiện xét tốt nghiệp)`). Tham khảo "Tên mục lục" khi gọi công cụ. TUYỆT ĐỐI KHÔNG chèn ở từng câu, chỉ chèn 1 lần ở cuối đoạn.
+- YÊU CẦU TRÍCH DẪN: Ngay sau khi bạn đã **dùng xong toàn bộ thông tin cần thiết từ một mục/điều của tài liệu** và không cần tham chiếu thêm đến mục đó nữa, BẮT BUỘC chèn ngay tham chiếu bằng cú pháp: `(^Tên mục lục tương ứng)` (Ví dụ: `(^Điều 2: Điều kiện xét tốt nghiệp)`). Đây là tín hiệu "Tôi đã xong với mục này". KHÔNG chèn ở từng câu riêng lẻ.
+- Định dạng nội dung: Nội dung bên trong `<answer>` PHẢI sử dụng định dạng Markdown (như **in đậm** để nhấn mạnh các ý quan trọng, sử dụng danh sách liệt kê `-` hoặc `1.` để trình bày các bước/điều kiện một cách rõ ràng).
 - Định dạng chuẩn:
 [Những suy nghĩ nháp không gửi cho sinh viên]
 <answer>
-[Nội dung tư vấn đi thẳng vào trọng tâm, không chào hỏi]
+[Nội dung tư vấn bằng Markdown, đi thẳng vào trọng tâm, không chào hỏi]
 </answer>
 - KHÔNG để lộ `doc_id` hoặc chi tiết hệ thống với sinh viên. Khi cần trích dẫn, hãy nhắc tên tệp được cung cấp phía trên.
 - TUYỆT ĐỐI KHÔNG nhắc đến tên các thẻ XML (như <answer>) trong phần suy nghĩ/lập luận của bạn.
@@ -101,40 +102,76 @@ def parse_agent_response(text: str) -> tuple[str, str]:
     return "", text.strip()
 
 
-def verify_citations(text: str, sources_data: list[dict]) -> str:
+def verify_citations(
+    text: str,
+    sources_data: list[dict],
+    resolve_citations: bool = False,
+    citation_link_type: str = "original",  # "original" | "markdown"
+) -> str:
+    """Verify and optionally resolve citation markers.
 
+    When resolve_citations=False (Chat): keeps `(^Title)` as-is after verifying.
+    When resolve_citations=True (Inquiry): transforms `(^Title)` into
+        `(Xem thêm tại [Title](url))` using original_url or markdown_url.
+    """
 
     valid_titles = [s["title"] for s in sources_data if s.get("title")]
 
+    def _find_source_for_title(raw_title: str) -> dict | None:
+        """Return the best-matching source dict for a given raw title."""
+        for s in sources_data:
+            vt = s.get("title", "")
+            if raw_title.lower() in vt.lower() or vt.lower() in raw_title.lower():
+                return s
+        matches = difflib.get_close_matches(raw_title, [s.get("title", "") for s in sources_data], n=1, cutoff=0.6)
+        if matches:
+            for s in sources_data:
+                if s.get("title") == matches[0]:
+                    return s
+        return None
+
     def verify_title(match):
         raw_title = match.group(1).strip()
-        if not valid_titles:
+        source = _find_source_for_title(raw_title)
+        if not source:
             return ""
-            
-        for vt in valid_titles:
-            if raw_title.lower() in vt.lower() or vt.lower() in raw_title.lower():
-                return f"(^{vt})"
-                
-        matches = difflib.get_close_matches(raw_title, valid_titles, n=1, cutoff=0.6)
-        if matches:
-            return f"(^{matches[0]})"
-            
-        return ""
-    
+
+        verified_title = source.get("title", raw_title)
+
+        if resolve_citations:
+            if citation_link_type == "markdown":
+                url = source.get("markdown_url", "")
+            else:
+                url = source.get("original_url", "")
+
+            if url:
+                return f"(Xem thêm tại [{verified_title}]({url}))"
+            else:
+                return f"(^{verified_title})"
+        else:
+            return f"(^{verified_title})"
+
     if not text or not valid_titles:
         return re.sub(r'\(\^(.*?)\)', "", text) if text else text
-        
+
     return re.sub(r'\(\^(.*?)\)', verify_title, text)
 
 
 class CitationStreamFormatter:
-    def __init__(self, sources_data: list[dict]):
+    def __init__(
+        self,
+        sources_data: list[dict],
+        resolve_citations: bool = False,
+        citation_link_type: str = "original",
+    ):
         self.sources_data = sources_data
+        self.resolve_citations = resolve_citations
+        self.citation_link_type = citation_link_type
         self.buffer = ""
-    
+
     def process_chunk(self, chunk: str) -> str:
         self.buffer += chunk
-        
+
         last_paren = self.buffer.rfind('(')
         if last_paren != -1:
             after_paren = self.buffer[last_paren:]
@@ -142,17 +179,17 @@ class CitationStreamFormatter:
                 if after_paren.startswith('(^') or '(^'.startswith(after_paren):
                      ready_part = self.buffer[:last_paren]
                      pending_part = self.buffer[last_paren:]
-                     
-                     processed = verify_citations(ready_part, self.sources_data)
+
+                     processed = verify_citations(ready_part, self.sources_data, self.resolve_citations, self.citation_link_type)
                      self.buffer = pending_part
                      return processed
-                     
-        processed = verify_citations(self.buffer, self.sources_data)
+
+        processed = verify_citations(self.buffer, self.sources_data, self.resolve_citations, self.citation_link_type)
         self.buffer = ""
         return processed
-        
+
     def flush(self) -> str:
-        processed = verify_citations(self.buffer, self.sources_data)
+        processed = verify_citations(self.buffer, self.sources_data, self.resolve_citations, self.citation_link_type)
         self.buffer = ""
         return processed
 
@@ -279,6 +316,8 @@ async def run_agent_loop(
     candidate_files: list[dict],
     prompt_contents: Any,
     max_turns: int = None,
+    resolve_citations: bool = False,
+    citation_link_type: str = "original",
 ) -> dict:
     """
     Run the manual PageIndex agent loop and return a structured result.
@@ -386,7 +425,7 @@ async def run_agent_loop(
         history.append(types.Content(role="user", parts=tool_response_parts))
 
     sources_data = await build_sources_from_steps(steps, candidate_files)
-    final_answer = verify_citations(final_answer, sources_data)
+    final_answer = verify_citations(final_answer, sources_data, resolve_citations, citation_link_type)
 
     return {
         "final_answer": final_answer,

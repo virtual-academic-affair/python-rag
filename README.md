@@ -1,6 +1,6 @@
 # AI Service - Unified Modular RAG & Email Classification
 
-**Version 5.3.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
+**Version 5.4.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
 
 ---
 
@@ -15,9 +15,10 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
     *   **Qdrant**: Vector Database lưu trữ embeddings phục vụ tìm kiếm ngữ nghĩa.
     *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets (`/api/files/progress/{clientId}`).
     *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks và cấu trúc mục lục.
+    *   **Agentic Search & Granular Citations**: AI Agent tự động điều hướng tài liệu và chèn trích dẫn `(^Tên mục lục)` ngay sau khi hoàn thành một ý câu hỏi. Với Inquiry Email, trích dẫn được tự động giải nén thành link file gốc.
     *   **Tiêu chuẩn Ingestion Flow**: Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant (Chunks/Embeddings).
 3.  **Semantic FAQ Module (v2)**: Hệ thống quản lý câu hỏi thường gặp thông minh:
-    *   **Hybrid Search**: Kết hợp **Semantic Match** (Gemini Embeddings) và **Native MongoDB Full-Text Search (FTS)** trên các trường không dấu (`unaccented`), đảm bảo tìm kiếm chính xác cả từ khóa thô và ý nghĩa ngữ nghĩa.
+    *   **Hybrid Search**: Kết hợp **Semantic Match** (Gemini Embeddings) và **Native MongoDB Full-Text Search (FTS)**. Hệ thống hỗ trợ tìm kiếm mềm dẻo, đảm bảo tìm kiếm chính xác cả từ khóa thô và ý nghĩa ngữ nghĩa.
     *   **Auto-Synthesis**: Tự động gom cụm các tương tác người dùng (Clustering) và sử dụng LLM để tổng hợp FAQ mới từ dữ liệu thực tế.
     *   **Bulk Import & Management**: Hỗ trợ nạp hàng loạt FAQ từ Excel (.xlsx) hoặc JSON với hiệu suất cao (parallel embeddings).
     *   **[NEW] Formatting Preservation**: Tự động giữ nguyên định dạng Rich Text (Bold, Italic, Underline) và Hyperlinks từ file Excel, chuyển đổi sang Markdown để hiển thị đồng nhất.

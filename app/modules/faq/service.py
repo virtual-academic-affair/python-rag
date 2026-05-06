@@ -13,6 +13,9 @@ from app.modules.faq.repository import FaqRepository, FaqCandidateRepository, In
 from app.modules.faq.qdrant_faq import get_qdrant_faq_service, QdrantFaqService
 from app.core.text_utils import remove_accents
 from app.core.format_utils import markdown_to_rich_text, rich_text_to_markdown
+from app.modules.metadata.service import get_metadata_service
+from app.core.exceptions import ValidationException
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +51,12 @@ class FaqService:
             question_vector = await self.embed(question)
         answer_markdown = rich_text_to_markdown(answer_rich_text)
         
+        is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
+        if not is_valid:
+            raise ValidationException(f"Invalid FAQ metadata: {', '.join(errors)}")
+        validated_metadata = meta_model.model_dump() if meta_model else {}
+
         # 1. Insert MongoDB trước (BaseRepository tự tạo timestamps)
-        from bson import ObjectId
         doc_id = ObjectId()
         doc_dict = {
             "_id": doc_id,
@@ -58,7 +65,7 @@ class FaqService:
             "answer_unaccented": remove_accents(answer_markdown),
             "answer_markdown": answer_markdown,
             "answer_rich_text": answer_rich_text,
-            "metadata_filter": metadata_filter,
+            "metadata_filter": validated_metadata,
             "source": source,
             "candidate_id": candidate_id,
             "is_active": True,
@@ -73,7 +80,7 @@ class FaqService:
             qdrant_point_id = await self._qdrant.upsert_faq(
                 faq_id=faq_id_str,
                 question_vector=question_vector,
-                metadata_filter=metadata_filter
+                metadata_filter=validated_metadata
             )
             await self._faq_repo.update_by_id(faq_id_str, {"qdrant_point_id": qdrant_point_id})
             created["qdrant_point_id"] = qdrant_point_id
@@ -197,7 +204,11 @@ class FaqService:
             update_data["answer_unaccented"] = remove_accents(data["answer_markdown"])
             
         if "metadata_filter" in data:
-            update_data["metadata_filter"] = data["metadata_filter"]
+            is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(data["metadata_filter"])
+            if not is_valid:
+                raise ValidationException(f"Invalid FAQ metadata: {', '.join(errors)}")
+                
+            update_data["metadata_filter"] = meta_model.model_dump() if meta_model else {}
             need_qdrant_update = True
             
         if "is_active" in data:
@@ -264,7 +275,7 @@ class FaqService:
         projection = None
         if search:
             unaccented = remove_accents(search)
-            query["$text"] = {"$search": f'"{unaccented}"'}
+            query["$text"] = {"$search": unaccented}
             sort = [("score", {"$meta": "textScore"})]
             projection = {"score": {"$meta": "textScore"}}
 
@@ -322,11 +333,14 @@ class FaqService:
         email_message_id: Optional[int] = None
     ) -> None:
         """Log an interaction to interaction_logs for later synthesis."""
+        is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
+        validated_metadata = meta_model.model_dump() if meta_model else {}
+
         await self._log_repo.log(
             question=question,
             question_vector=question_vector,
             answer_markdown=answer_markdown,
-            metadata_filter=metadata_filter,
+            metadata_filter=validated_metadata,
             source_type=source_type,
             processing_time_ms=processing_time_ms,
             email_message_id=email_message_id
@@ -346,7 +360,7 @@ class FaqService:
         projection = None
         if search:
             unaccented = remove_accents(search)
-            query["$text"] = {"$search": f'"{unaccented}"'}
+            query["$text"] = {"$search": unaccented}
             sort = [("score", {"$meta": "textScore"})]
             projection = {"score": {"$meta": "textScore"}}
             

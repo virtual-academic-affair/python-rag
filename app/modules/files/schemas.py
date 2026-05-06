@@ -40,7 +40,14 @@ class FileChunkPreviewResponse(BaseSchema):
     chunk_overlap_chars: int
     chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
 
+class FileUploadRequest(BaseSchema):
+    display_name: Optional[str] = None
+    custom_metadata: Optional[str] = None
+    client_id: Optional[str] = None
 
+class BatchFileUploadRequest(BaseSchema):
+    display_names: Optional[str] = None
+    metadata_list: Optional[str] = None
 
 
 class UpdateFileRequest(BaseSchema):

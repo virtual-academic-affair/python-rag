@@ -21,6 +21,7 @@ from app.modules.rag.retrieval.agent import (
 )
 from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.service import get_faq_service
+from app.modules.metadata.extraction import extract_metadata_from_text
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -158,7 +159,14 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         
         # [0] Embed question once
         question_vector = await self._embed(question)
-        meta_dict = metadata_filter or {}
+        
+        # [0.1] Auto-extract metadata if not provided explicitly
+        if not metadata_filter:
+            metadata_filter = await extract_metadata_from_text(question)
+            if metadata_filter:
+                logger.info(f"[Chat] Auto-extracted metadata from question: {metadata_filter}")
+        
+        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
 
         # [1] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
@@ -175,7 +183,13 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "processing_time_ms": processing_time_ms,
             }
 
-        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
+        # We run them in parallel because most queries require RAG.
+        gate_task = self._evaluate_rag_needs(question, chat_history)
+        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        
+        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
+        
         if not needs_rag:
             logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -188,7 +202,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "processing_time_ms": processing_time_ms,
             }
 
-        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
 
         if not candidate_files:
@@ -252,7 +265,14 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         
         # [0] Embed question once
         question_vector = await self._embed(question)
-        meta_dict = metadata_filter or {}
+        
+        # [0.1] Auto-extract metadata if not provided explicitly
+        if not metadata_filter:
+            metadata_filter = await extract_metadata_from_text(question)
+            if metadata_filter:
+                logger.info(f"[Chat-Stream] Auto-extracted metadata from question: {metadata_filter}")
+        
+        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
 
         # [1] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
@@ -271,7 +291,12 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             })
             return
 
-        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
+        gate_task = self._evaluate_rag_needs(question, chat_history)
+        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        
+        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
+        
         if not needs_rag:
             logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
             yield json.dumps({"type": "text", "content": direct_answer, "done": False})
@@ -285,7 +310,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             })
             return
 
-        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
         history = state["history"]
 

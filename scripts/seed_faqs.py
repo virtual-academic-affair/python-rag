@@ -1,6 +1,6 @@
 """
 Seed script to import FAQs from a JSON file into the system.
-Usage: python scripts/seed_faqs.py --file faqs.json
+Usage: python scripts/seed_faqs.py --file scripts/sample_faqs.json
 """
 import asyncio
 import json

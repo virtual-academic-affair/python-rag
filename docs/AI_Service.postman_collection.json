@@ -1051,7 +1051,7 @@
                                 },
                                 {
                                     "key": "metadataFilterJson",
-                                    "value": "{\"academicYear\": \"Năm học\", \"cohort\": \"Khóa\"}",
+                                    "value": "{\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}",
                                     "type": "text"
                                 }
                             ]

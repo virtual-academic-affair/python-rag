@@ -17,7 +17,6 @@ from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.modules.files.repository import FileRepository
-
 logger = logging.getLogger(__name__)
 
 class RetrievalService:

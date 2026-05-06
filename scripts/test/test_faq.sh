@@ -294,26 +294,26 @@ wb = openpyxl.Workbook()
 ws = wb.active
 ws.append(['STT', 'Câu hỏi', 'Trả lời', 'Năm học', 'Khóa'])
 
-# Row 1: Plain text
-ws.append([1, f'Học phí năm học 2024 là bao nhiêu? ({ts})', 'Học phí là 30 triệu/năm.', '2024-2025', 'all'])
+# Row 1: Specific academic year range, applicable to all enrollment years
+ws.append([1, f'Học phí năm học 2024 là bao nhiêu? ({ts})', 'Học phí là 30 triệu/năm.', '2024-2025', ''])
 
-# Row 2: Bold Answer (Full cell)
+# Row 2: Applicable to all academic years, specific enrollment year
 ws.cell(row=3, column=1, value=2)
 ws.cell(row=3, column=2, value=f'Làm thế nào để đăng ký học phần? ({ts})')
 cell_a2 = ws.cell(row=3, column=3, value='Bạn vào trang portal để đăng ký.')
 cell_a2.font = Font(bold=True)
-ws.cell(row=3, column=4, value='all')
-ws.cell(row=3, column=5, value='2018')
+ws.cell(row=3, column=4, value='') # Empty = all academic years
+ws.cell(row=3, column=5, value='2018') # Specific year = 2018-2018
 
-# Row 3: Simple HTML-like text
+# Row 3: Applicable to all years
 ws.cell(row=4, column=1, value=3)
 ws.cell(row=4, column=2, value=f'Link đăng ký ở đâu? ({ts})')
 ws.cell(row=4, column=3, value='Vui lòng truy cập <b>Cổng thông tin</b> hoặc xem <i>hướng dẫn</i>.')
-ws.cell(row=4, column=4, value='all')
-ws.cell(row=4, column=5, value='all')
+ws.cell(row=4, column=4, value='')
+ws.cell(row=4, column=5, value='')
 
 # Row 4: Short question (Fail case)
-ws.append([4, 'Q', 'Short', 'all', 'all']) 
+ws.append([4, 'Q', 'Short', '', '']) 
 
 wb.save('scripts/test/sample_bulk_faq_unique.xlsx')
 "
@@ -323,7 +323,7 @@ response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import/prev
     -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
-    -F "metadataFilterJson={\"academic_year\": \"Năm học\", \"enrollment_year\": \"Khóa\"}")
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
 
 HTTP_CODE=$(echo "$response" | tail -n1)
 BODY=$(echo "$response" | sed '$d')
@@ -345,7 +345,7 @@ response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import" \
     -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
-    -F "metadataFilterJson={\"academic_year\": \"Năm học\", \"enrollment_year\": \"Khóa\"}")
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
 
 HTTP_CODE=$(echo "$response" | tail -n1)
 BODY=$(echo "$response" | sed '$d')

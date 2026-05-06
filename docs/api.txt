@@ -55,7 +55,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "5.3.0",                                                      │
+│     "version": "5.4.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
 │     "qdrantConnected": true,                                                 │
@@ -109,11 +109,11 @@ MỤC LỤC
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Controller nhận title/content -> Gọi EmailWorkflowOrchestrator.         │
-│   2. AI phân loại email thành 1 trong 4 nhãn chuẩn.                          │
-│   3. Nếu nhãn là 'Inquiry', thực hiện RAG Search trên kho tài liệu.          │
-│   4. Gemini soạn thảo bản thảo phản hồi (Reply Draft) dựa trên context tìm được.│
-│   5. Trả về nhãn và dữ liệu bổ sung tương ứng với loại workflow.             │
+│   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
+│   2. FAQ Pre-check: Tìm kiếm ngữ nghĩa trong kho FAQ. Nếu trúng -> Dùng luôn. │
+│   3. RAG Retrieval: Nếu không có FAQ, tìm kiếm tài liệu quy chế liên quan.    │
+│   4. LLM Synthesis: Soạn thảo email phản hồi dựa trên bối cảnh tìm được.     │
+│   5. gRPC Call: Lưu thắc mắc và bản thảo email vào NestJS qua gRPC.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -145,6 +145,10 @@ MỤC LỤC
 │     "yearMin": 0,                                                            │
 │     "yearMax": 9999                                                          │
 │   }                                                                          │
+│                                                                              │
+│ GHI CHÚ: Toàn bộ các API nhận `multipart/form-data` (Upload/Import) đều hỗ trợ │
+│ song song cả `snake_case` và `camelCase` cho các tham số Form.               │
+│                                                                              │
 │ LUỒNG XỬ LÝ: Trả về các hằng số cấu hình của hệ thống metadata.              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -159,8 +163,10 @@ MỤC LỤC
 │                                                                              │
 │ REQUEST (Multipart):                                                         │
 │   - file: <binary>                                                           │
-│   - displayName: "Văn bản A"                                                 │
-│   - customMetadata: JSON string (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020}, "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}') │
+│   - displayName: "Văn bản A"                                  │
+│   - customMetadata: JSON string                            │
+│     (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020}, "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}') │
+│   - clientId: <string> (Dùng cho WebSocket progress)             │
 │                                                                              │
 │ RESPONSE 201:                                                                │
 │   {                                                                          │
@@ -229,8 +235,8 @@ MỤC LỤC
 │ MÔ TẢ: Upload đồng thời nhiều tệp tin.                                       │
 │ REQUEST (Multipart):                                                         │
 │   - files: [binary]                                                          │
-│   - displayNames: JSON string (VD: ["File 1", "File 2"])                      │
-│   - metadataList: JSON string (VD: [{"type":"ctdt"}, {"type":"quyet_dinh"}])  │
+│   - displayNames: JSON string (VD: ["File 1", "File 2"])      │
+│   - metadataList: JSON string (VD: [{"type":"ctdt"}, {"type":"quyet_dinh"}]) │
 │ RESPONSE: { "total": 5, "successful": 4, "failed": 1, "results": [...] }     │
 │ LUỒNG XỬ LÝ: Chạy vòng lặp gọi hàm upload đơn lẻ cho từng thành phần.        │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -298,14 +304,17 @@ MỤC LỤC
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   0. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
+│   0. Auto-Extraction: Tự động bóc tách Khóa/Năm học từ câu hỏi nếu thiếu.    │
+│   1. FAQ Pre-check: Tìm kiếm nhanh trong kho FAQ Module v2. Nếu có câu trả   │
+│      lời sẵn thì trả về ngay (Source: 'faq'), bỏ qua toàn bộ luồng RAG.      │
+│   2. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
 │      hoặc xã giao, trả lời trực tiếp và BYPASS hoàn toàn luồng RAG tốn kém.  │
-│   1. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
-│   2. PageIndex Semantic Reranking: Tính toán DocScore từng File dựa trên     │
-│      mẫu 30 chunks này để chọn ra Top-5 Files tốt nhất (Fine Selection).     │
-│   3. Build Context: Kết hợp descriptions của Files tìm được và lịch sử chat. │
-│   4. Agentic Loop: LLM quyết định dùng Tools (PageIndex) để đọc sâu tài liệu.│
-│   5. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
+│   3. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
+│   4. PageIndex Semantic Reranking: Chọn lọc Top-5 Files tốt nhất.            │
+│   5. Agentic Loop: LLM quyết định dùng Tools để đọc sâu nội dung từng trang. │
+│      Chèn trích dẫn `(^...)` sau khi dùng xong thông tin từ một mục.         │
+│   6. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
+│      Lưu ý: Với Inquiry Email, trích dẫn được giải nén thành link file gốc.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -357,8 +366,8 @@ MỤC LỤC
 │                                                                              │
 │ REQUEST QUERY: ?is_active=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
 │   - is_active: bool (optional)                                               │
-│   - metadataFilter: JSON string (optional) - VD: {"academicYear": {"fromYear": 2024}} │
-│   - search: string (optional) - Tìm kiếm Full-Text (không dấu/có dấu)        │
+│   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}} │
+│   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
 │ RESPONSE: { "items": [FaqResponse], "total": 10, "page": 1, "limit": 20 }    │
@@ -392,7 +401,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "...",                                                       │
 │     "answerRichText": "...",                                                 │
-│     "metadataFilter": { "academicYear": [], "cohort": [] }                   │
+│     "metadataFilter": { "academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024} } │
 │   }                                                                          │
 │ RESPONSE: FaqResponse object                                                 │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
@@ -721,5 +730,5 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-Hoàn tất bản Đặc tả API chi tiết v5.3.0 (Full Compliance).
+Hoàn tất bản Đặc tả API chi tiết v5.4.0 (Full Compliance).
 --------------------------------------------------------------------------------

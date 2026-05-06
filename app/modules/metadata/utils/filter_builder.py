@@ -80,11 +80,12 @@ class FilterBuilder:
             ])
 
         # 3. Type
-        if model.type:
+        model_type = getattr(model, "type", None)
+        if model_type:
             must_conditions.append(
                 qm.FieldCondition(
                     key="metadata.type",
-                    match=qm.MatchValue(value=model.type.value)
+                    match=qm.MatchValue(value=model_type.value)
                 )
             )
 
@@ -129,8 +130,9 @@ class FilterBuilder:
             mongo_filter[f"{mongo_prefix}.academic_year.to_year"] = {"$gte": af}
             mongo_filter[f"{mongo_prefix}.academic_year.from_year"] = {"$lte": at}
 
-        if model.type:
-            mongo_filter[f"{mongo_prefix}.type"] = model.type.value
+        model_type = getattr(model, "type", None)
+        if model_type:
+            mongo_filter[f"{mongo_prefix}.type"] = model_type.value
 
         return mongo_filter
 

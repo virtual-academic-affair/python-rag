@@ -185,38 +185,6 @@ async def clear_qdrant_collections():
     logger.info("✅ Qdrant cleared")
 
 
-async def delete_all_gemini_stores():
-    """Delete all stores from Gemini File Search API."""
-    logger.info("Deleting all Gemini File Search stores...")
-
-    from google import genai
-
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in .env")
-
-    client = genai.Client(api_key=api_key)
-
-    try:
-        stores = list(client.file_search_stores.list())
-
-        if not stores:
-            logger.info("  No Gemini stores found")
-        else:
-            logger.info(f"  Found {len(stores)} Gemini store(s)")
-            for store in stores:
-                try:
-                    client.file_search_stores.delete(name=store.name, config={"force": True})
-                    logger.info(f"  ✓ Deleted: {store.name}")
-                except Exception as e:
-                    logger.warning(f"  ⚠ Failed to delete {store.name}: {e}")
-
-    except Exception as e:
-        logger.warning(f"  Gemini API error (continuing): {e}")
-
-    logger.info("✅ Gemini stores deleted")
-
-
 async def clear_pageindex_workspace():
     """Delete all .md and .json files in PageIndex workspace."""
     logger.info("Clearing PageIndex workspace...")
@@ -370,7 +338,6 @@ async def wait_for_ingestion(file_ids: list[str]):
     logger.info(f"INGESTION STATUS: {len(completed_ids)} ready, {len(failed_ids)} failed, {len(pending_ids)} timed out")
     logger.info("-" * 50)
 
-
 async def wait_for_service():
     """Wait for AI Service to be available."""
     logger.info("Checking AI Service availability...")
@@ -411,7 +378,7 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         print("\n⚠️  WARNING: This will DELETE all existing data!")
         print("   - MongoDB database will be dropped")
         print("   - R2 files will be deleted")
-        print("   - Gemini stores will be deleted")
+        print("   - Qdrant collections will be recreated")
         print()
         confirm = input("Continue? (yes/no): ").strip().lower()
         if confirm != "yes":
@@ -437,7 +404,6 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         await drop_mongodb_database()
         await clear_r2_bucket()
         await clear_qdrant_collections()
-        await delete_all_gemini_stores()
         await clear_pageindex_workspace()
 
         # Phase 2: Initialize

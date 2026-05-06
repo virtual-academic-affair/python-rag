@@ -96,16 +96,17 @@ class QdrantFaqService:
         await self.ensure_collection()
         point_id = self._stable_point_id(faq_id)
         
-        from app.modules.metadata.models import FaqMetadata
+        from app.modules.metadata.service import get_metadata_service
         try:
-            # metadata_filter might already be flat or nested
-            if any(k.endswith("_from") for k in metadata_filter.keys()):
-                flat_meta = metadata_filter
+            # Always normalize through schema for consistent Qdrant payload
+            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
+            if meta_model:
+                flat_meta = meta_model.to_qdrant_payload()
             else:
-                flat_meta = FaqMetadata(**metadata_filter).to_qdrant_payload()
+                flat_meta = {}
         except Exception as e:
             logger.warning(f"Failed to parse FAQ metadata for Qdrant upsert: {e}")
-            flat_meta = metadata_filter
+            flat_meta = {}
 
         payload = {
             "faq_id": faq_id,
@@ -171,12 +172,13 @@ class QdrantFaqService:
             ])
 
         # 3. Type
-        if model.type:
+        model_type = getattr(model, "type", None)
+        if model_type:
             # FAQ can apply to all types if it has no type (type="")
             must_conditions.append(
                 qm.Filter(
                     should=[
-                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=model.type.value)),
+                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=model_type.value)),
                         qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=""))
                     ]
                 )

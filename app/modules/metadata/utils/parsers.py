@@ -30,8 +30,9 @@ def parse_year_range(value: Optional[str]) -> YearRange:
         to_year = int(right) if right else YEAR_MAX
         return YearRange(from_year=from_year, to_year=to_year)
 
-    # Single number → treat as from_year with open upper bound
+    # Single number → treat as exact year (from = to)
     try:
-        return YearRange(from_year=int(s), to_year=YEAR_MAX)
+        val = int(s)
+        return YearRange(from_year=val, to_year=val)
     except ValueError:
         return YearRange()

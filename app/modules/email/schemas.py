@@ -62,7 +62,7 @@ class InquiryIntent(BaseSchema):
     question: str = Field(description="The main question or intent extracted from the email.")
 
 class InquiryTypesResult(BaseSchema):
-    inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.")
+    inquiry_types: List[Literal["graduation", "training"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.")
 
 from app.modules.metadata.schemas import YearRangeSchema
 

@@ -104,30 +104,23 @@ class FaqMetadataSchema(BaseSchema):
     """Request body for FAQ metadata_filter."""
     enrollment_year: YearRangeSchema = Field(default_factory=YearRangeSchema)
     academic_year: YearRangeSchema = Field(default_factory=YearRangeSchema)
-    type: Optional[DocumentType] = Field(
-        None,
-        description="Document type filter. null = applies to all types.",
-    )
 
     def to_model(self) -> FaqMetadata:
         return FaqMetadata(
             enrollment_year=self.enrollment_year.to_model(),
             academic_year=self.academic_year.to_model(),
-            type=self.type,
         )
 
 
 class FaqMetadataResponse(BaseSchema):
     enrollment_year: YearRangeResponse
     academic_year: YearRangeResponse
-    type: Optional[str] = None
 
     @classmethod
     def from_model(cls, m: FaqMetadata) -> "FaqMetadataResponse":
         return cls(
             enrollment_year=YearRangeResponse.from_model(m.enrollment_year),
             academic_year=YearRangeResponse.from_model(m.academic_year),
-            type=m.type,
         )
 
 

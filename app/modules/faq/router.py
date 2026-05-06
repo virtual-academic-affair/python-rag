@@ -3,8 +3,9 @@ FastAPI Router for FAQ Module.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile, Form
 from typing import List, Optional, Dict, Any
+import json
 
-from app.core.dependencies import require_admin, require_auth
+from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.faq.schemas import (
     FaqCreateRequest,
     FaqUpdateRequest,
@@ -18,7 +19,8 @@ from app.modules.faq.schemas import (
     FaqMatchRequest,
     FaqImportPreviewResponse,
     FaqBulkCreateRequest,
-    FaqBulkCreateResponse
+    FaqBulkCreateResponse,
+    FaqImportExcelRequest
 )
 from app.modules.faq.service import get_faq_service, FaqService
 from app.modules.faq.synthesizer import get_faq_synthesis_service
@@ -225,27 +227,23 @@ async def get_faq(
 @router.post("/import/preview", response_model=FaqImportPreviewResponse)
 async def preview_faq_import(
     file: UploadFile = File(...),
-    question_col: str = Form(...),
-    answer_col: str = Form(...),
-    metadata_filter_json: str = Form(..., alias="metadataFilterJson", description="JSON string mapping columns to metadata keys"),
-    sheet_name: Optional[str] = Form(None),
-    skip_rows: int = Form(1),
+    req: FaqImportExcelRequest = Depends(from_form(FaqImportExcelRequest)),
     admin: Dict[str, Any] = Depends(require_admin)
 ):
     """
     Upload Excel and preview extracted FAQ rows.
     """
     import json
-    metadata_map = json.loads(metadata_filter_json)
+    metadata_map = json.loads(req.metadata_filter_json)
     content = await file.read()
     try:
         result = parse_excel_to_faq_rows(
             file_bytes=content,
-            question_col=question_col,
-            answer_col=answer_col,
+            question_col=req.question_col,
+            answer_col=req.answer_col,
             metadata_map=metadata_map,
-            sheet_name=sheet_name,
-            skip_rows=skip_rows
+            sheet_name=req.sheet_name,
+            skip_rows=req.skip_rows
         )
         return result
     except ValueError as e:
@@ -255,12 +253,7 @@ async def preview_faq_import(
 @router.post("/import", response_model=FaqBulkCreateResponse)
 async def import_faqs_from_excel(
     file: UploadFile = File(...),
-    question_col: str = Form(...),
-    answer_col: str = Form(...),
-    metadata_filter_json: str = Form(..., alias="metadataFilterJson", description="JSON string mapping columns to metadata keys"),
-    sheet_name: Optional[str] = Form(None),
-    skip_rows: int = Form(1),
-    skip_duplicates: bool = Form(True),
+    req: FaqImportExcelRequest = Depends(from_form(FaqImportExcelRequest)),
     admin: Dict[str, Any] = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
@@ -268,17 +261,17 @@ async def import_faqs_from_excel(
     Upload Excel and create FAQs in bulk.
     """
     import json
-    metadata_map = json.loads(metadata_filter_json)
+    metadata_map = json.loads(req.metadata_filter_json)
     content = await file.read()
     try:
         # 1. Parse
         parsed = parse_excel_to_faq_rows(
             file_bytes=content,
-            question_col=question_col,
-            answer_col=answer_col,
+            question_col=req.question_col,
+            answer_col=req.answer_col,
             metadata_map=metadata_map,
-            sheet_name=sheet_name,
-            skip_rows=skip_rows
+            sheet_name=req.sheet_name,
+            skip_rows=req.skip_rows
         )
         
         # 2. Filter valid rows
@@ -292,7 +285,7 @@ async def import_faqs_from_excel(
         ]
         
         # 3. Create
-        result = await faq_svc.bulk_create_faqs(valid_items, skip_duplicates=skip_duplicates)
+        result = await faq_svc.bulk_create_faqs(valid_items, skip_duplicates=req.skip_duplicates)
         
         # 4. Merge errors from parser
         parser_errors = [
@@ -303,7 +296,6 @@ async def import_faqs_from_excel(
         result["failed"] += len(parser_errors)
         
         return result
-        
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -11,6 +11,7 @@ from app.integrations.llm.gemini import GeminiPromptChain, chain_prompt, GeminiG
 from app.modules.email.schemas import InquiryFilters
 from app.core.text_utils import remove_accents
 from app.core.json_utils import parse_json_safely
+from app.modules.metadata.extraction import extract_metadata_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -35,37 +36,8 @@ async def extract_inquiry_filters(
     """
     Extract academicYear and enrollmentYear filters using robust static regex pattern matching.
     """
-    extracted_filters = {}
-    
     text_to_search = f"{title} {content}"
-    text_no_accents = remove_accents(text_to_search)
-
-    # 1. Extract Cohort / Enrollment Year (e.g. K22 -> 2022)
-    # Match "Khóa 22", "K22", "K.22"
-    cohort_pattern = r"(?:khoa\s*|k\s*\.?\s*)(\d{2})\b"
-    cohort_match = re.search(cohort_pattern, text_no_accents, re.IGNORECASE)
-    if cohort_match:
-        val = int(cohort_match.group(1))
-        year = 2000 + val if val < 100 else val # handle 22 vs 2022
-        extracted_filters["enrollment_year"] = {"fromYear": year, "toYear": year}
-
-    # 2. Extract Academic Year (e.g. 2024-2025)
-    # Match "năm học 2024-2025", "nh 24-25"
-    ay_pattern = r"(?:nam\s*hoc|nh|nien\s*khoa|nk)\s*(\d{2,4})[\s\-\/]+(\d{2,4})\b"
-    ay_match = re.search(ay_pattern, text_no_accents, re.IGNORECASE)
-    if ay_match:
-        y1 = int(ay_match.group(1))
-        y2 = int(ay_match.group(2))
-        y1 = 2000 + y1 if y1 < 100 else y1
-        y2 = 2000 + y2 if y2 < 100 else y2
-        extracted_filters["academic_year"] = {"fromYear": y1, "toYear": y2}
-    else:
-        # Match single year "năm học 2024"
-        ay_single_pattern = r"(?:nam\s*hoc|nh|nien\s*khoa|nk)\s*(\d{4})\b"
-        ay_single_match = re.search(ay_single_pattern, text_no_accents, re.IGNORECASE)
-        if ay_single_match:
-            y = int(ay_single_match.group(1))
-            extracted_filters["academic_year"] = {"fromYear": y, "toYear": y}
+    extracted_filters = await extract_metadata_from_text(text_to_search)
 
     if not extracted_filters:
         return None

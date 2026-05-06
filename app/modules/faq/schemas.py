@@ -183,3 +183,12 @@ class FaqBulkCreateResponse(BaseSchema):
     failed: int
     errors: List[FaqBulkCreateError]
 
+
+class FaqImportExcelRequest(BaseSchema):
+    question_col: str
+    answer_col: str
+    metadata_filter_json: str
+    sheet_name: Optional[str] = None
+    skip_rows: int = 1
+    skip_duplicates: bool = True
+

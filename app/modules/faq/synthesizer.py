@@ -16,16 +16,16 @@ from app.modules.faq.repository import InteractionLogRepository, FaqCandidateRep
 from app.integrations.llm.gemini import build_extraction_llm, chain_prompt
 from app.core.text_utils import remove_accents
 from app.core.json_utils import parse_json_safely
+from app.modules.metadata.service import get_metadata_service
+from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
 
 logger = logging.getLogger(__name__)
 
-# Prompt for Gemini to synthesize FAQ
-SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Bạn là một chuyên gia tư vấn học vụ xuất sắc. Nhiệm vụ của bạn là phân tích một nhóm (cluster) các câu hỏi tương tự nhau của sinh viên và các câu trả lời tương ứng từ hệ thống để tổng hợp thành một mục FAQ (Câu hỏi thường gặp) duy nhất, toàn diện và chất lượng cao.
+SYSTEM_TEXT = """Bạn là một chuyên gia tư vấn học vụ xuất sắc. Nhiệm vụ của bạn là phân tích một nhóm (cluster) các câu hỏi tương tự nhau của sinh viên và các câu trả lời tương ứng từ hệ thống để tổng hợp thành một mục FAQ (Câu hỏi thường gặp) duy nhất, toàn diện và chất lượng cao.
 
 Dựa trên dữ liệu nhóm được cung cấp:
 1. Xây dựng một 'question' (câu hỏi) chung, rõ ràng và ngắn gọn, nắm bắt được ý định cốt lõi của tất cả các câu hỏi trong nhóm.
-2. Tổng hợp một 'answer_draft' (bản nháp câu trả lời) toàn diện dựa trên các câu trả lời của hệ thống. Đảm bảo câu trả lời chính xác, định dạng tốt, dễ hiểu.
+2. Tổng hợp một 'answer_draft' (bản nháp câu trả lời) toàn diện dựa trên các câu trả lời của hệ thống bằng định dạng Markdown (in đậm, danh sách...). Đảm bảo câu trả lời chính xác, định dạng tốt, dễ hiểu.
 3. Xác định 'metadata_filter_suggestion' (gợi ý bộ lọc) phù hợp (gồm academic_year và enrollment_year) dựa trên ngữ cảnh. Nếu câu trả lời áp dụng chung, hãy để null.
 
 Trả về kết quả dưới dạng JSON với CHÍNH XÁC các khóa (keys) sau:
@@ -34,9 +34,13 @@ Trả về kết quả dưới dạng JSON với CHÍNH XÁC các khóa (keys) s
     "answer_draft": "Câu trả lời tổng hợp",
     "metadata_filter_suggestion": {{
         "academic_year": {{ "from_year": 2024, "to_year": 2025 }},
-        "enrollment_year": {{ "from_year": 2020, "to_year": 9999 }}
+        "enrollment_year": {{ "from_year": 2020, "to_year": {YEAR_MAX} }}
     }}
-}}"""),
+}}""".replace("{YEAR_MAX}", str(YEAR_MAX))
+
+# Prompt for Gemini to synthesize FAQ
+SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_TEXT),
     ("human", "Dữ liệu nhóm (Cluster Data):\n{cluster_data}")
 ])
 
@@ -105,11 +109,18 @@ class FaqSynthesisService:
         groups = {}
         for log in logs:
             meta = log.get("metadata_filter", {})
-            ay = tuple(sorted(meta.get("academic_year", [])))
-            co = tuple(sorted(meta.get("cohort", [])))
+            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(meta)
+            
+            if meta_model:
+                ay = f"{meta_model.academic_year.from_year}-{meta_model.academic_year.to_year}"
+                ey = f"{meta_model.enrollment_year.from_year}-{meta_model.enrollment_year.to_year}"
+            else:
+                ay = f"{YEAR_MIN}-{YEAR_MAX}"
+                ey = f"{YEAR_MIN}-{YEAR_MAX}"
+                
             source = log.get("source_type", "unknown")
             
-            key = f"{source}|ay:{ay}|co:{co}"
+            key = f"{source}|ay:{ay}|ey:{ey}"
             if key not in groups:
                 groups[key] = []
             groups[key].append(log)

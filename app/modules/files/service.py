@@ -90,9 +90,6 @@ class FileService(FileUploadMixin):
             self._file_repo = FileRepository()
         return self._file_repo
 
-
-
-
     async def download_file(
         self, 
         file_id: str, 
@@ -223,10 +220,6 @@ class FileService(FileUploadMixin):
             return _to_file_model(file_doc_dict)
             
         return None
-
-
-
-
 
     async def list_files(
         self,
