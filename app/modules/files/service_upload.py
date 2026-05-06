@@ -133,7 +133,7 @@ class FileUploadMixin:
             await r2_storage.upload_file(
                 file=io.BytesIO(markdown_bytes),
                 object_name=md_storage_path,
-                content_type="text/markdown",
+                content_type="text/markdown; charset=utf-8",
             )
 
             # Update TOC Tree with markdown storage path for PageIndex cache retrieval
@@ -146,8 +146,8 @@ class FileUploadMixin:
                 "markdown_storage_path": md_storage_path,
             })
 
-            # Final update atomically - only increment counter if transition to READY happens
-            updated_file = await self.file_repo.find_one_and_update(
+            # Final update atomically
+            await self.file_repo.find_one_and_update(
                 {
                     "_id": self.file_repo._to_object_id(file_id), 
                     "status": {"$ne": FileStatus.READY.value}
@@ -160,12 +160,6 @@ class FileUploadMixin:
                 }
             )
             
-            # Use metadata from DB if possible, or fallback to argument
-            sync_meta = (updated_file or file_doc).get("custom_metadata") or custom_metadata
-
-            if updated_file and sync_meta:
-                await self.metadata_svc.sync_metadata_counters(sync_meta, delta=1)
-
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")
             await _notify("completed", "Upload hoàn tất")
@@ -212,8 +206,16 @@ class FileUploadMixin:
         validate_file_size(file_size)
         mime_type = detect_mime_type(file_path)
 
-        # Metadata validation
-        await self.metadata_svc.validate_file_metadata_requirements(custom_metadata)
+        # Metadata validation and normalization using stateless validator
+        from app.modules.metadata.service import get_metadata_service
+        validator = get_metadata_service()
+        is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(custom_metadata or {})
+        if not is_valid:
+            from app.core.exceptions import ValidationException
+            raise ValidationException(f"Invalid metadata: {', '.join(errors)}")
+
+        # Use normalized metadata (with defaults) from here on
+        custom_metadata = meta_model.model_dump(mode="json") if meta_model else {}
 
         existing_file = await self.file_repo.find_one({
             "original_filename": original_filename,
@@ -242,14 +244,6 @@ class FileUploadMixin:
         """
         logger.warning(f"Rolling back upload (file_id={state.file_id}): {error_msg}")
 
-        # Rollback Metadata (if synced)
-        if state.has_step(UploadStep.METADATA_SYNCED) and state.custom_metadata:
-            try:
-                await self.metadata_svc.sync_metadata_counters(state.custom_metadata, delta=-1)
-                logger.info(f"Rollback: Decremented metadata counters for {list(state.custom_metadata.keys())}")
-            except Exception as e:
-                logger.warning(f"Rollback: Failed to decrement metadata counters: {e}")
-
         # Rollback markdown artifact in Cloudflare R2
         if state.has_step(UploadStep.MARKDOWN_GENERATED) and state.markdown_storage_path:
             try:
@@ -273,3 +267,4 @@ class FileUploadMixin:
                 logger.info(f"Rollback: Deleted DB record {state.file_id}")
             except Exception as e:
                 logger.warning(f"Rollback: Failed to delete DB record: {e}")
+

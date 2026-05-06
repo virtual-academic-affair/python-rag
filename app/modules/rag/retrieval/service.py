@@ -17,7 +17,6 @@ from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.modules.files.repository import FileRepository
-
 logger = logging.getLogger(__name__)
 
 class RetrievalService:
@@ -43,7 +42,7 @@ class RetrievalService:
     ) -> List[Dict[str, Any]]:
         """Unified helper to fetch relevant files using PageIndex Semantic Document Search algorithm."""
         qdrant_meta_filter = await self._filter_builder.build_qdrant_filter(
-            metadata=metadata_filter or {},
+            metadata_filter=metadata_filter or {},
             user_role=user_role
         )
 

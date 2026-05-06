@@ -1,77 +1,114 @@
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
-from pydantic import BaseModel, Field
-from dataclasses import dataclass, field
-from bson import ObjectId
+"""
+Metadata Models — Fixed schema (enrollment_year, academic_year, type).
+Replaces the old dynamic MetadataTypeDocument / AllowedValue system.
+"""
+from __future__ import annotations
 
-@dataclass
-class AllowedValue:
-    value: str                          
-    display_name: str                   
-    is_active: bool = True              
-    color: Optional[str] = None         
-    total_files: int = 0                
-    def to_dict(self) -> Dict[str, Any]:
-        from app.core.text_utils import remove_accents
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, Field, model_validator
+
+
+# ---------------------------------------------------------------------------
+# Sentinel values
+# ---------------------------------------------------------------------------
+YEAR_MIN = 0       # represents "no lower bound"  (i.e. null from_year)
+YEAR_MAX = 9999    # represents "no upper bound"  (i.e. null to_year)
+
+
+# ---------------------------------------------------------------------------
+# Document type enum
+# ---------------------------------------------------------------------------
+class DocumentType(str, Enum):
+    CTDT       = "ctdt"        # Chương trình đào tạo
+    CONG_VAN   = "cong_van"    # Công văn
+    QUYET_DINH = "quyet_dinh"  # Quyết định
+
+
+# ---------------------------------------------------------------------------
+# Year range
+# ---------------------------------------------------------------------------
+class YearRange(BaseModel):
+    """Inclusive integer range [from_year, to_year].
+
+    Sentinel convention:
+      from_year = 0    → no lower bound  (null)
+      to_year   = 9999 → no upper bound  (null)
+    """
+    from_year: int = YEAR_MIN
+    to_year: int = YEAR_MAX
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "YearRange":
+        if self.from_year > self.to_year:
+            raise ValueError(
+                f"from_year ({self.from_year}) must be <= to_year ({self.to_year})"
+            )
+        return self
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def to_flat_dict(self, prefix: str) -> dict:
+        """Flatten to Qdrant-searchable keys.
+
+        Example: prefix='enrollment_year' →
+            {'enrollment_year_from': 2019, 'enrollment_year_to': 9999}
+        """
         return {
-            "value": self.value,
-            "display_name": self.display_name,
-            "display_name_unaccented": remove_accents(self.display_name),
-            "is_active": self.is_active,
-            "color": self.color,
-            "total_files": self.total_files,
+            f"{prefix}_from": self.from_year,
+            f"{prefix}_to":   self.to_year,
         }
-    
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> "AllowedValue":
-        return AllowedValue(
-            value=data["value"],
-            display_name=data["display_name"],
-            is_active=data.get("is_active", True),
-            color=data.get("color"),
-            total_files=data.get("total_files", 0),
+
+    @classmethod
+    def from_null_pair(
+        cls,
+        from_year: Optional[int],
+        to_year: Optional[int],
+    ) -> "YearRange":
+        """Create from nullable ints (None maps to sentinel)."""
+        return cls(
+            from_year=from_year if from_year is not None else YEAR_MIN,
+            to_year=to_year   if to_year   is not None else YEAR_MAX,
         )
 
+    def contains(self, year: int) -> bool:
+        """Return True if year falls within [from_year, to_year]."""
+        return self.from_year <= year <= self.to_year
 
-class MetadataTypeDocument(BaseModel):
-    id: Optional[str] = Field(default=None, alias="_id")
-    
-    key: str = Field(..., description="Unique metadata key (immutable)")
-    display_name: str = Field(..., description="Display name for UI")
-    display_name_unaccented: Optional[str] = Field(default=None, description="Unaccented display name for search")
-    description: str = Field(default="", description="Metadata description")
-    
-    allowed_values: Optional[List[Dict[str, Any]]] = Field(
-        default=None,
-        description="List of AllowedValue dicts. None = free text allowed"
-    )
-    
-    is_active: bool = Field(default=True, description="If False, hidden from UI")
-    is_system: bool = Field(default=False, description="If True, cannot be deleted")
-    
-    total_files: int = Field(default=0, description="Total active files having this metadata key")
-    
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
-    
-    @property
-    def has_all_value(self) -> bool:
-        """True if allowed_values contains an entry with value='all'."""
-        if not self.allowed_values:
-            return False
-        return any(v.get("value") == "all" for v in self.allowed_values)
 
-    def get_allowed_values(self) -> Optional[List[AllowedValue]]:
-        if self.allowed_values is None:
-            return None
-        return [AllowedValue.from_dict(v) for v in self.allowed_values]
-    
-    def set_allowed_values(self, values: Optional[List[AllowedValue]]) -> None:
-        if values is None:
-            self.allowed_values = None
-        else:
-            self.allowed_values = [v.to_dict() for v in values]
+# ---------------------------------------------------------------------------
+# File metadata (stored in MongoDB + Qdrant payload)
+# ---------------------------------------------------------------------------
+class FileMetadata(BaseModel):
+    """Fixed metadata attached to every document in the system."""
+
+    enrollment_year: YearRange = Field(default_factory=YearRange)
+    academic_year: YearRange = Field(default_factory=YearRange)
+    type: DocumentType = DocumentType.CONG_VAN
+
+    def to_qdrant_payload(self) -> dict:
+        """Flatten to a dict suitable for Qdrant payload 'metadata' field."""
+        payload = {}
+        payload.update(self.enrollment_year.to_flat_dict("enrollment_year"))
+        payload.update(self.academic_year.to_flat_dict("academic_year"))
+        payload["type"] = self.type.value
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# FAQ metadata (stored inside FAQ documents in MongoDB + Qdrant payload)
+# ---------------------------------------------------------------------------
+class FaqMetadata(BaseModel):
+    """Metadata that constrains which users a FAQ applies to."""
+
+    enrollment_year: YearRange = YearRange()
+    academic_year: YearRange = YearRange()
+
+    def to_qdrant_payload(self) -> dict:
+        payload = {}
+        payload.update(self.enrollment_year.to_flat_dict("enrollment_year"))
+        payload.update(self.academic_year.to_flat_dict("academic_year"))
+        return payload
+

@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from bson import ObjectId
+from app.modules.metadata.models import FileMetadata
 
 class FileStatus(str, Enum):
     UPLOADING = "uploading"
@@ -26,9 +27,9 @@ class FileDocument(BaseModel):
     markdown_file_size: Optional[int] = Field(None, description="Generated markdown file size in bytes")
 
     # Custom metadata properties
-    custom_metadata: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="Custom metadata key-value list pairs"
+    custom_metadata: Optional[FileMetadata] = Field(
+        default=None,
+        description="Fixed schema metadata for the file"
     )
     
     table_of_contents: List[str] = Field(default_factory=list, description="Flat list of headings")
