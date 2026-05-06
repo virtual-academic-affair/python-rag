@@ -10,7 +10,6 @@ from typing import Optional, Any
 from slugify import slugify
 from datetime import datetime, timezone
 import re
-import unicodedata
 import uuid
 try:
     import filetype
@@ -18,13 +17,11 @@ try:
 except ImportError:
     HAS_FILETYPE = False
 
-from enum import Enum
-from dataclasses import dataclass, field
 from app.core.config import settings
 from app.core.exceptions import FileSizeException, FileTypeException
+from app.core.text_utils import remove_accents
 
 logger = logging.getLogger(__name__)
-
 
 
 # ====================================
@@ -55,11 +52,11 @@ def detect_mime_type(file_path: str) -> str:
         '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         '.xls': 'application/vnd.ms-excel',
         '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        '.csv': 'text/csv',
-        '.rtf': 'text/rtf',
-        '.txt': 'text/plain',
-        '.md': 'text/markdown',
-        '.html': 'text/html',
+        '.csv': 'text/csv; charset=utf-8',
+        '.rtf': 'text/rtf; charset=utf-8',
+        '.txt': 'text/plain; charset=utf-8',
+        '.md': 'text/markdown; charset=utf-8',
+        '.html': 'text/html; charset=utf-8',
     }
     if ext in mime_types:
         return mime_types[ext]
@@ -119,13 +116,3 @@ def cleanup_temp_file(file_path: str) -> None:
             os.unlink(file_path)
     except Exception:
         pass
-
-
-
-def remove_accents(input_str: str) -> str:
-    if not input_str:
-        return ""
-    s = unicodedata.normalize('NFD', input_str)
-    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
-    s = s.replace('đ', 'd').replace('Đ', 'D')
-    return unicodedata.normalize('NFC', s)

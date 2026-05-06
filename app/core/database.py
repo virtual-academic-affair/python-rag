@@ -21,7 +21,6 @@ class Database:
     # Collection name constants
     FILES = "files"
     FILE_TOC_TREES = "file_toc_trees"
-    METADATA_TYPES = "metadata_types"
     FAQS = "faqs"
     FAQ_CANDIDATES = "faq_candidates"
     INTERACTION_LOGS = "interaction_logs"

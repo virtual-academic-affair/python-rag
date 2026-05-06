@@ -1,13 +1,6 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
-from pydantic.alias_generators import to_camel
-
-class BaseSchema(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
+from pydantic import Field, model_validator
+from app.core.schemas import BaseSchema
 
 class FileUploadResponse(BaseSchema):
     file_id: str = Field(..., description="MongoDB ObjectId as file ID")
@@ -16,7 +9,7 @@ class FileUploadResponse(BaseSchema):
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str
     status: str
-    custom_metadata: Optional[Dict[str, List[str]]] = Field(default_factory=dict)
+    custom_metadata: Optional[Any] = Field(default=None)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     markdown_file_url: Optional[str] = Field(None, description="Direct download URL for generated markdown in R2")
@@ -48,11 +41,11 @@ class FileChunkPreviewResponse(BaseSchema):
     chunks: List[FileChunkPreviewItem] = Field(default_factory=list)
 
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+
 
 class UpdateFileRequest(BaseSchema):
     display_name: Optional[str] = Field(None, min_length=1, max_length=512, description="New display name for the file")
-    custom_metadata: Optional[Dict[str, List[str]]] = Field(None, description="New custom metadata for the file")
+    custom_metadata: Optional[Dict[str, Any]] = Field(None, description="New custom metadata for the file")
 
     @model_validator(mode='after')
     def check_at_least_one_field(self) -> 'UpdateFileRequest':
@@ -68,7 +61,7 @@ class FileDetailResponse(BaseSchema):
     mime_type: str
     storage_path: str
     status: str
-    custom_metadata: Dict[str, List[str]] = Field(default_factory=dict)
+    custom_metadata: Optional[Any] = Field(default=None)
     file_url: Optional[str] = None
     markdown_file_url: Optional[str] = None
     table_of_contents: List[str] = Field(default_factory=list)

@@ -17,7 +17,7 @@ echo "Content of test doc 2 ${TIMESTAMP}" > "$TEST_FILE_2"
 log_info "POST /api/files — Upload file (require_admin)"
 
 UPLOAD_ARGS=(-F "file=@${TEST_FILE}" -F "displayName=Test Doc ${TIMESTAMP}")
-UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"academic_year":["2025-2026"]}')
+UPLOAD_ARGS+=(-F 'customMetadata={"type":"cong_van","academicYear":{"fromYear":2025,"toYear":2026}}')
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
@@ -82,8 +82,8 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?fileStatus=ready" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "List Files by status=ready"
 
-log_info "GET /api/files?metadataFilter=... — Filter by metadata (Array format)"
-FILTER_JSON='{"academic_year":["2025-2026"]}'
+log_info "GET /api/files?metadataFilter=... — Filter by metadata (Object format)"
+FILTER_JSON='{"academicYear":{"fromYear":2025,"toYear":2026}}'
 ENCODED_FILTER=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?metadataFilter=${ENCODED_FILTER}" \
     -H "${AUTH_HEADER}" \
@@ -112,7 +112,7 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
         -H "Content-Type: application/json" \
         -H "${AUTH_HEADER}" \
-        -d "{ \"displayName\": \"Full Update ${TIMESTAMP}\", \"customMetadata\": { \"academicYear\": [\"2025-2026\"], \"department\": [\"khcn\"] } }" \
+        -d "{ \"displayName\": \"Full Update ${TIMESTAMP}\", \"customMetadata\": { \"academicYear\": {\"fromYear\": 2025, \"toYear\": 2026}, \"type\": \"quyet_dinh\" } }" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update File Metadata"
     
@@ -121,7 +121,7 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     echo "Content to delete" > "$TEMP_FILE"
     
     TEMP_UPLOAD_ARGS=(-F "file=@${TEMP_FILE}" -F "displayName=Temp File ${TIMESTAMP}")
-    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"department":["dao_tao"],"academic_year":["2025-2026"]}')
+    TEMP_UPLOAD_ARGS+=(-F 'customMetadata={"type":"cong_van"}')
     
     TEMP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
         -H "${AUTH_HEADER}" \
@@ -150,7 +150,7 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/files/${FILE_ID}" \
         -H "Content-Type: application/json" \
         -H "${AUTH_HEADER}" \
-        -d "{ \"customMetadata\": { \"academicYear\": [\"2024-2025\"], \"department\": [\"dao_tao\"] } }" \
+        -d "{ \"customMetadata\": { \"academicYear\": {\"fromYear\": 2024, \"toYear\": 2025}, \"type\": \"cong_van\" } }" \
         2>/dev/null || echo -e "\n000")
     check_response "$RESPONSE" "200" "Update File Metadata (unified endpoint)"
     
@@ -158,7 +158,7 @@ if [ -s scripts/test_results/last_file_id.txt ]; then
     RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files/${FILE_ID}" \
         -H "${AUTH_HEADER}" \
         2>/dev/null || echo -e "\n000")
-    if [[ "$RESPONSE" == *"2024-2025"* ]]; then
+    if [[ "$RESPONSE" == *"2024"* ]]; then
         log_success "Metadata update verification success"
     else
         log_error "Metadata update verification failed: $RESPONSE"
@@ -173,7 +173,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files/batch" \
     -F "files=@${TEST_FILE}" \
     -F "files=@${TEST_FILE_2}" \
     -F "displayNames=[\"Batch 1 ${TIMESTAMP}\", \"Batch 2 ${TIMESTAMP}\"]" \
-    -F 'metadataList=[{"department":["dao_tao"],"academic_year":["2025-2026"]},{"department":["khcn"],"academic_year":["2025-2026"]}]' \
+    -F 'metadataList=[{"type":"cong_van","academicYear":{"fromYear":2025,"toYear":2026}},{"type":"quyet_dinh","academicYear":{"fromYear":2025,"toYear":2026}}]' \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "201" "Batch Upload Files"
 

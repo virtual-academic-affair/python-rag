@@ -8,6 +8,7 @@ from google.genai import types
 
 from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
+from app.modules.metadata.schemas import FaqMetadataSchema
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.rag.retrieval.agent import (
     AGENT_SYSTEM_PROMPT,
@@ -45,13 +46,14 @@ class ChatService:
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[dict[str, Any]] = None,
+        metadata_filter: Optional[FaqMetadataSchema] = None,
     ) -> dict:
         """Retrieve candidate files and build conversation history for the agent."""
         logger.info(f"[Chat] Nhận request chuẩn bị bối cảnh cho user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
+        meta_dict = metadata_filter.model_dump() if metadata_filter else {}
         candidate_files = await self._retrieval.retrieve_candidate_files(
             query=question,
-            metadata_filter=metadata_filter,
+            metadata_filter=meta_dict,
             user_role=user_context.role,
         )
 
@@ -63,7 +65,7 @@ class ChatService:
             for c in candidate_files
         ])
         prompt_text = (
-            f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.cohort or 'N/A'})\n\n"
+            f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.enrollment_year or 'N/A'})\n\n"
             f"Dưới đây là các tài liệu liên quan được tìm thấy trong cơ sở dữ liệu. Hãy sử dụng công cụ để đọc nội dung chi tiết nếu cần thiết:\n{files_info_str}\n\n"
             f"Câu hỏi của người dùng: {question}"
         )

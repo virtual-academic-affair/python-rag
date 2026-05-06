@@ -180,48 +180,10 @@
             ]
         },
         {
-            "name": "4. Metadata Types",
+            "name": "3. Metadata Schema",
             "item": [
                 {
-                    "name": "Create metadata type",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"key\": \"department\",\n  \"displayName\": \"Department\",\n  \"description\": \"Department responsible for the document\",\n  \"allowedValues\": [\n    { \"value\": \"dao_tao\", \"displayName\": \"Training Dept\", \"isActive\": true, \"color\": \"#3498DB\" },\n    { \"value\": \"khcn\", \"displayName\": \"R&D Dept\", \"isActive\": true, \"color\": \"#2ECC71\" },\n    { \"value\": \"ctsv\", \"displayName\": \"Student Affairs\", \"isActive\": true, \"color\": \"#E74C3C\" },\n    { \"value\": \"all\", \"displayName\": \"All\", \"isActive\": true, \"color\": \"#95A5A6\" }\n  ]\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata"
-                            ]
-                        },
-                        "description": "Tạo metadata field type mới. isActive mặc định true, isSystem mặc định false."
-                    },
-                    "response": []
-                },
-
-                {
-                    "name": "List metadata types",
+                    "name": "Get Metadata Schema",
                     "request": {
                         "method": "GET",
                         "header": [
@@ -231,263 +193,24 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/metadata?isActive=true&keywords=đào tạo",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata"
-                            ],
-                            "query": [
-                                {
-                                    "key": "isActive",
-                                    "value": "true",
-                                    "disabled": true,
-                                    "description": "Filter by is_active status"
-                                },
-                                {
-                                    "key": "keywords",
-                                    "value": "đào tạo",
-                                    "disabled": true,
-                                    "description": "Search by display_name of key or value"
-                                }
-                            ]
-                        },
-                        "description": "List all metadata type definitions. Support isActive and keywords filtering."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Check metadata key exists",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/exists?key=department",
+                            "raw": "{{base_url}}/api/metadata/schema",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "metadata",
-                                "exists"
-                            ],
-                            "query": [
-                                {
-                                    "key": "key",
-                                    "value": "department",
-                                    "description": "Metadata key to check"
-                                }
+                                "schema"
                             ]
                         },
-                        "description": "Check if a metadata key already exists in the system. Requires admin role."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Get metadata type details",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}"
-                            ]
-                        },
-                        "description": "Get metadata type by key."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update metadata type",
-                    "request": {
-                        "method": "PATCH",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"New name\",\n  \"isActive\": true\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}"
-                            ]
-                        },
-                        "description": "Update metadata type. Cannot change key or is_system. For system metadata, cannot update isActive.\n\nUse standalone endpoints to update allowedValues."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Create metadata value",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"value\": \"htqt\",\n  \"displayName\": \"Intl Relations\",\n  \"isActive\": true,\n  \"color\": \"#9B59B6\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}",
-                                "values"
-                            ]
-                        },
-                        "description": "Add a new allowed value to a metadata type. For system metadata 'access_scope', adding values is forbidden."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update metadata value",
-                    "request": {
-                        "method": "PATCH",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"International Relations (Updated)\",\n  \"isActive\": true\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/htqt",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}",
-                                "values",
-                                "htqt"
-                            ]
-                        },
-                        "description": "Update an existing allowed value in a metadata type. For system metadata, 'access_scope' blocks isActive updates, and 'academic_year'/'cohort' block isActive updates for value 'all'."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete metadata type (hard delete)",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}"
-                            ]
-                        },
-                        "description": "Hard delete: xoá hoàn toàn metadata type khỏi hệ thống.\n- CHỈ cho phép xóa khi totalFiles bằng 0.\n- Trả về 409 Conflict nếu totalFiles > 0.\n- Không thể xóa is_system=true types (returns 403).\n- Trả về 204 No Content thành công."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete metadata value (hard delete)",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/{{metadata_key}}/values/unused_value",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "{{metadata_key}}",
-                                "values",
-                                "unused_value"
-                            ]
-                        },
-                        "description": "Hard delete a metadata value from allowed_values.\n- Only possible if totalFiles is 0.\n- System metadata 'access_scope' values and 'academic_year'/'cohort' 'all' values cannot be deleted.\n- Returns 409 Conflict if value is still used by files.\n- Returns updated MetadataTypeResponse on success."
+                        "description": "Lấy định nghĩa cứng của hệ thống metadata (enrollmentYear, academicYear, type)."
                     },
                     "response": []
                 }
             ]
         },
         {
-            "name": "5. File Management",
+            "name": "4. File Management",
             "item": [
                 {
                     "name": "Upload file",
@@ -510,9 +233,9 @@
                                 },
                                 {
                                     "key": "customMetadata",
-                                    "value": "{\"department\":[\"dao_tao\"],\"academic_year\":[\"2024-2025\"]}",
+                                    "value": "{\"enrollmentYear\":{\"fromYear\":2020,\"toYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}",
                                     "type": "text",
-                                    "description": "Required: must include at least one of academic_year/cohort"
+                                    "description": "Required: must include enrollmentYear, academicYear, and type"
                                 }
                             ]
                         },
@@ -526,7 +249,7 @@
                                 "files"
                             ]
                         },
-                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- academicYear OR cohort: at least one required\n\nReturns file_id and message indicating background processing started."
+                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- academicYear OR cohort: at least one required\n\nReturns fileId and message indicating background processing started."
                     },
                     "event": [
                         {
@@ -536,9 +259,9 @@
                                 "exec": [
                                     "if (pm.response.code === 201) {",
                                     "  var json = pm.response.json();",
-                                    "  if (json.file_id) {",
-                                    "    pm.collectionVariables.set('file_id', json.file_id);",
-                                    "    console.log('file_id updated: ' + json.file_id);",
+                                    "  if (json.fileId) {",
+                                    "    pm.collectionVariables.set('fileId', json.fileId);",
+                                    "    console.log('fileId updated: ' + json.fileId);",
                                     "  }",
                                     "}"
                                 ]
@@ -583,9 +306,9 @@
                                 },
                                 {
                                     "key": "metadataFilter",
-                                    "value": "{\"academicYear\": [\"2024-2025\", \"2023-2024\"]}",
+                                    "value": "{\"academicYear\": {\"fromYear\": 2023, \"toYear\": 2025}}",
                                     "disabled": true,
-                                    "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys). 'all' value logic is supported."
+                                    "description": "JSON filter for metadata. Supports range overlap search."
                                 },
                                 {
                                     "key": "keywords",
@@ -660,14 +383,14 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "raw": "{{base_url}}/api/files/{{fileId}}",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "files",
-                                "{{file_id}}"
+                                "{{fileId}}"
                             ]
                         },
                         "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles (Admin bypass)."
@@ -685,14 +408,14 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/toc-tree/{{file_id}}",
+                            "raw": "{{base_url}}/api/toc-tree/{{fileId}}",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "toc-tree",
-                                "{{file_id}}"
+                                "{{fileId}}"
                             ]
                         },
                         "description": "Get hierarchical Table of Contents (TOC) tree for a file."
@@ -710,14 +433,14 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/files/{{file_id}}/download",
+                            "raw": "{{base_url}}/api/files/{{fileId}}/download",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "files",
-                                "{{file_id}}",
+                                "{{fileId}}",
                                 "download"
                             ]
                         },
@@ -752,9 +475,9 @@
                                 },
                                 {
                                     "key": "metadataList",
-                                    "value": "[{\"department\":[\"dao_tao\"],\"academic_year\":[\"2024-2025\"]}, {\"cohort\":[\"K65\"]}]",
+                                    "value": "[{\"enrollmentYear\":{\"fromYear\":2020,\"toYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}, {\"enrollmentYear\":{\"fromYear\":2021}}]",
                                     "type": "text",
-                                    "description": "JSON array - one object per file. academic_year or cohort required"
+                                    "description": "JSON array - one object per file."
                                 }
                             ]
                         },
@@ -784,14 +507,14 @@
                             }
                         ],
                         "url": {
-                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "raw": "{{base_url}}/api/files/{{fileId}}",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "files",
-                                "{{file_id}}"
+                                "{{fileId}}"
                             ]
                         },
                         "description": "Hard delete file (R2 + Qdrant + PageIndex/MongoDB)."
@@ -814,17 +537,17 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": [\"2025-2026\"],\n    \"department\": [\"dao_tao\"]\n  }\n}"
+                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": {\n      \"fromYear\": 2025,\n      \"toYear\": 2026\n    },\n    \"type\": \"cong_van\"\n  }\n}"
                         },
                         "url": {
-                            "raw": "{{base_url}}/api/files/{{file_id}}",
+                            "raw": "{{base_url}}/api/files/{{fileId}}",
                             "host": [
                                 "{{base_url}}"
                             ],
                             "path": [
                                 "api",
                                 "files",
-                                "{{file_id}}"
+                                "{{fileId}}"
                             ]
                         },
                         "description": "Update file display name and/or custom metadata. Syncs metadata to Qdrant automatically."
@@ -834,7 +557,7 @@
             ]
         },
         {
-            "name": "6. Chat",
+            "name": "5. Chat",
             "item": [
                 {
                     "name": "Chat query",
@@ -852,7 +575,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": [\"2024-2025\"]\n  }\n}"
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    }\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/query",
@@ -907,7 +630,7 @@
             ]
         },
         {
-            "name": "7. Debug & Preview",
+            "name": "6. Debug & Preview",
             "item": [
                 {
                     "name": "Parse PDF preview",
@@ -1084,7 +807,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadata_filter\": {\n    \"academic_year\": [\"2024-2025\"],\n    \"cohort\": []\n  }\n}"
+                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 0,\n      \"toYear\": 9999\n    }\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs",
@@ -1203,7 +926,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"date_from\": \"2024-04-01\",\n  \"sources\": [\"chat\", \"inquiry_email\"]\n}"
+                            "raw": "{\n  \"dateFrom\": \"2024-04-01\",\n  \"sources\": [\n    \"chat\",\n    \"inquiry_email\"\n  ]\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs/synthesis",
@@ -1280,7 +1003,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"action\": \"approve\",\n  \"question_override\": \"Updated question?\",\n  \"answer_override\": \"Updated answer.\",\n  \"metadata_filter_override\": {\n    \"academic_year\": [],\n    \"cohort\": []\n  },\n  \"note\": \"Review note\"\n}"
+                            "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": \"Updated question?\",\n  \"answerRichTextOverride\": \"Updated answer.\",\n  \"metadataFilterOverride\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 0,\n      \"toYear\": 9999\n    }\n  },\n  \"note\": \"Review note\"\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",
@@ -1314,27 +1037,21 @@
                                 {
                                     "key": "file",
                                     "type": "file",
-                                    "src": [],
-                                    "description": "Excel file (.xlsx)"
+                                    "src": []
                                 },
                                 {
-                                    "key": "question_col",
+                                    "key": "questionCol",
                                     "value": "Câu hỏi",
                                     "type": "text"
                                 },
                                 {
-                                    "key": "answer_col",
+                                    "key": "answerCol",
                                     "value": "Trả lời",
                                     "type": "text"
                                 },
                                 {
-                                    "key": "academic_year_col",
-                                    "value": "Năm học",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "cohort_col",
-                                    "value": "Khóa",
+                                    "key": "metadataFilterJson",
+                                    "value": "{\"academicYear\": \"Năm học\", \"cohort\": \"Khóa\"}",
                                     "type": "text"
                                 }
                             ]
@@ -1375,12 +1092,12 @@
                                     "description": "Excel file (.xlsx)"
                                 },
                                 {
-                                    "key": "question_col",
+                                    "key": "questionCol",
                                     "value": "B",
                                     "type": "text"
                                 },
                                 {
-                                    "key": "answer_col",
+                                    "key": "answerCol",
                                     "value": "C",
                                     "type": "text"
                                 },
@@ -1422,7 +1139,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Câu hỏi 1?\",\n      \"answer\": \"Câu trả lời 1\",\n      \"metadata_filter\": {\"academic_year\": [\"2024-2025\"], \"cohort\": []}\n    },\n    {\n      \"question\": \"Câu hỏi 2?\",\n      \"answer\": \"Câu trả lời 2\"\n    }\n  ],\n  \"skip_duplicates\": true\n}"
+                            "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Câu hỏi 1?\",\n      \"answerRichText\": \"Câu trả lời 1\",\n      \"metadataFilter\": {\n        \"academicYear\": {\n          \"fromYear\": 2024,\n          \"toYear\": 2025\n        },\n        \"enrollmentYear\": {\n          \"fromYear\": 0,\n          \"toYear\": 9999\n        }\n      }\n    },\n    {\n      \"question\": \"Câu hỏi 2?\",\n      \"answerRichText\": \"Câu trả lời 2\"\n    }\n  ],\n  \"skipDuplicates\": true\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs/bulk",
@@ -1534,17 +1251,17 @@
                                     "description": "Excel file (.xlsx)"
                                 },
                                 {
-                                    "key": "document_type_col",
+                                    "key": "documentTypeCol",
                                     "value": "A",
                                     "type": "text"
                                 },
                                 {
-                                    "key": "content_link_col",
+                                    "key": "contentLinkCol",
                                     "value": "B",
                                     "type": "text"
                                 },
                                 {
-                                    "key": "notes_col",
+                                    "key": "notesCol",
                                     "value": "C",
                                     "type": "text"
                                 }

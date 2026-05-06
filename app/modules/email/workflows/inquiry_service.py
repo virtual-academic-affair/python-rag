@@ -6,7 +6,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_chat_llm, build_extraction_llm, chain_prompt
 from app.modules.rag.retrieval.service import get_retrieval_service
-from app.modules.email.utils import extract_structured_data, remove_accents, extract_inquiry_filters
+from app.modules.email.utils import extract_structured_data, extract_inquiry_filters
+from app.core.text_utils import remove_accents
 from app.modules.metadata.service import get_metadata_service
 from app.modules.email.schemas import InquiryIntent, InquiryTypesResult, InquiryFilters
 from app.modules.faq.service import get_faq_service
@@ -92,9 +93,11 @@ class InquiryService:
             # Enrich prompt with metadata context if available
             context_blocks = []
             if metadata_filter.get("academic_year"):
-                context_blocks.append(f"Academic Year: {metadata_filter['academic_year']}")
-            if metadata_filter.get("cohort"):
-                context_blocks.append(f"Cohort: {metadata_filter['cohort']}")
+                ay = metadata_filter["academic_year"]
+                context_blocks.append(f"Academic Year: {ay.get('fromYear')}-{ay.get('toYear')}")
+            if metadata_filter.get("enrollment_year"):
+                ey = metadata_filter["enrollment_year"]
+                context_blocks.append(f"Enrollment Year: {ey.get('fromYear')}-{ey.get('toYear')}")
             
             context_str = f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""
 

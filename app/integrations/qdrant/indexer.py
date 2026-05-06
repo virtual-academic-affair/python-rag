@@ -2,6 +2,7 @@
 Qdrant integration for generating embeddings and indexing into Qdrant.
 """
 
+import logging
 from typing import Any, List, Optional
 import hashlib
 import asyncio
@@ -13,6 +14,8 @@ from app.core.config import settings
 from google import genai
 from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 class QdrantIndexer:
     """Handles embedding chunks and indexing them into Qdrant."""
@@ -57,13 +60,22 @@ class QdrantIndexer:
         
         points = []
         for i, chunk in enumerate(chunks_data):
+            meta = chunk.get("metadata")
+            from app.modules.metadata.models import FileMetadata
+            if isinstance(meta, dict):
+                flat_meta = FileMetadata(**meta).to_qdrant_payload()
+            elif hasattr(meta, "to_qdrant_payload"):
+                flat_meta = meta.to_qdrant_payload()
+            else:
+                flat_meta = {}
+
             payload = {
                 "file_id": chunk.get("file_id"),
                 "file_name": chunk.get("file_name"),
                 "chunk_index": chunk.get("chunk_index"),
                 "text": chunk.get("text", ""),
                 "section_path": chunk.get("section_path"),
-                "metadata": chunk.get("metadata", {}),
+                "metadata": flat_meta,
             }
 
             point_id = self._stable_point_id(chunk["chunk_id"])
@@ -107,12 +119,19 @@ class QdrantIndexer:
         """
         await self.ensure_collection()
         
+        from app.modules.metadata.models import FileMetadata
+        try:
+            flat_meta = FileMetadata(**new_metadata).to_qdrant_payload()
+        except Exception as e:
+            logger.warning(f"Failed to parse metadata for Qdrant update: {e}")
+            flat_meta = new_metadata # Fallback
+
         # We need to use `set_payload` or `overwrite_payload`
         # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
         await asyncio.to_thread(
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
-            payload={"metadata": new_metadata},
+            payload={"metadata": flat_meta},
             points_selector=qm.FilterSelector(
                 filter=qm.Filter(
                     must=[

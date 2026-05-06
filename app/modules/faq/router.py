@@ -77,7 +77,7 @@ async def create_faq(
     result = await faq_svc.create_faq(
         question=request.question,
         answer_rich_text=request.answer_rich_text,
-        metadata_filter=request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {"academic_year": [], "cohort": []},
+        metadata_filter=request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {},
         source="manual"
     )
     return FaqResponse.from_mongo(result)

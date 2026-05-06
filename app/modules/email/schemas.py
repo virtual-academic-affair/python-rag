@@ -1,15 +1,8 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional, Literal, Union
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import Field
+from app.core.schemas import BaseSchema
 from app.modules.rag.retrieval.schemas import SourceCitation
-
-class BaseSchema(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
 
 class SystemLabel(str, Enum):
     ClassRegistration = "classRegistration"
@@ -71,9 +64,12 @@ class InquiryIntent(BaseSchema):
 class InquiryTypesResult(BaseSchema):
     inquiry_types: List[Literal["graduation", "training", "procedure"]] = Field(description="Strict list of one or more inquiry types characterizing this inquiry.")
 
+from app.modules.metadata.schemas import YearRangeSchema
+
 class InquiryFilters(BaseSchema):
-    academic_year: Optional[str] = Field(None, description="Academic year (e.g. 2024-2025)")
-    cohort: Optional[str] = Field(None, description="Cohort (e.g. K65)")
+    enrollment_year: Optional[YearRangeSchema] = Field(None, description="Enrollment year range derived from email (e.g. K65 -> 2020)")
+    academic_year: Optional[YearRangeSchema] = Field(None, description="Academic year range derived from email")
+    type: Optional[str] = Field(None, description="Document type")
 
 class InquiryPayload(BaseSchema):
     answer: str = Field(..., description="Generated reply email body")

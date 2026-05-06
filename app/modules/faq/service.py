@@ -38,7 +38,7 @@ class FaqService:
         self, 
         question: str, 
         answer_rich_text: str, 
-        metadata_filter: Dict[str, List[str]], 
+        metadata_filter: Dict[str, Any], 
         source: str = "manual",
         candidate_id: Optional[str] = None,
         question_vector: Optional[List[float]] = None
@@ -151,7 +151,7 @@ class FaqService:
                 await self.create_faq(
                     question=item["question"],
                     answer_rich_text=item["answer_rich_text"],
-                    metadata_filter=item.get("metadata_filter", {"academic_year": [], "cohort": []}),
+                    metadata_filter=item.get("metadata_filter", {}),
                     source="bulk_import",
                     question_vector=embeddings[idx]
                 )
@@ -246,7 +246,7 @@ class FaqService:
         return await self._faq_repo.find_by_id(faq_id)
 
     async def list_faqs(self, is_active: Optional[bool] = None, 
-                        metadata_filter: Optional[Dict[str, List[str]]] = None,
+                        metadata_filter: Optional[Dict[str, Any]] = None,
                         search: Optional[str] = None,
                         page: int = 1, limit: int = 20) -> Dict[str, Any]:
         
@@ -255,18 +255,10 @@ class FaqService:
             query["is_active"] = is_active
             
         if metadata_filter:
-            from pydantic.alias_generators import to_snake
-            for key, values in metadata_filter.items():
-                if values:
-                    # Convert CamelCase to snake_case for DB query
-                    db_key = to_snake(key)
-                    # Match: FAQ has one of these values OR FAQ has an empty array for this key
-                    query["$and"] = query.get("$and", []) + [{
-                        "$or": [
-                            {f"metadata_filter.{db_key}": {"$in": values}},
-                            {f"metadata_filter.{db_key}": {"$size": 0}}
-                        ]
-                    }]
+            from app.modules.metadata.utils.filter_builder import get_filter_builder
+            builder = get_filter_builder()
+            mongo_filter = await builder.build_mongo_filter(metadata_filter, mongo_prefix="metadata_filter")
+            query.update(mongo_filter)
             
         sort = [("created_at", -1)]
         projection = None
@@ -378,7 +370,7 @@ class FaqService:
         reviewer_id: str,
         question_override: Optional[str] = None, 
         answer_rich_text_override: Optional[str] = None, 
-        metadata_filter_override: Optional[Dict[str, List[str]]] = None,
+        metadata_filter_override: Optional[Dict[str, Any]] = None,
         note: Optional[str] = None
     ) -> Dict[str, Any]:
         candidate = await self._candidate_repo.find_by_id(candidate_id)

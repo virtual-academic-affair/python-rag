@@ -12,6 +12,7 @@ from app.integrations.llm.gemini import (
     env_thinking_level,
 )
 from app.modules.email.schemas import ClassRegistrationPayload
+from app.core.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -103,60 +104,7 @@ Output constraints (must follow):
             ]
         )
 
-    @staticmethod
-    def _extract_json_object(raw: str) -> str:
-        text = (raw or "").strip()
-        if not text:
-            return "{}"
-
-        # Strip markdown code fences if present
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*```$", "", text).strip()
-
-        # Prefer strict JSON decode from the first '{'
-        start = text.find("{")
-        if start >= 0:
-            candidate = text[start:]
-            try:
-                obj, _ = json.JSONDecoder().raw_decode(candidate)
-                return json.dumps(obj, ensure_ascii=False)
-            except Exception:
-                pass
-
-        # Fallback: extract first balanced {...} block (quote-aware)
-        start = text.find("{")
-        if start < 0:
-            return "{}"
-
-        depth = 0
-        in_string = False
-        escaped = False
-        end = -1
-
-        for i, ch in enumerate(text[start:], start=start):
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif ch == "\\":
-                    escaped = True
-                elif ch == '"':
-                    in_string = False
-                continue
-
-            if ch == '"':
-                in_string = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-
-        if end > start:
-            return text[start : end + 1]
-
-        return "{}"
+        # Removed local JSON extraction helper. Using app.core.json_utils instead.
 
     async def process(self, title: str, content: str, message_id: int | None) -> ClassRegistrationPayload:
         try:
@@ -180,10 +128,10 @@ Output constraints (must follow):
             )
             logger.info("[EXTRACT RESULT] raw=%r", result.content)
 
-            json_str = self._extract_json_object(result.content or "")
-            logger.info("[EXTRACT RESULT] parsed_json=%s", json_str)
+            payload_dict = parse_json_safely(result.content or "", repair=True)
+            logger.info("[EXTRACT RESULT] parsed_dict=%s", payload_dict)
 
-            payload = ClassRegistrationPayload.model_validate(json.loads(json_str))
+            payload = ClassRegistrationPayload.model_validate(payload_dict)
             if message_id is not None:
                 payload.message_id = message_id
             payload.note = ""

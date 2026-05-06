@@ -2,33 +2,23 @@
 Schemas for the FAQ Module.
 """
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, ConfigDict
-from pydantic.alias_generators import to_camel
+from pydantic import Field
+from app.core.schemas import BaseSchema
 
 
-class BaseSchema(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
-
-
-class FaqMetadataFilter(BaseSchema):
-    academic_year: List[str] = Field(default_factory=list)
-    cohort: List[str] = Field(default_factory=list)
+from app.modules.metadata.schemas import FaqMetadataSchema, FaqMetadataResponse
 
 
 class FaqCreateRequest(BaseSchema):
     question: str = Field(..., min_length=5, max_length=500)
     answer_rich_text: str = Field(..., min_length=5, max_length=50000)
-    metadata_filter: FaqMetadataFilter = Field(default_factory=FaqMetadataFilter)
+    metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
 
 
 class FaqUpdateRequest(BaseSchema):
     question: Optional[str] = Field(None, min_length=5, max_length=500)
     answer_rich_text: Optional[str] = Field(None, min_length=5, max_length=50000)
-    metadata_filter: Optional[FaqMetadataFilter] = None
+    metadata_filter: Optional[FaqMetadataSchema] = None
     is_active: Optional[bool] = None
 
 
@@ -36,7 +26,7 @@ class FaqResponse(BaseSchema):
     id: str = Field(..., alias="faqId")
     question: str
     answer_rich_text: str
-    metadata_filter: FaqMetadataFilter
+    metadata_filter: FaqMetadataResponse
     is_active: bool
     view_count: int
     source: str
@@ -45,11 +35,28 @@ class FaqResponse(BaseSchema):
 
     @classmethod
     def from_mongo(cls, doc: dict) -> 'FaqResponse':
+        from app.modules.metadata.models import FaqMetadata
+        raw_meta = doc.get("metadata_filter") or {}
+        # Ensure we can handle both old list-based and new range-based metadata during transition if needed
+        # but here we assume new schema as per refactor.
+        try:
+            if isinstance(raw_meta, dict):
+                # If it has enrollment_year key, it's the new model
+                if "enrollment_year" in raw_meta or "enrollmentYear" in raw_meta:
+                    meta_model = FaqMetadata(**raw_meta)
+                else:
+                    # Legacy or empty
+                    meta_model = FaqMetadata()
+            else:
+                meta_model = FaqMetadata()
+        except Exception:
+            meta_model = FaqMetadata()
+
         return cls(
             id=str(doc.get("_id", doc.get("id"))),
             question=doc.get("question", ""),
             answer_rich_text=doc.get("answer_rich_text", ""),
-            metadata_filter=FaqMetadataFilter(**(doc.get("metadata_filter") or {})),
+            metadata_filter=FaqMetadataResponse.from_model(meta_model),
             is_active=doc.get("is_active", True),
             view_count=doc.get("view_count", 0),
             source=doc.get("source", "manual"),
@@ -69,7 +76,7 @@ class FaqCandidateResponse(BaseSchema):
     id: str = Field(..., alias="candidateId")
     question: str
     answer_draft_rich_text: str
-    metadata_filter_suggestion: FaqMetadataFilter
+    metadata_filter_suggestion: FaqMetadataResponse
     source_type: str
     similar_count: int
     status: str
@@ -78,11 +85,18 @@ class FaqCandidateResponse(BaseSchema):
 
     @classmethod
     def from_mongo(cls, doc: dict) -> 'FaqCandidateResponse':
+        from app.modules.metadata.models import FaqMetadata
+        raw_meta = doc.get("metadata_filter_suggestion") or {}
+        try:
+            meta_model = FaqMetadata(**raw_meta)
+        except Exception:
+            meta_model = FaqMetadata()
+
         return cls(
             id=str(doc.get("_id", doc.get("id"))),
             question=doc.get("question", ""),
             answer_draft_rich_text=doc.get("answer_draft_rich_text", ""),
-            metadata_filter_suggestion=FaqMetadataFilter(**(doc.get("metadata_filter_suggestion") or {})),
+            metadata_filter_suggestion=FaqMetadataResponse.from_model(meta_model),
             source_type=doc.get("source_type", ""),
             similar_count=doc.get("similar_count", 0),
             status=doc.get("status", "pending"),
@@ -102,7 +116,7 @@ class FaqReviewRequest(BaseSchema):
     action: Literal["approve", "reject"] = Field(..., description="Action to take on the candidate")
     question_override: Optional[str] = Field(None, description="Modify the question before approving")
     answer_rich_text_override: Optional[str] = Field(None, description="Modify the answer before approving")
-    metadata_filter_override: Optional[FaqMetadataFilter] = Field(None, description="Modify the metadata filters before approving")
+    metadata_filter_override: Optional[FaqMetadataSchema] = Field(None, description="Modify the metadata filters before approving")
     note: Optional[str] = None
 
 
@@ -122,7 +136,7 @@ class FaqSynthesisResponse(BaseSchema):
 
 class FaqMatchRequest(BaseSchema):
     question: str
-    metadata_filter: FaqMetadataFilter = Field(default_factory=FaqMetadataFilter)
+    metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
     threshold: Optional[float] = None
 
 
@@ -133,7 +147,7 @@ class FaqImportRow(BaseSchema):
     question: str
     answer_rich_text: str
     answer_markdown: str
-    metadata: FaqMetadataFilter
+    metadata: FaqMetadataResponse
     is_valid: bool
     error: Optional[str] = None
 
@@ -148,7 +162,7 @@ class FaqImportPreviewResponse(BaseSchema):
 class FaqBulkCreateItem(BaseSchema):
     question: str = Field(..., min_length=5, max_length=500)
     answer_rich_text: str = Field(..., min_length=5, max_length=50000)
-    metadata_filter: FaqMetadataFilter = Field(default_factory=FaqMetadataFilter)
+    metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
 
 
 class FaqBulkCreateRequest(BaseSchema):
@@ -168,3 +182,4 @@ class FaqBulkCreateResponse(BaseSchema):
     skipped: int
     failed: int
     errors: List[FaqBulkCreateError]
+

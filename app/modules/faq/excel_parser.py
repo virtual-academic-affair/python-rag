@@ -65,14 +65,17 @@ def parse_excel_to_faq_rows(
             metadata = {}
             for key, idx in meta_indices.items():
                 val = row[idx - 1].value if idx <= len(row) else None
-                # Process metadata values (comma-separated strings to list)
-                # Fix for 2020.0 in metadata
                 clean_val = get_cell_value(row[idx - 1]) if idx <= len(row) else None
                 
-                if clean_val is not None:
-                    metadata[key] = [s.strip() for s in str(clean_val).split(",") if s.strip()]
-                else:
-                    metadata[key] = []
+                if not clean_val:
+                    continue
+                    
+                if key in ["enrollment_year", "academic_year"]:
+                    from app.modules.metadata.utils.parsers import parse_year_range
+                    rng = parse_year_range(str(clean_val))
+                    metadata[key] = {"from_year": rng.from_year, "to_year": rng.to_year}
+                elif key == "type":
+                    metadata[key] = str(clean_val).strip()
             
             # Basic validation
             error = None

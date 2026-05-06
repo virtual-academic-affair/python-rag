@@ -22,7 +22,11 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
     *   **Bulk Import & Management**: Hỗ trợ nạp hàng loạt FAQ từ Excel (.xlsx) hoặc JSON với hiệu suất cao (parallel embeddings).
     *   **[NEW] Formatting Preservation**: Tự động giữ nguyên định dạng Rich Text (Bold, Italic, Underline) và Hyperlinks từ file Excel, chuyển đổi sang Markdown để hiển thị đồng nhất.
     *   **Interaction Logging**: Theo dõi lịch sử chat/email để phục vụ cải tiến hệ thống và tổng hợp kiến thức.
-4.  **Forms Management Module**: Quản lý các liên kết biểu mẫu và quy trình học thuật:
+4.  **Hardened Metadata Architecture**:
+    *   **Rigid Schema**: Chuyển đổi từ tag mảng sang cấu trúc đối tượng `YearRange` (`fromYear`, `toYear`) nghiêm ngặt.
+    *   **Unified Schema Endpoint**: Truy cập `/api/metadata/schema` để lấy định nghĩa cấu trúc metadata chuẩn cho toàn hệ thống.
+    *   **Range Search**: Hỗ trợ tìm kiếm tài liệu theo khoảng năm giao thoa (overlap) chính xác.
+5.  **Forms Management Module**: Quản lý các liên kết biểu mẫu và quy trình học thuật:
     *   **Unified Content**: Gộp tên hiển thị và đường dẫn vào một trường Rich Text duy nhất, hỗ trợ định dạng linh hoạt.
     *   **Link Optimization**: Tự động xử lý mọi liên kết trong Rich Text để mở trong tab mới (`target="_blank"`), đảm bảo trải nghiệm người dùng không bị gián đoạn.
     *   **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
@@ -97,8 +101,8 @@ Sao chép `.env.example` thành `.env` và điền các tham số:
 # Xóa và tạo mới Database/Vector/R2, sau đó tự động nạp FAQ mẫu
 python scripts/init_db.py --skip-confirm
 
-# Seed các nhãn metadata hệ thống (academic_year, cohort)
-python scripts/seed_metadata.py
+# Metadata system initialization
+# seed_metadata.py logic merged into init_db.py
 
 # [Optional] Seed dữ liệu FAQ mẫu thủ công từ file JSON khác
 python scripts/seed_faqs.py --file scripts/sample_faqs.json

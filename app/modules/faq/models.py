@@ -4,7 +4,7 @@ MongoDB document models for the FAQ Module.
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
-
+from app.modules.metadata.models import FaqMetadata
 
 class FaqDocument(BaseModel):
     """Represents an approved FAQ in the 'faqs' collection."""
@@ -14,7 +14,7 @@ class FaqDocument(BaseModel):
     answer_unaccented: str = Field(..., description="Unaccented answer for search")
     answer_markdown: str = Field(..., description="Answer in Markdown format (internal, for AI)")
     answer_rich_text: Optional[str] = Field(None, description="Answer in HTML Rich Text (for display)")
-    metadata_filter: Dict[str, Any] = Field(default_factory=dict, description="Pre-calculated metadata filter structure")
+    metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Fixed schema metadata filter")
     qdrant_point_id: Optional[str] = Field(None, description="UUID of the point in Qdrant faqs collection")
     is_active: bool = Field(True, description="Whether this FAQ is active and searchable")
     view_count: int = Field(0, description="Number of times this FAQ was matched")
@@ -32,7 +32,7 @@ class FaqCandidateDocument(BaseModel):
     answer_draft_markdown: str = Field(..., description="Draft in Markdown (internal, for AI)")
     answer_draft_unaccented: str = Field(..., description="Unaccented draft answer for search")
     answer_draft_rich_text: Optional[str] = Field(None, description="Draft in HTML Rich Text")
-    metadata_filter_suggestion: Dict[str, Any] = Field(default_factory=dict, description="Suggested metadata filters")
+    metadata_filter_suggestion: FaqMetadata = Field(default_factory=FaqMetadata, description="Suggested metadata filters")
     source_type: str = Field(..., description="Source of logs: 'chat', 'inquiry_email', or 'mixed'")
     source_log_ids: List[str] = Field(..., description="List of InteractionLog object IDs in this cluster")
     similar_count: int = Field(..., description="Number of logs in this cluster")
@@ -55,7 +55,7 @@ class InteractionLogDocument(BaseModel):
     question_unaccented: str = Field(..., description="Unaccented question, used for exact match deduplication")
     question_vector: Optional[List[float]] = Field(None, description="Vector embedding of the question")
     answer_markdown: str = Field(..., description="The generated answer in Markdown format")
-    metadata_filter: Dict[str, Any] = Field(default_factory=dict, description="Filters applied during query")
+    metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Filters applied during query")
     source_type: str = Field(..., description="'chat' or 'inquiry_email'")
     email_message_id: Optional[int] = Field(None, description="Email message ID if source_type is inquiry_email")
     processing_time_ms: int = Field(0, description="Processing time in milliseconds")

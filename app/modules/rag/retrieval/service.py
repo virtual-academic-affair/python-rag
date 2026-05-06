@@ -43,7 +43,7 @@ class RetrievalService:
     ) -> List[Dict[str, Any]]:
         """Unified helper to fetch relevant files using PageIndex Semantic Document Search algorithm."""
         qdrant_meta_filter = await self._filter_builder.build_qdrant_filter(
-            metadata=metadata_filter or {},
+            metadata_filter=metadata_filter or {},
             user_role=user_role
         )
 

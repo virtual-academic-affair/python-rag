@@ -22,15 +22,13 @@ from app.modules.files.schemas import (
     BulkDeleteResponse,
     UpdateFileRequest,
 )
+from app.modules.metadata.schemas import FileMetadataResponse
 from app.modules.files.service import get_file_service
 from app.modules.files.notifier import get_file_status_notifier
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.modules.rag.ingestion.chunking import get_chunking_service
 from app.modules.rag.ingestion.service import get_ingestion_service
-from app.core.converters import (
-    convert_custom_metadata_to_snake,
-    convert_custom_metadata_to_camel,
-)
+
 from app.modules.files.utils import (
     get_download_url,
 )
@@ -84,7 +82,6 @@ async def upload_file(
         if custom_metadata:
             try:
                 metadata_dict = json.loads(custom_metadata)
-                metadata_dict = convert_custom_metadata_to_snake(metadata_dict)
             except json.JSONDecodeError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -125,7 +122,7 @@ async def upload_file(
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
@@ -184,11 +181,10 @@ async def list_files(
         if metadata_filter:
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
-                custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
 
                 from app.modules.metadata.service import get_metadata_service
                 metadata_svc = get_metadata_service()
-                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter)
+                is_valid, errors = metadata_svc.validate_file_metadata(custom_metadata_filter)
                 if not is_valid:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {', '.join(errors)}")
             except json.JSONDecodeError:
@@ -214,7 +210,7 @@ async def list_files(
                     mime_type=f.mime_type,
                     storage_path=f.storage_path,
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
-                    custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
+                    custom_metadata=FileMetadataResponse.from_model(f.custom_metadata) if f.custom_metadata else None,
                     file_url=get_download_url(f.storage_path),
                     markdown_file_url=get_download_url(f.markdown_storage_path),
                     table_of_contents=f.table_of_contents,
@@ -269,7 +265,6 @@ async def batch_upload_files(
                 meta_list = json.loads(metadata_list)
                 if not isinstance(meta_list, list):
                     raise HTTPException(status_code=400, detail="metadata_list must be a list")
-                meta_list = [convert_custom_metadata_to_snake(m) if isinstance(m, dict) else m for m in meta_list]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
 
@@ -362,7 +357,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
             table_of_contents=file_doc.table_of_contents,
@@ -444,7 +439,7 @@ async def update_file(
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
             table_of_contents=file_doc.table_of_contents,

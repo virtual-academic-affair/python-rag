@@ -14,7 +14,8 @@ from app.core.config import settings
 from app.core.format_utils import markdown_to_rich_text
 from app.modules.faq.repository import InteractionLogRepository, FaqCandidateRepository
 from app.integrations.llm.gemini import build_extraction_llm, chain_prompt
-from app.modules.email.utils import extract_structured_data
+from app.core.text_utils import remove_accents
+from app.core.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +26,15 @@ SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
 Dựa trên dữ liệu nhóm được cung cấp:
 1. Xây dựng một 'question' (câu hỏi) chung, rõ ràng và ngắn gọn, nắm bắt được ý định cốt lõi của tất cả các câu hỏi trong nhóm.
 2. Tổng hợp một 'answer_draft' (bản nháp câu trả lời) toàn diện dựa trên các câu trả lời của hệ thống. Đảm bảo câu trả lời chính xác, định dạng tốt, dễ hiểu.
-3. Xác định 'metadata_filter_suggestion' (gợi ý bộ lọc) phù hợp (gồm academic_year và cohort) dựa trên ngữ cảnh. Nếu câu trả lời áp dụng chung, hãy để mảng rỗng.
+3. Xác định 'metadata_filter_suggestion' (gợi ý bộ lọc) phù hợp (gồm academic_year và enrollment_year) dựa trên ngữ cảnh. Nếu câu trả lời áp dụng chung, hãy để null.
 
 Trả về kết quả dưới dạng JSON với CHÍNH XÁC các khóa (keys) sau:
 {{
     "question": "Câu hỏi tổng hợp",
     "answer_draft": "Câu trả lời tổng hợp",
     "metadata_filter_suggestion": {{
-        "academic_year": ["chuỗi"] hoặc [],
-        "cohort": ["chuỗi"] hoặc []
+        "academic_year": {{ "from_year": 2024, "to_year": 2025 }},
+        "enrollment_year": {{ "from_year": 2020, "to_year": 9999 }}
     }}
 }}"""),
     ("human", "Dữ liệu nhóm (Cluster Data):\n{cluster_data}")
@@ -133,7 +134,9 @@ class FaqSynthesisService:
             cluster_text += "\n"
 
         try:
-            result = await extract_structured_data(self._llm, SYNTHESIS_PROMPT, {"cluster_data": cluster_text})
+            chain = chain_prompt(SYNTHESIS_PROMPT, self._llm)
+            response = await chain.ainvoke({"cluster_data": cluster_text})
+            result = parse_json_safely(response.content or "")
             
             if not result or "question" not in result or "answer_draft" not in result:
                 logger.warning(f"Failed to synthesize cluster {batch_id}. Invalid LLM output.")
@@ -141,14 +144,13 @@ class FaqSynthesisService:
                 
             now = datetime.now(timezone.utc)
             answer_draft_md = result["answer_draft"]
-            from app.core.text_utils import remove_accents
             candidate = {
                 "question": result["question"],
                 "question_unaccented": remove_accents(result["question"]),
                 "answer_draft_markdown": answer_draft_md,
                 "answer_draft_rich_text": markdown_to_rich_text(answer_draft_md),
                 "answer_draft_unaccented": remove_accents(answer_draft_md),
-                "metadata_filter_suggestion": result.get("metadata_filter_suggestion", {"academic_year": [], "cohort": []}),
+                "metadata_filter_suggestion": result.get("metadata_filter_suggestion", {}),
                 "source_type": source_type,
                 "source_log_ids": [str(log.get("_id")) for log in cluster],
                 "similar_count": len(cluster),
