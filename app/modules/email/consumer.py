@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from app.modules.email.schemas import IngestMessage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
+from app.integrations.grpc.client import get_grpc_client
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,38 @@ def start_email_ingest_consumer(
             title,
             len(content),
         )
-        logger.info(
-            "LLM input -> messageId=%s title=%r content_preview=%r",
-            message_id,
-            title,
-            content[:500],
-        )
+
+        async def _check_message_state() -> bool:
+            grpc_client = get_grpc_client()
+            state = await grpc_client.get_message_state(message_id)
+            if state is None:
+                logger.warning(
+                    "Cannot fetch MessageService.GetState for messageId=%s; skip processing this message",
+                    message_id,
+                )
+                return False
+
+            is_current = state["is_current"]
+            has_records = state["has_records"]
+            should_process = is_current and (not has_records)
+            if not should_process:
+                logger.info(
+                    "Skip stale/deleted/processed messageId=%s (is_current=%s has_records=%s)",
+                    message_id,
+                    is_current,
+                    has_records,
+                )
+            return should_process
 
         async def _handle():
+            if not await _check_message_state():
+                return None
+            logger.info(
+                "LLM input -> messageId=%s title=%r content_preview=%r",
+                message_id,
+                title,
+                content[:500],
+            )
             return await classifier.process_request(
                 message_id=message_id,
                 title=title,
@@ -88,6 +113,11 @@ def start_email_ingest_consumer(
         try:
             fut = asyncio.run_coroutine_threadsafe(_handle(), loop)
             result = fut.result(timeout=120)
+            if result is None:
+                logger.info("Email ingest ignored: messageId=%s", message_id)
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
             logger.info(
                 "Email ingested processed: messageId=%s label=%s",
                 message_id,

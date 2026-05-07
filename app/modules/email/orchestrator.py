@@ -61,9 +61,17 @@ class EmailWorkflowOrchestrator:
         logger.info("Classification result: %s", label.value)
 
         if label == SystemLabel.ClassRegistration:
+            class_reg_content = content
+            inquiry_content = content
+            if self._has_inquiry_intent(title=title, content=content):
+                inquiry_content, class_reg_content = await self.label_classifier.split_mixed_intent_content(
+                    title=title,
+                    content=content,
+                )
+
             extracted = await self.class_registration_service.process(
                 title=title,
-                content=content,
+                content=class_reg_content,
                 message_id=message_id,
             )
             logger.info(
@@ -90,7 +98,7 @@ class EmailWorkflowOrchestrator:
                 )
                 draft_result = await self.inquiry_service.process(
                     title=title,
-                    content=content,
+                    content=inquiry_content,
                     message_id=message_id,
                 )
                 if self.grpc_client is not None and message_id is not None:

@@ -1,4 +1,5 @@
 """Service responsible only for label classification."""
+import json
 import logging
 import re
 
@@ -96,6 +97,33 @@ Output constraints:
             ]
         )
 
+        self.mixed_split_prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """You split a student email into 2 focused parts for downstream workflows.
+Return STRICT JSON ONLY with this schema:
+{"inquiry_content":"...","class_registration_content":"..."}
+Rules:
+- inquiry_content: only question/consultation/policy clarification intent.
+- class_registration_content: only actionable registration intent (register/cancel/open/switch class, course code/class code, constraints).
+- If a sentence belongs to both, keep it in both.
+- Preserve original language.
+- No markdown, no explanation.
+""",
+                ),
+                (
+                    "human",
+                    """[EMAIL_TITLE]
+{title}
+
+[EMAIL_CONTENT]
+{content}
+""",
+                ),
+            ]
+        )
+
     @classmethod
     def _normalize_label(cls, raw_label: str) -> str:
         text = (raw_label or "").strip()
@@ -124,6 +152,32 @@ Output constraints:
                 return token
 
         return SystemLabel.Inquiry.value
+
+    async def split_mixed_intent_content(
+        self,
+        title: str,
+        content: str,
+    ) -> tuple[str, str]:
+        """Use LLM to split mixed-intent email content into inquiry/class-registration parts."""
+        try:
+            chain = chain_prompt(self.mixed_split_prompt, self.llm)
+            result = await chain.ainvoke({"title": title, "content": content})
+            raw = (result.content or "").strip()
+            logger.info("[MIXED SPLIT RESULT] raw=%r", raw)
+
+            data = json.loads(raw)
+            inquiry_content = str(data.get("inquiry_content") or "").strip()
+            class_registration_content = str(data.get("class_registration_content") or "").strip()
+
+            if not inquiry_content:
+                inquiry_content = content
+            if not class_registration_content:
+                class_registration_content = content
+
+            return inquiry_content, class_registration_content
+        except Exception as e:
+            logger.warning("LLM mixed-intent split failed, fallback to original content: %s", e)
+            return content, content
 
     async def classify(
         self,

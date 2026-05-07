@@ -93,6 +93,13 @@ class GrpcClient:
             stub_class_name="InquiryServiceStub"
         )
 
+        self._load_module(
+            service_key="message",
+            path_prefix="message.message",
+            request_map={"message_get_state": "GetStateRequest"},
+            stub_class_name="MessageServiceStub"
+        )
+
     @property
     def is_ready(self) -> bool:
         return self._config.enabled and bool(self._stubs) and self._channel is not None
@@ -231,7 +238,7 @@ class GrpcClient:
         """Service method: create an inquiry record via gRPC."""
         if not self._config.enabled:
             return True
-            
+
         request_cls = self._requests.get("inquiry_create")
         if request_cls is None:
             logger.warning("Skip gRPC inquiry create because request class is not ready")
@@ -257,9 +264,36 @@ class GrpcClient:
         if hasattr(response, "success") and not response.success:
             logger.warning("gRPC inquiry create rejected")
             return False
-            
+
         logger.info("Inquiry created via gRPC for messageId=%s", message_id)
         return True
+
+    async def get_message_state(self, message_id: int) -> dict[str, bool] | None:
+        """Get message state from MessageService.GetState.
+
+        Returns dict with keys: is_current, has_records; None if unavailable.
+        """
+        if not self._config.enabled:
+            return None
+
+        request_cls = self._requests.get("message_get_state")
+        if request_cls is None:
+            logger.warning("Skip gRPC message state because request class is not ready")
+            return None
+
+        request = request_cls(messageId=message_id)
+        response = await self._call(
+            service_key="message",
+            rpc_name="GetState",
+            request=request,
+        )
+        if response is None:
+            return None
+
+        return {
+            "is_current": bool(getattr(response, "isCurrent", False)),
+            "has_records": bool(getattr(response, "hasRecords", False)),
+        }
 
 
 # Backward compatibility bindings
