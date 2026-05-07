@@ -65,15 +65,18 @@ class QdrantFaqService:
 
                 # Ensure payload indexes
                 fields = [
-                    "metadata_filter.academic_year",
-                    "metadata_filter.cohort"
+                    ("metadata_filter.enrollment_year_from", qm.PayloadSchemaType.INTEGER),
+                    ("metadata_filter.enrollment_year_to",   qm.PayloadSchemaType.INTEGER),
+                    ("metadata_filter.academic_year_from",   qm.PayloadSchemaType.INTEGER),
+                    ("metadata_filter.academic_year_to",     qm.PayloadSchemaType.INTEGER),
+                    ("metadata_filter.type",                 qm.PayloadSchemaType.KEYWORD),
                 ]
-                for field in fields:
+                for field, schema_type in fields:
                     try:
                         self.qdrant_client_instance.create_payload_index(
                             collection_name=settings.FAQ_QDRANT_COLLECTION,
                             field_name=field,
-                            field_schema=qm.PayloadSchemaType.KEYWORD,
+                            field_schema=schema_type,
                         )
                     except Exception:
                         pass
@@ -86,24 +89,28 @@ class QdrantFaqService:
         h = hashlib.md5(faq_id.encode("utf-8")).hexdigest()
         return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
-    async def upsert_faq(self, faq_id: str, question_vector: List[float], metadata_filter: Dict[str, List[str]]) -> str:
+    async def upsert_faq(self, faq_id: str, question_vector: List[float], metadata_filter: Dict[str, Any]) -> str:
         """
         Upsert a single FAQ into Qdrant.
-        
-        Args:
-            faq_id: The string ID of the FAQ in MongoDB.
-            question_vector: The embedded question.
-            metadata_filter: The dictionary of metadata filters.
-            
-        Returns:
-            The generated Qdrant point ID.
         """
         await self.ensure_collection()
         point_id = self._stable_point_id(faq_id)
         
+        from app.modules.metadata.service import get_metadata_service
+        try:
+            # Always normalize through schema for consistent Qdrant payload
+            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
+            if meta_model:
+                flat_meta = meta_model.to_qdrant_payload()
+            else:
+                flat_meta = {}
+        except Exception as e:
+            logger.warning(f"Failed to parse FAQ metadata for Qdrant upsert: {e}")
+            flat_meta = {}
+
         payload = {
             "faq_id": faq_id,
-            "metadata_filter": metadata_filter
+            "metadata_filter": flat_meta
         }
         
         point = qm.PointStruct(
@@ -131,36 +138,52 @@ class QdrantFaqService:
         )
 
     def _build_filter(self, metadata_filter_dict: Dict[str, Any]) -> Optional[qm.Filter]:
-        """Convert a dictionary to Qdrant Filter."""
+        """Convert an InquiryFilters/FaqMetadata dict to Qdrant Filter."""
         if not metadata_filter_dict:
             return None
             
+        from app.modules.metadata.schemas import FaqMetadataSchema
+        from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
+        try:
+            schema = FaqMetadataSchema.model_validate(metadata_filter_dict)
+            model = schema.to_model()
+        except Exception as e:
+            logger.warning(f"Invalid FAQ metadata filter: {e}")
+            return None
+
         must_conditions = []
-        for key, values in metadata_filter_dict.items():
-            if values and isinstance(values, list):
-                # If a filter is provided, the FAQ must match at least one of the values,
-                # OR the FAQ must not specify any filter for this key (empty array means applies to all).
-                # But since we store empty array when it applies to all, we need to check both.
-                
-                # However, for simplicity and typical RAG pattern, we can just do a direct match.
-                # If the FAQ has `academic_year: ["2024-2025"]`, and query has `academic_year: ["2024-2025"]`, it matches.
-                # If the FAQ has `academic_year: []`, it should match any query.
-                
-                # To implement: FAQ applies if (FAQ.key is empty) OR (FAQ.key intersects with Query.key)
-                # Qdrant condition:
-                condition = qm.Filter(
+
+        # 1. Enrollment year
+        f = model.enrollment_year.from_year
+        t = model.enrollment_year.to_year
+        if f != YEAR_MIN or t != YEAR_MAX:
+            must_conditions.extend([
+                qm.FieldCondition(key="metadata_filter.enrollment_year_to", range=qm.Range(gte=f)),
+                qm.FieldCondition(key="metadata_filter.enrollment_year_from", range=qm.Range(lte=t))
+            ])
+
+        # 2. Academic year
+        af = model.academic_year.from_year
+        at = model.academic_year.to_year
+        if af != YEAR_MIN or at != YEAR_MAX:
+            must_conditions.extend([
+                qm.FieldCondition(key="metadata_filter.academic_year_to", range=qm.Range(gte=af)),
+                qm.FieldCondition(key="metadata_filter.academic_year_from", range=qm.Range(lte=at))
+            ])
+
+        # 3. Type
+        model_type = getattr(model, "type", None)
+        if model_type:
+            # FAQ can apply to all types if it has no type (type="")
+            must_conditions.append(
+                qm.Filter(
                     should=[
-                        qm.FieldCondition(
-                            key=f"metadata_filter.{key}",
-                            match=qm.MatchAny(any=values)
-                        ),
-                        qm.IsEmptyCondition(
-                            is_empty=qm.PayloadField(key=f"metadata_filter.{key}")
-                        )
+                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=model_type.value)),
+                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=""))
                     ]
                 )
-                must_conditions.append(condition)
-                
+            )
+
         if not must_conditions:
             return None
             

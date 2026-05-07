@@ -1,6 +1,6 @@
 """
 Seed script to import FAQs from a JSON file into the system.
-Usage: python scripts/seed_faqs.py --file faqs.json
+Usage: python scripts/seed_faqs.py --file scripts/sample_faqs.json
 """
 import asyncio
 import json
@@ -14,6 +14,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from app.core.config import settings
 from app.core.database import Database
 from app.modules.faq.service import get_faq_service
+from app.modules.metadata.service import get_metadata_service
+from app.core.text_utils import remove_accents
+from app.core.format_utils import rich_text_to_markdown
+from datetime import datetime, timezone
+from bson import ObjectId
 
 async def main(file_path: str = None):
     if not file_path:
@@ -40,6 +45,7 @@ async def main(file_path: str = None):
     await Database.connect()
     
     faq_svc = await get_faq_service()
+    validator = get_metadata_service()
     db = Database.get_db()
     
     success_count = 0
@@ -56,9 +62,16 @@ async def main(file_path: str = None):
                 error_count += 1
                 continue
                 
-            metadata_filter = item.get("metadata_filter", {"academic_year": [], "cohort": []})
+            raw_meta = item.get("metadata_filter") or {}
             
-            from app.core.text_utils import remove_accents
+            is_valid, errors, meta_model = validator.validate_and_parse_faq_metadata(raw_meta)
+            if not is_valid:
+                print(f"Skipping item {i}: Invalid metadata: {', '.join(errors)} (Raw: {raw_meta})")
+                error_count += 1
+                continue
+            
+            metadata_filter = meta_model.model_dump()
+            
             question_unaccented = remove_accents(question)
             existing = await faq_svc._faq_repo.find_one({"question_unaccented": question_unaccented})
             if existing:
@@ -79,17 +92,16 @@ async def main(file_path: str = None):
             error_count += 1
             
     print(f"\nSeeding dummy FAQ Candidates ({len(candidates_data)} items)...")
-    from datetime import datetime, timezone
-    from bson import ObjectId
     
     dummy_candidates = []
     for item in candidates_data:
-        from app.core.text_utils import remove_accents
-        from app.core.format_utils import rich_text_to_markdown
-        
         question = item.get("question", "Unknown question")
         answer_rt = item.get("answer_draft_rich_text", "")
         answer_md = rich_text_to_markdown(answer_rt)
+        
+        raw_meta = item.get("metadata_filter_suggestion") or {}
+        _, _, meta_model = validator.validate_and_parse_faq_metadata(raw_meta)
+        meta_filter = meta_model.model_dump() if meta_model else {}
         
         dummy_candidates.append({
             "_id": ObjectId(),
@@ -98,7 +110,7 @@ async def main(file_path: str = None):
             "answer_draft_rich_text": answer_rt,
             "answer_draft_markdown": answer_md,
             "answer_draft_unaccented": remove_accents(answer_md),
-            "metadata_filter_suggestion": item.get("metadata_filter_suggestion", {"academic_year": [], "cohort": []}),
+            "metadata_filter_suggestion": meta_filter,
             "source_type": item.get("source_type", "chat"),
             "source_log_ids": [str(ObjectId()) for _ in range(item.get("similar_count", 2))],
             "similar_count": item.get("similar_count", 2),

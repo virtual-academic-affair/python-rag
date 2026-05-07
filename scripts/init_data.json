@@ -1,64 +1,40 @@
 {
-  "metadata_types": [
-    {
-      "key": "department",
-      "display_name": "Khoa/Phòng",
-      "description": "Bộ phận quản lý tài liệu (VD: Đào tạo, Công tác sinh viên)",
-      "allowed_values": [
-        { "value": "dao_tao", "display_name": "Phòng Đào tạo" },
-        { "value": "ctsv", "display_name": "Phòng CTSV" },
-        { "value": "khcn", "display_name": "Phòng KHCN" }
-      ]
-    },
-    {
-       "key": "inactive_metadata",
-       "display_name": "Metadata không dùng",
-       "description": "Để test việc lọc metadata không hoạt động",
-       "is_active": false,
-       "allowed_values": [
-         { "value": "test", "display_name": "Test" }
-       ]
-    }
-  ],
   "files": [
     {
       "filename": "quy_che_dao_tao.txt",
       "displayName": "Quy chế đào tạo 2024-2025",
       "metadata": {
-        "department": ["dao_tao"],
-        "academic_year": ["2024-2025"]
+        "type": "quyet_dinh",
+        "academic_year": {"from_year": 2024, "to_year": 2025}
       }
     },
     {
       "filename": "huong_dan_dang_ky.txt",
       "displayName": "Hướng dẫn đăng ký học phần",
       "metadata": {
-        "department": ["dao_tao"],
-        "academic_year": ["2024-2025"]
+        "type": "cong_van",
+        "academic_year": {"from_year": 2024, "to_year": 2025}
       }
     },
     {
       "filename": "quy_dinh_hoc_bong.txt",
       "displayName": "Quy định học bổng sinh viên",
       "metadata": {
-        "department": ["ctsv"],
-        "academic_year": ["all"]
+        "type": "quyet_dinh"
       }
     },
     {
       "filename": "quy_che_nghien_cuu_khoa_hoc.txt",
       "displayName": "Quy chế nghiên cứu khoa học",
       "metadata": {
-        "department": ["khcn"],
-        "academic_year": ["all"]
+        "type": "quyet_dinh"
       }
     },
     {
       "filename": "huong_dan_sinh_hoat_cong_dan.txt",
       "displayName": "Hướng dẫn sinh hoạt công dân",
       "metadata": {
-        "department": ["ctsv"],
-        "academic_year": ["all"]
+        "type": "cong_van"
       }
     }
   ]

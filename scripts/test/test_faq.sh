@@ -14,8 +14,8 @@ FAQ_DATA='{
     "question": "Làm thế nào để đăng ký giấy chứng nhận sinh viên?",
     "answerRichText": "<p>Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.</p>",
     "metadataFilter": {
-        "academicYear": ["2023-2024", "2024-2025"],
-        "cohort": []
+        "academicYear": {"fromYear": 2023, "toYear": 2024},
+        "enrollmentYear": {"fromYear": 0, "toYear": 9999}
     }
 }'
 
@@ -43,7 +43,7 @@ fi
 
 # 2. Test List FAQs
 echo -e "\n2. Test List FAQs"
-FILTER_JSON='{"academicYear":["2023-2024"]}'
+FILTER_JSON='{"academicYear":{"fromYear":2023,"toYear":2024}}'
 response=$(curl -s -w "\n%{http_code}" -G "${BASE_URL}/api/faqs" \
     --data-urlencode "metadataFilter=${FILTER_JSON}" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}")
@@ -129,8 +129,8 @@ MATCH_DATA='{
     "question": "Làm thế nào để đăng ký giấy chứng nhận sinh viên?",
     "threshold": 0.85,
     "metadataFilter": {
-        "academicYear": ["2024-2025"],
-        "cohort": ["K20"]
+        "academicYear": {"fromYear": 2024, "toYear": 2025},
+        "enrollmentYear": {"fromYear": 2020, "toYear": 2020}
     }
 }'
 
@@ -216,8 +216,8 @@ echo "$BODY" | jq .
         "questionOverride": "Tôi muốn xin bảng điểm bằng tiếng Anh thì làm thế nào? (Approved)",
         "answerRichTextOverride": "<p>Bạn có thể đăng ký cấp bảng điểm tiếng Anh qua cổng thông tin sinh viên.</p>",
         "metadataFilterOverride": {
-            "academicYear": [],
-            "cohort": []
+            "academicYear": {"fromYear": 0, "toYear": 9999},
+            "enrollmentYear": {"fromYear": 0, "toYear": 9999}
         },
         "note": "Looks good"
     }'
@@ -253,12 +253,12 @@ BULK_DATA="{
         {
             \"question\": \"Làm sao để biết mình đã đủ tín chỉ ra trường? ($TS)\",
             \"answerRichText\": \"<p>Bạn có thể kiểm tra tiến độ học tập trên trang cá nhân của mình.</p>\",
-            \"metadataFilter\": {\"academicYear\": [\"2024-2025\"], \"cohort\": [\"k19\"]}
+            \"metadataFilter\": {\"academicYear\": {\"fromYear\": 2024, \"toYear\": 2025}, \"enrollmentYear\": {\"fromYear\": 2019, \"toYear\": 2019}}
         },
         {
             \"question\": \"Trường có hỗ trợ vay vốn sinh viên không? ($TS)\",
             \"answerRichText\": \"<p>Có, bạn liên hệ Phòng Công tác sinh viên để được hướng dẫn thủ tục vay vốn.</p>\",
-            \"metadataFilter\": {\"academicYear\": [\"all\"], \"cohort\": [\"all\"]}
+            \"metadataFilter\": {\"academicYear\": {\"fromYear\": 0, \"toYear\": 9999}, \"enrollmentYear\": {\"fromYear\": 0, \"toYear\": 9999}}
         }
     ],
     \"skipDuplicates\": true
@@ -294,26 +294,26 @@ wb = openpyxl.Workbook()
 ws = wb.active
 ws.append(['STT', 'Câu hỏi', 'Trả lời', 'Năm học', 'Khóa'])
 
-# Row 1: Plain text
-ws.append([1, f'Học phí năm học 2024 là bao nhiêu? ({ts})', 'Học phí là 30 triệu/năm.', '2024-2025', 'all'])
+# Row 1: Specific academic year range, applicable to all enrollment years
+ws.append([1, f'Học phí năm học 2024 là bao nhiêu? ({ts})', 'Học phí là 30 triệu/năm.', '2024-2025', ''])
 
-# Row 2: Bold Answer (Full cell)
+# Row 2: Applicable to all academic years, specific enrollment year
 ws.cell(row=3, column=1, value=2)
 ws.cell(row=3, column=2, value=f'Làm thế nào để đăng ký học phần? ({ts})')
 cell_a2 = ws.cell(row=3, column=3, value='Bạn vào trang portal để đăng ký.')
 cell_a2.font = Font(bold=True)
-ws.cell(row=3, column=4, value='all')
-ws.cell(row=3, column=5, value='k18,k19')
+ws.cell(row=3, column=4, value='') # Empty = all academic years
+ws.cell(row=3, column=5, value='2018') # Specific year = 2018-2018
 
-# Row 3: Simple HTML-like text
+# Row 3: Applicable to all years
 ws.cell(row=4, column=1, value=3)
 ws.cell(row=4, column=2, value=f'Link đăng ký ở đâu? ({ts})')
 ws.cell(row=4, column=3, value='Vui lòng truy cập <b>Cổng thông tin</b> hoặc xem <i>hướng dẫn</i>.')
-ws.cell(row=4, column=4, value='all')
-ws.cell(row=4, column=5, value='all')
+ws.cell(row=4, column=4, value='')
+ws.cell(row=4, column=5, value='')
 
 # Row 4: Short question (Fail case)
-ws.append([4, 'Q', 'Short', 'all', 'all']) 
+ws.append([4, 'Q', 'Short', '', '']) 
 
 wb.save('scripts/test/sample_bulk_faq_unique.xlsx')
 "
@@ -323,7 +323,7 @@ response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import/prev
     -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
-    -F "metadataFilterJson={\"academic_year\": \"Năm học\", \"cohort\": \"Khóa\"}")
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
 
 HTTP_CODE=$(echo "$response" | tail -n1)
 BODY=$(echo "$response" | sed '$d')
@@ -345,7 +345,7 @@ response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import" \
     -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
-    -F "metadataFilterJson={\"academic_year\": \"Năm học\", \"cohort\": \"Khóa\"}")
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
 
 HTTP_CODE=$(echo "$response" | tail -n1)
 BODY=$(echo "$response" | sed '$d')

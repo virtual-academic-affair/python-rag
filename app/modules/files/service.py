@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable, Literal
 
 from app.integrations.llamaparse.client import get_llamaparse_client
+from app.core.text_utils import remove_accents
 
 
 # Ensure essential Office mime types are registered globally for Google GenAI SDK
@@ -88,9 +89,6 @@ class FileService(FileUploadMixin):
         if self._file_repo is None:
             self._file_repo = FileRepository()
         return self._file_repo
-
-
-
 
     async def download_file(
         self, 
@@ -168,16 +166,8 @@ class FileService(FileUploadMixin):
         # Atomic hard delete from MongoDB
         deleted_doc = await self.file_repo.find_one_and_delete({"_id": self.file_repo._to_object_id(file_id)})
 
-        # Decrement metadata counters ONLY if the file was actually READY and deleted
         if deleted_doc:
-            status = deleted_doc.get("status")
-            meta = deleted_doc.get("custom_metadata")
-            
-            if status == FileStatus.READY.value and meta:
-                await self.metadata_svc.sync_metadata_counters(meta, delta=-1)
-                logger.info(f"File {file_id} deleted and counters decremented")
-            else:
-                logger.info(f"File {file_id} deleted (was not READY, no counter decrement)")
+            logger.info(f"File {file_id} deleted from MongoDB")
             return True
             
         return False
@@ -186,31 +176,29 @@ class FileService(FileUploadMixin):
         self,
         file_id: str,
         display_name: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, List[str]]] = None
+        custom_metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[FileDocument]:
         """
         Update file details (display name and/or metadata).
-        Syncs metadata to Qdrant and updates counters if provided.
+        Syncs metadata to Qdrant if provided.
         """
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
             raise NotFoundException("File", file_id)
 
-        old_metadata = file_doc_dict.get("custom_metadata") or {}
-        status = file_doc_dict.get("status")
-
         update_data = {}
         if display_name is not None:
-            from app.core.text_utils import remove_accents
             update_data["display_name"] = display_name
             update_data["display_name_unaccented"] = remove_accents(display_name)
 
         if custom_metadata is not None:
-            # Validate metadata before updating
-            is_valid, errors = await self.metadata_svc.validate_metadata(custom_metadata)
+            # Validate metadata before updating using the stateless validator
+            from app.modules.metadata.service import get_metadata_service
+            validator = get_metadata_service()
+            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(custom_metadata)
             if not is_valid:
                 raise ValidationException(f"Invalid custom metadata: {', '.join(errors)}")
-            update_data["custom_metadata"] = custom_metadata
+            update_data["custom_metadata"] = meta_model.model_dump(mode="json") if meta_model else None
 
         if not update_data:
             return _to_file_model(file_doc_dict)
@@ -222,27 +210,16 @@ class FileService(FileUploadMixin):
             if custom_metadata is not None:
                 try:
                     indexer = get_qdrant_indexer()
-                    await indexer.update_payload_by_file_id(file_id, custom_metadata)
+                    await indexer.update_payload_by_file_id(file_id, update_data["custom_metadata"] or {})
                     logger.info(f"[FileService] Synced metadata to Qdrant for file {file_id}")
                 except Exception as e:
                     logger.warning(f"[FileService] Failed to sync metadata to Qdrant for file {file_id}: {e}")
-
-                # Sync metadata counters if file is READY
-                if status == FileStatus.READY.value:
-                    if old_metadata:
-                        await self.metadata_svc.sync_metadata_counters(old_metadata, delta=-1)
-                    if custom_metadata:
-                        await self.metadata_svc.sync_metadata_counters(custom_metadata, delta=1)
 
             # Merge for response
             file_doc_dict.update(update_data)
             return _to_file_model(file_doc_dict)
             
         return None
-
-
-
-
 
     async def list_files(
         self,
@@ -260,19 +237,18 @@ class FileService(FileUploadMixin):
 
         # Keyword search: match against unaccented field (user may type with/without accents)
         if keywords:
-            from app.core.text_utils import remove_accents
             unaccented_kw = remove_accents(keywords)
             filters["$or"] = [
                 {"display_name_unaccented": {"$regex": unaccented_kw, "$options": "i"}},
                 {"original_filename_unaccented": {"$regex": unaccented_kw, "$options": "i"}}
             ]
 
-        # Add metadata filters with "all" support
+        # Add metadata filters
         builder = get_filter_builder()
         mongo_filter = await builder.build_mongo_filter(
-            metadata=custom_metadata_filter or {},
+            metadata_filter=custom_metadata_filter or {},
             user_role=user_role,
-            skip_validation=True # Validation happens elsewhere or is implied
+            skip_validation=True
         )
         
         # Safe merge: prevent $or key collision when combining keyword filter with mongo_filter

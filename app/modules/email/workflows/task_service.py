@@ -13,6 +13,7 @@ from app.integrations.llm.gemini import (
 )
 from app.integrations.grpc.client import get_grpc_client
 from app.modules.email.schemas import TaskPayload
+from app.core.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -100,74 +101,7 @@ Output constraints:
             ]
         )
 
-    @staticmethod
-    def _extract_json_object(raw: str) -> str:
-        if raw is None:
-            return "{}"
-        if isinstance(raw, (dict, list)):
-            return json.dumps(raw, ensure_ascii=False)
-        text = str(raw).strip()
-        if not text:
-            return "{}"
-        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
-        if fence_match:
-            text = fence_match.group(1).strip()
-        start = text.find("{")
-        if start == -1:
-            match = re.search(r"\{[\s\S]*\}", text)
-            return match.group(0) if match else "{}"
-        depth = 0
-        end = -1
-        for idx in range(start, len(text)):
-            char = text[idx]
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    end = idx
-                    break
-        if end != -1:
-            return text[start : end + 1]
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
-            return match.group(0)
-        if start != -1:
-            prefix = text[start:]
-            sanitized = re.sub(r",\s*}$", "}", prefix)
-            sanitized = re.sub(r",\s*]$", "]", sanitized)
-            return sanitized
-        return "{}"
-
-    @staticmethod
-    def _repair_truncated_json(json_str: str) -> str:
-        if not json_str or json_str == "{}":
-            return json_str
-        in_string = False
-        escape = False
-        brace_balance = 0
-        for char in json_str:
-            if in_string:
-                if escape:
-                    escape = False
-                elif char == "\\":
-                    escape = True
-                elif char == '"':
-                    in_string = False
-            else:
-                if char == '"':
-                    in_string = True
-                elif char == "{":
-                    brace_balance += 1
-                elif char == "}":
-                    brace_balance -= 1
-        repaired = json_str
-        if in_string:
-            repaired += '"'
-        if brace_balance > 0:
-            repaired += "}" * brace_balance
-        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
-        return repaired
+        # Removed local JSON extraction and repair helpers. Using app.core.json_utils instead.
 
     async def process(self, title: str, content: str, message_id: int | None = None) -> TaskPayload:
         try:
@@ -191,14 +125,10 @@ Output constraints:
             )
             logger.info("[TASK EXTRACT RESULT] raw=%r", result.content)
 
-            json_str = self._extract_json_object(result.content or "")
-            logger.info("[TASK EXTRACT RESULT] parsed_json=%s", json_str)
+            payload_dict = parse_json_safely(result.content or "", repair=True)
+            logger.info("[TASK EXTRACT RESULT] parsed_dict=%s", payload_dict)
 
-            repaired_json_str = self._repair_truncated_json(json_str)
-            if repaired_json_str != json_str:
-                logger.info("[TASK EXTRACT RESULT] repaired_json=%s", repaired_json_str)
-
-            payload = TaskPayload.model_validate(json.loads(repaired_json_str))
+            payload = TaskPayload.model_validate(payload_dict)
             if message_id is not None:
                 payload.message_id = message_id
             return payload

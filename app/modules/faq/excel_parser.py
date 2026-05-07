@@ -10,6 +10,8 @@ import re
 from openpyxl.cell.rich_text import CellRichText
 from app.core.format_utils import rich_text_to_markdown
 from app.integrations.excel import get_column_index, cell_to_rich_text, get_cell_value
+from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
+from app.modules.metadata.utils.parsers import parse_year_range
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,13 @@ def parse_excel_to_faq_rows(
         else:
             sheet = wb.active
             
-        q_idx = get_column_index(sheet, question_col)
-        a_idx = get_column_index(sheet, answer_col)
+        q_idx = get_column_index(sheet, question_col, header_row=skip_rows)
+        a_idx = get_column_index(sheet, answer_col, header_row=skip_rows)
         
         meta_indices = {}
         if metadata_map:
             for key, col in metadata_map.items():
-                idx = get_column_index(sheet, col)
+                idx = get_column_index(sheet, col, header_row=skip_rows)
                 if idx:
                     meta_indices[key] = idx
         
@@ -62,17 +64,22 @@ def parse_excel_to_faq_rows(
             a_val = cell_to_rich_text(row[a_idx - 1])
             
             # Extract metadata
-            metadata = {}
+            # Initialize metadata with default ranges using constants
+            metadata = {
+                "enrollment_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX},
+                "academic_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX}
+            }
+            
             for key, idx in meta_indices.items():
-                val = row[idx - 1].value if idx <= len(row) else None
-                # Process metadata values (comma-separated strings to list)
-                # Fix for 2020.0 in metadata
                 clean_val = get_cell_value(row[idx - 1]) if idx <= len(row) else None
                 
-                if clean_val is not None:
-                    metadata[key] = [s.strip() for s in str(clean_val).split(",") if s.strip()]
-                else:
-                    metadata[key] = []
+                # Handle both snake_case and camelCase from mapping
+                if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
+                    if not clean_val:
+                        continue
+                    rng = parse_year_range(str(clean_val))
+                    out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
+                    metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
             
             # Basic validation
             error = None

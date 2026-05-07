@@ -1,19 +1,13 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import Field
+from app.core.schemas import BaseSchema
 from app.modules.rag.retrieval.schemas import SourceCitation
-
-class BaseSchema(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
+from app.modules.metadata.schemas import FaqMetadataSchema
 
 class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
     name: str = Field(..., description="User name")
-    cohort: str = Field(..., description="User cohort/class (e.g., K20)")
+    enrollment_year: Optional[int] = Field(None, description="User enrollment year (e.g., 2020)")
     role: str = Field(default="student", description="User role: student, lecture, admin")
 
 class ChatHistoryItem(BaseSchema):
@@ -24,7 +18,7 @@ class ChatHistoryItem(BaseSchema):
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
-    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
+    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
@@ -37,11 +31,11 @@ class ChatQueryResponse(BaseSchema):
 class ChatStreamRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
     chat_history: List[ChatHistoryItem] = Field(default_factory=list)
-    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
+    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
 
 class ChatRetrievePreviewRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
-    metadata_filter: Optional[Dict[str, List[str]]] = Field(None, description="Metadata filter as key-value pairs")
+    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
     top_k: Optional[int] = Field(default=None, ge=1, le=20)
     min_score: Optional[float] = Field(default=None, ge=0)
     include_explain: bool = Field(default=True, description="Whether to include score breakdown details")

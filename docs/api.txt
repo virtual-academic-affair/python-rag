@@ -29,7 +29,7 @@ MỤC LỤC
 ════════════════════════════════════════════════════════════════════════════════
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
- 3. Metadata Type Management   (9 endpoints) [🔒 admin / 🔒 auth]
+ 3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
  4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (3 endpoints) [🔒 auth]
  6. FAQ MODULE APIs            (11 endpoints) [🔒 admin / 🔒 auth]
@@ -38,7 +38,7 @@ MỤC LỤC
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 44 ENDPOINTS
+ TỔNG: 36 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -55,7 +55,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "5.3.0",                                                      │
+│     "version": "5.4.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
 │     "qdrantConnected": true,                                                 │
@@ -98,19 +98,22 @@ MỤC LỤC
 │   {                                                                          │
 │     "label": "inquiry",                                                      │
 │     "inquiry": {                                                             │
+│        "messageId": 12345,                                                   │
+│        "subject": "...",                                                     │
+│        "senderEmail": "...",                                                 │
+│        "senderName": "...",                                                  │
+│        "inquiryTypes": ["graduation"],                                       │
 │        "answer": "...",                                                      │
-│        "question": "...",                                                    │
-│        "sources": [...],                                                     │
-│        "messageId": 12345                                                    │
+│        "sources": [...]                                                      │
 │     }                                                                        │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Controller nhận title/content -> Gọi EmailWorkflowOrchestrator.         │
-│   2. AI phân loại email thành 1 trong 4 nhãn chuẩn.                          │
-│   3. Nếu nhãn là 'Inquiry', thực hiện RAG Search trên kho tài liệu.          │
-│   4. Gemini soạn thảo bản thảo phản hồi (Reply Draft) dựa trên context tìm được.│
-│   5. Trả về nhãn và dữ liệu bổ sung tương ứng với loại workflow.             │
+│   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
+│   2. FAQ Pre-check: Tìm kiếm ngữ nghĩa trong kho FAQ. Nếu trúng -> Dùng luôn. │
+│   3. RAG Retrieval: Nếu không có FAQ, tìm kiếm tài liệu quy chế liên quan.    │
+│   4. LLM Synthesis: Soạn thảo email phản hồi dựa trên bối cảnh tìm được.     │
+│   5. gRPC Call: Lưu thắc mắc và bản thảo email vào NestJS qua gRPC.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -128,116 +131,26 @@ MỤC LỤC
 │   3. Kết quả trả về bọc trong object `ProcessResponse`.                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-
 ════════════════════════════════════════════════════════════════════════════════
-                        3. METADATA TYPE MANAGEMENT
+                        3. METADATA SCHEMA APIs
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/metadata               [🔒 ADMIN]                                  │
+│ GET /api/metadata/schema         [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Tạo một loại nhãn metadata mới để phân loại tài liệu.                 │
-│                                                                              │
-│ REQUEST EXAMPLE:                                                             │
+│ MÔ TẢ: Lấy định nghĩa cứng của hệ thống metadata (Yêu cầu bởi Frontend).     │
+│ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
-│     "key": "department",                                                     │
-│     "displayName": "Khoa đào tạo",                                           │
-│     "allowedValues": [                                                       │
-│       { "value": "cntt", "displayName": "CNTT", "color": "#3498DB" }         │
-│     ]                                                                        │
+│     "documentTypes": ["ctdt", "cong_van", "quyet_dinh"],                     │
+│     "yearMin": 0,                                                            │
+│     "yearMax": 9999                                                          │
 │   }                                                                          │
 │                                                                              │
-│ RESPONSE 201: { "metadataId": "...", "key": "department", ... }              │
+│ GHI CHÚ: Toàn bộ các API nhận `multipart/form-data` (Upload/Import) đều hỗ trợ │
+│ song song cả `snake_case` và `camelCase` cho các tham số Form.               │
 │                                                                              │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. MetadataService chuẩn hóa key về snake_case.                            │
-│   2. Kiểm tra key đã tồn tại trong DB chưa.                                  │
-│   3. Lưu định nghĩa vào MongoDB collection `metadata_types`.                 │
+│ LUỒNG XỬ LÝ: Trả về các hằng số cấu hình của hệ thống metadata.              │
 └──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/metadata                [🔒 AUTH]                                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Liệt kê danh sách tất cả các loại nhãn metadata có trong hệ thống.    │
-│                                                                              │
-│ QUERY PARAMETERS:                                                            │
-│   - isActive: bool (optional) - Lọc nhãn đang hoạt động.                     │
-│   - keywords: string (optional) - Tìm kiếm tên nhãn hoặc giá trị.            │
-│                                                                              │
-│ RESPONSE 200 OK: { "metadataTypes": [...], "total": 5 }                      │
-│                                                                              │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Controller gọi Service lấy tất cả Metadata Types.                       │
-│   2. [SECURITY]: Nếu User không phải Admin, ép buộc `isActive=true`.         │
-│   3. Trả về toàn bộ danh sách Metadata đã được định nghĩa.                   │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/metadata/exists         [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Kiểm tra nhanh xem một Metadata Key đã tồn tại chưa.                  │
-│ QUERY PARAMETERS: key=string (Bắt buộc)                                      │
-│ RESPONSE 200: { "exists": true }                                             │
-│ LUỒNG XỬ LÝ: Truy vấn MongoDB tìm chính xác key đã normalize.                │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/metadata/{key}          [🔒 AUTH]                                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Lấy thông tin chi tiết một nhãn metadata theo Key.                    │
-│ RESPONSE 200 OK: { "key": "...", "allowedValues": [...], ... }               │
-│ LUỒNG XỬ LÝ: Truy vấn chi tiết Metadata Type.                                │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/metadata/{key}        [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Cập nhật tên hiển thị, mô tả hoặc trạng thái của nhãn.               │
-│ REQUEST: { "displayName": "Tên mới", "isActive": false }                      │
-│ RESPONSE 200 OK: MetadataType sau khi cập nhật.                              │
-│ LUỒNG XỬ LÝ: Tìm nhãn theo key -> Cập nhật các trường cho phép -> Lưu DB.    │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/metadata/{key}/values  [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Thêm một giá trị hợp lệ mới vào danh sách `allowedValues` của nhãn.   │
-│ REQUEST: { "value": "ctsv", "displayName": "Công tác SV", "color": "#000" }  │
-│ RESPONSE 200 OK: MetadataType với mảng values mới.                           │
-│ LUỒNG XỬ LÝ: Kiểm tra key -> Kiểm tra value trùng chưa -> Push vào array.    │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/metadata/{key}/values/{value} [🔒 ADMIN]                          │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Sửa thông tin hiển thị của một giá trị nhãn.                         │
-│ REQUEST: { "displayName": "Tên mới" }                                        │
-│ RESPONSE 200 OK: MetadataType đã cập nhật.                                   │
-│ LUỒNG XỬ LÝ: Dùng array filters của MongoDB để update phần tử trong mảng.    │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/metadata/{key}/values/{value} [🔒 ADMIN]                         │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xóa một giá trị khỏi nhãn metadata.                                   │
-│ RESPONSE 200 OK: MetadataType sau khi xóa.                                   │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Kiểm tra `totalFiles` của giá trị này trong DB.                         │
-│   2. Nếu > 0: Reject (409 Conflict) vì đang có tệp tin sử dụng nhãn này.      │
-│   3. Nếu = 0: Xóa phần tử khỏi mảng `allowedValues` của document.            │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/metadata/{key}       [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xoá hoàn toàn một định nghĩa nhãn metadata.                           │
-│ RESPONSE 204: No Content.                                                    │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Kiểm tra nhãn có phải nhãn hệ thống (isSystem=true) không -> Chặn xóa.   │
-│   2. Kiểm tra tổng tệp (totalFiles) của nhãn -> Nếu > 0 reject xóa.          │
-│   3. Thực hiện Hard Delete record trong MongoDB.                             │
-└──────────────────────────────────────────────────────────────────────────────┘
-
 
 ════════════════════════════════════════════════════════════════════════════════
                         4. FILE MANAGEMENT APIs
@@ -250,15 +163,20 @@ MỤC LỤC
 │                                                                              │
 │ REQUEST (Multipart):                                                         │
 │   - file: <binary>                                                           │
-│   - displayName: "Văn bản A"                                                 │
-│   - customMetadata: JSON string (vd: '{"department":["cntt"], "academicYear":["2025-2026"]}') │
+│   - displayName: "Văn bản A"                                  │
+│   - customMetadata: JSON string                            │
+│     (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020}, "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}') │
+│   - clientId: <string> (Dùng cho WebSocket progress)             │
 │                                                                              │
 │ RESPONSE 201:                                                                │
 │   {                                                                          │
 │     "fileId": "67...",                                                       │
 │     "status": "uploading",                                                   │
-│     "tableOfContents": [...],                                                │
-│     "summary": "...",                                                        │
+│     "customMetadata": {                                                      │
+│        "enrollmentYear": {"fromYear": 2020, "toYear": 2020},                 │
+│        "academicYear": {"fromYear": 2025, "toYear": 2026},                   │
+│        "type": "cong_van"                                                    │
+│     },                                                                       │
 │     "createdAt": "ISO Date"                                                  │
 │   }                                                                          │
 │                                                                              │
@@ -278,7 +196,7 @@ MỤC LỤC
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
 │   - fileStatus: string (ready|processing|failed)                             │
-│   - metadataFilter: JSON string (VD: {"cohort":["k63"]})                     │
+│   - metadataFilter: JSON string (VD: {"enrollmentYear":{"fromYear":2020}})   │
 │   - keywords: string (Tìm theo tên tệp)                                      │
 │   - page/limit: Phân trang (mặc định 1/50)                                   │
 │                                                                              │
@@ -290,7 +208,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/files/{file_id}       [🔒 ADMIN]                                  │
+│ PATCH /api/files/{fileId}        [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Cập nhật thông tin tệp tin (Tên hiển thị, Metadata).                  │
 │                                                                              │
@@ -298,8 +216,8 @@ MỤC LỤC
 │   {                                                                          │
 │     "displayName": "Tên mới.pdf",                                            │
 │     "customMetadata": {                                                      │
-│       "academicYear": ["2025-2026"],                                         │
-│       "department": ["dao_tao"]                                              │
+│       "academicYear": {"fromYear": 2025, "toYear": 2026},                    │
+│       "type": "cong_van"                                                     │
 │     }                                                                        │
 │   }                                                                          │
 │                                                                              │
@@ -315,7 +233,10 @@ MỤC LỤC
 │ POST /api/files/batch            [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Upload đồng thời nhiều tệp tin.                                       │
-│ REQUEST: - files: [binary], - displayNames: JSON, - metadataList: JSON       │
+│ REQUEST (Multipart):                                                         │
+│   - files: [binary]                                                          │
+│   - displayNames: JSON string (VD: ["File 1", "File 2"])      │
+│   - metadataList: JSON string (VD: [{"type":"ctdt"}, {"type":"quyet_dinh"}]) │
 │ RESPONSE: { "total": 5, "successful": 4, "failed": 1, "results": [...] }     │
 │ LUỒNG XỬ LÝ: Chạy vòng lặp gọi hàm upload đơn lẻ cho từng thành phần.        │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -358,6 +279,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
+
 ════════════════════════════════════════════════════════════════════════════════
                         5. CHAT & RAG TOOLING
 ════════════════════════════════════════════════════════════════════════════════
@@ -371,7 +293,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
 │     "chatHistory": [],                                                       │
-│     "metadataFilter": {"academicYear": ["2025"]}                             │
+│     "metadataFilter": {"academicYear": {"fromYear": 2025, "toYear": 2025}}   │
 │   }                                                                          │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
@@ -382,14 +304,17 @@ MỤC LỤC
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   0. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
+│   0. Auto-Extraction: Tự động bóc tách Khóa/Năm học từ câu hỏi nếu thiếu.    │
+│   1. FAQ Pre-check: Tìm kiếm nhanh trong kho FAQ Module v2. Nếu có câu trả   │
+│      lời sẵn thì trả về ngay (Source: 'faq'), bỏ qua toàn bộ luồng RAG.      │
+│   2. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
 │      hoặc xã giao, trả lời trực tiếp và BYPASS hoàn toàn luồng RAG tốn kém.  │
-│   1. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
-│   2. PageIndex Semantic Reranking: Tính toán DocScore từng File dựa trên     │
-│      mẫu 30 chunks này để chọn ra Top-5 Files tốt nhất (Fine Selection).     │
-│   3. Build Context: Kết hợp descriptions của Files tìm được và lịch sử chat. │
-│   4. Agentic Loop: LLM quyết định dùng Tools (PageIndex) để đọc sâu tài liệu.│
-│   5. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
+│   3. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
+│   4. PageIndex Semantic Reranking: Chọn lọc Top-5 Files tốt nhất.            │
+│   5. Agentic Loop: LLM quyết định dùng Tools để đọc sâu nội dung từng trang. │
+│      Chèn trích dẫn `(^...)` sau khi dùng xong thông tin từ một mục.         │
+│   6. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
+│      Lưu ý: Với Inquiry Email, trích dẫn được giải nén thành link file gốc.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -439,10 +364,10 @@ MỤC LỤC
 │ MÔ TẢ: Lấy danh sách các FAQ đang hoạt động có hỗ trợ filter và phân trang.  │
 │        Sử dụng Native MongoDB Full-Text Search (FTS) khi có tham số `search`.│
 │                                                                              │
-│ REQUEST QUERY: ?is_active=true&metadataFilter={"cohort":["k63"]}&search=...&page=1&limit=20 │
+│ REQUEST QUERY: ?is_active=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
 │   - is_active: bool (optional)                                               │
-│   - metadataFilter: JSON string (optional) - VD: {"cohort": ["k63"]}         │
-│   - search: string (optional) - Tìm kiếm Full-Text (không dấu/có dấu)        │
+│   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}} │
+│   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
 │ RESPONSE: { "items": [FaqResponse], "total": 10, "page": 1, "limit": 20 }    │
@@ -463,7 +388,7 @@ MỤC LỤC
 │ RESPONSE 200 OK: FaqResponse object.                                         │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Tìm kiếm FAQ theo ID trong MongoDB.                                     │
-│   2. Tăng bộ đếm `view_count` thêm 1.                                        │
+│   2. Tăng bộ đếm `viewCount` thêm 1.                                        │
 │   3. Trả về thông tin chi tiết câu hỏi và câu trả lời.                       │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -476,7 +401,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "...",                                                       │
 │     "answerRichText": "...",                                                 │
-│     "metadataFilter": { "academicYear": [], "cohort": [] }                   │
+│     "metadataFilter": { "academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024} } │
 │   }                                                                          │
 │ RESPONSE: FaqResponse object                                                 │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
@@ -563,6 +488,7 @@ MỤC LỤC
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
 │ RESPONSE: { "items": [FaqCandidateResponse], "total": 5, "page": 1, "limit": 20 } │
+│   (Note: Candidate ID is returned as `candidateId`)                           │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Truy vấn danh sách trong collection `faq_candidates`.                   │
@@ -601,7 +527,7 @@ MỤC LỤC
 │   - file: <binary .xlsx>                                                     │
 │   - question_col: string (Tên hoặc chữ cái cột câu hỏi, vd: "Câu hỏi", "B")  │
 │   - answer_col: string (Tên hoặc chữ cái cột trả lời, vd: "Trả lời", "C")    │
-│   - metadataFilterJson: JSON string (VD: {"academic_year": "D", "cohort": "E"})│
+│   - metadataFilterJson: JSON string (VD: {"academicYear": "D", "type": "E"}) │
 │   - sheet_name: string (Tùy chọn, tên sheet cần đọc)                         │
 │   - skip_rows: int (Số dòng bỏ qua ở đầu, mặc định: 1)                       │
 │                                                                              │
@@ -678,7 +604,7 @@ MỤC LỤC
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Truy vấn MongoDB collection `forms`.                                    │
-│   2. Nếu có `search`: Thực hiện regex search trên trường `document_type`.    │
+│   2. Nếu có `search`: Thực hiện regex search trên trường `documentType`.    │
 │   3. Trả về kết quả phân trang kèm thông tin link và ghi chú.                │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -776,9 +702,9 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ:                                                                 │
 │   1. Client kết nối với clientId duy nhất (trùng clientId lúc gọi POST file).│
 │   2. Hệ thống đẩy JSON status updates theo từng bước:                        │
-│      - {"step": "db_creating", "message": "...", "file_id": "..."}           │
-│      - {"step": "parsing_markdown", ...}                                     │
-│      - {"step": "ready", ...}                                                │
+│      - {"step": "db_creating", "message": "...", "file_id": "..."}          │
+│      - {"step": "uploading_original", ...}                                   │
+│      - {"step": "completed", ...}                                            │
 │   3. Socket tự động đóng khi hoàn tất hoặc lỗi.                              │
 │   4. Link liên kết trong thông báo (nếu có) sẽ mở trong tab mới.             │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -804,5 +730,5 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-Hoàn tất bản Đặc tả API chi tiết v5.3.0 (Full Compliance).
+Hoàn tất bản Đặc tả API chi tiết v5.4.0 (Full Compliance).
 --------------------------------------------------------------------------------

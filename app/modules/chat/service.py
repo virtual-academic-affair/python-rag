@@ -8,6 +8,7 @@ from google.genai import types
 
 from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
+from app.modules.metadata.schemas import FaqMetadataSchema
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.rag.retrieval.agent import (
     AGENT_SYSTEM_PROMPT,
@@ -20,6 +21,7 @@ from app.modules.rag.retrieval.agent import (
 )
 from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.service import get_faq_service
+from app.modules.metadata.extraction import extract_metadata_from_text
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -45,13 +47,14 @@ class ChatService:
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[dict[str, Any]] = None,
+        metadata_filter: Optional[FaqMetadataSchema] = None,
     ) -> dict:
         """Retrieve candidate files and build conversation history for the agent."""
         logger.info(f"[Chat] Nhận request chuẩn bị bối cảnh cho user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
+        meta_dict = metadata_filter.model_dump() if metadata_filter else {}
         candidate_files = await self._retrieval.retrieve_candidate_files(
             query=question,
-            metadata_filter=metadata_filter,
+            metadata_filter=meta_dict,
             user_role=user_context.role,
         )
 
@@ -63,7 +66,7 @@ class ChatService:
             for c in candidate_files
         ])
         prompt_text = (
-            f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.cohort or 'N/A'})\n\n"
+            f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.enrollment_year or 'N/A'})\n\n"
             f"Dưới đây là các tài liệu liên quan được tìm thấy trong cơ sở dữ liệu. Hãy sử dụng công cụ để đọc nội dung chi tiết nếu cần thiết:\n{files_info_str}\n\n"
             f"Câu hỏi của người dùng: {question}"
         )
@@ -156,7 +159,14 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         
         # [0] Embed question once
         question_vector = await self._embed(question)
-        meta_dict = metadata_filter or {}
+        
+        # [0.1] Auto-extract metadata if not provided explicitly
+        if not metadata_filter:
+            metadata_filter = await extract_metadata_from_text(question)
+            if metadata_filter:
+                logger.info(f"[Chat] Auto-extracted metadata from question: {metadata_filter}")
+        
+        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
 
         # [1] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
@@ -173,7 +183,13 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "processing_time_ms": processing_time_ms,
             }
 
-        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
+        # We run them in parallel because most queries require RAG.
+        gate_task = self._evaluate_rag_needs(question, chat_history)
+        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        
+        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
+        
         if not needs_rag:
             logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -186,7 +202,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "processing_time_ms": processing_time_ms,
             }
 
-        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
 
         if not candidate_files:
@@ -250,7 +265,14 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         
         # [0] Embed question once
         question_vector = await self._embed(question)
-        meta_dict = metadata_filter or {}
+        
+        # [0.1] Auto-extract metadata if not provided explicitly
+        if not metadata_filter:
+            metadata_filter = await extract_metadata_from_text(question)
+            if metadata_filter:
+                logger.info(f"[Chat-Stream] Auto-extracted metadata from question: {metadata_filter}")
+        
+        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
 
         # [1] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
@@ -269,7 +291,12 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             })
             return
 
-        needs_rag, direct_answer, gate_usage = await self._evaluate_rag_needs(question, chat_history)
+        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
+        gate_task = self._evaluate_rag_needs(question, chat_history)
+        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
+        
+        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
+        
         if not needs_rag:
             logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
             yield json.dumps({"type": "text", "content": direct_answer, "done": False})
@@ -283,7 +310,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             })
             return
 
-        state = await self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
         history = state["history"]
 

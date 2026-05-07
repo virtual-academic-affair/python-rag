@@ -1,13 +1,6 @@
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from pydantic.alias_generators import to_camel
-
-class BaseSchema(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        serialize_by_alias=True,
-    )
+from pydantic import Field
+from app.core.schemas import BaseSchema
 
 class TocTreeNode(BaseSchema):
     node_id: str
@@ -22,7 +15,3 @@ class TocTreeResponse(BaseSchema):
     doc_description: Optional[str] = None
     line_count: int
     structure: List[TocTreeNode]
-
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )

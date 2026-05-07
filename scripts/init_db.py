@@ -164,9 +164,11 @@ async def clear_qdrant_collections():
         logger.info("  Creating Qdrant payload indexes...")
         fields_to_index = [
             ("file_id", qm.PayloadSchemaType.KEYWORD),
-            ("metadata.academic_year", qm.PayloadSchemaType.KEYWORD),
-            ("metadata.cohort", qm.PayloadSchemaType.KEYWORD),
-            ("metadata.department", qm.PayloadSchemaType.KEYWORD),
+            ("metadata.enrollment_year_from", qm.PayloadSchemaType.INTEGER),
+            ("metadata.enrollment_year_to", qm.PayloadSchemaType.INTEGER),
+            ("metadata.academic_year_from", qm.PayloadSchemaType.INTEGER),
+            ("metadata.academic_year_to", qm.PayloadSchemaType.INTEGER),
+            ("metadata.type", qm.PayloadSchemaType.KEYWORD),
         ]
         
         for field_name, field_type in fields_to_index:
@@ -181,38 +183,6 @@ async def clear_qdrant_collections():
         logger.warning(f"  Qdrant error (continuing): {e}")
 
     logger.info("✅ Qdrant cleared")
-
-
-async def delete_all_gemini_stores():
-    """Delete all stores from Gemini File Search API."""
-    logger.info("Deleting all Gemini File Search stores...")
-
-    from google import genai
-
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not set in .env")
-
-    client = genai.Client(api_key=api_key)
-
-    try:
-        stores = list(client.file_search_stores.list())
-
-        if not stores:
-            logger.info("  No Gemini stores found")
-        else:
-            logger.info(f"  Found {len(stores)} Gemini store(s)")
-            for store in stores:
-                try:
-                    client.file_search_stores.delete(name=store.name, config={"force": True})
-                    logger.info(f"  ✓ Deleted: {store.name}")
-                except Exception as e:
-                    logger.warning(f"  ⚠ Failed to delete {store.name}: {e}")
-
-    except Exception as e:
-        logger.warning(f"  Gemini API error (continuing): {e}")
-
-    logger.info("✅ Gemini stores deleted")
 
 
 async def clear_pageindex_workspace():
@@ -257,37 +227,10 @@ async def create_database_indexes():
     # Database.connect() already ensures indexes for FILE_CHUNKS,
     # so we only add additional ones if needed.
 
-    # Metadata types collection indexes
-    await db[Database.METADATA_TYPES].create_index([("key", ASCENDING)], unique=True)
+
 
     await Database.disconnect()
-async def seed_system_metadata_types():
-    """Seed system metadata types by calling the central seed script."""
-    from scripts.seed_metadata import seed_system_metadata
-    await seed_system_metadata()
 
-async def create_metadata_types(metadata_types: list):
-    """Create non-system metadata types via API (requires admin auth)."""
-    logger.info("Creating metadata types via API...")
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        for meta in metadata_types:
-            try:
-                response = await client.post(
-                    f"{API_URL}/metadata",
-                    json=meta,
-                    headers=AUTH_HEADERS
-                )
-                if response.status_code == 201:
-                    logger.info(f"  ✓ Created metadata type: {meta['key']}")
-                elif response.status_code == 409:
-                    logger.info(f"  ⚠ Metadata type already exists: {meta['key']}")
-                else:
-                    logger.warning(f"  ⚠ Failed to create {meta['key']}: {response.text}")
-            except Exception as e:
-                logger.warning(f"  ⚠ Error creating {meta['key']}: {e}")
-
-    logger.info("✅ Metadata types created")
 
 async def upload_files(files_config: list) -> list[str]:
     """Upload files via API (requires admin auth). Returns list of file IDs."""
@@ -395,7 +338,6 @@ async def wait_for_ingestion(file_ids: list[str]):
     logger.info(f"INGESTION STATUS: {len(completed_ids)} ready, {len(failed_ids)} failed, {len(pending_ids)} timed out")
     logger.info("-" * 50)
 
-
 async def wait_for_service():
     """Wait for AI Service to be available."""
     logger.info("Checking AI Service availability...")
@@ -436,7 +378,7 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         print("\n⚠️  WARNING: This will DELETE all existing data!")
         print("   - MongoDB database will be dropped")
         print("   - R2 files will be deleted")
-        print("   - Gemini stores will be deleted")
+        print("   - Qdrant collections will be recreated")
         print()
         confirm = input("Continue? (yes/no): ").strip().lower()
         if confirm != "yes":
@@ -462,7 +404,6 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         await drop_mongodb_database()
         await clear_r2_bucket()
         await clear_qdrant_collections()
-        await delete_all_gemini_stores()
         await clear_pageindex_workspace()
 
         # Phase 2: Initialize
@@ -472,17 +413,13 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
 
         await create_database_indexes()
         
-        if not restore_path:
-            await seed_system_metadata_types()
-        else:
-            print("Restoration mode: Skipping metadata seeding (will be loaded from snapshot)")
+        if restore_path:
+            print("Restoration mode: Skipped DB initialization (will be loaded from snapshot)")
 
         # Wait for service to be ready
         await wait_for_service()
 
-        # Create additional metadata types via API
-        if not restore_path and "metadata_types" in init_data and init_data["metadata_types"]:
-            await create_metadata_types(init_data["metadata_types"])
+
 
         # Upload files or Restore from snapshot
         if restore_path:

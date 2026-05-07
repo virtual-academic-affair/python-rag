@@ -20,10 +20,7 @@ from app.modules.chat.schemas import (
 from app.core.dependencies import require_auth
 from app.modules.chat.service import get_chat_service
 from app.modules.rag.retrieval.service import get_retrieval_service
-from app.core.converters import convert_custom_metadata_to_snake
 from app.core.config import settings
-
-
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
@@ -51,10 +48,8 @@ async def chat_query(
     - RAG Service does NOT manage sessions. Chat history must be sent from NestJS.
     """
     try:
-        # Convert metadata filter keys from camelCase to snake_case
+        # Use metadata_filter as provided by the client
         meta_dict = request.metadata_filter or {}
-        if meta_dict:
-            meta_dict = convert_custom_metadata_to_snake(meta_dict)
 
         # Extract role from token and override context
         user_role = user.get("role", "student")
@@ -63,7 +58,7 @@ async def chat_query(
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            cohort=user.get("cohort", user.get("class", "Unknown")),
+            enrollment_year=None, # TBD: extract from cohort/class if needed
             role=user_role,
         )
 
@@ -73,7 +68,7 @@ async def chat_query(
             question=request.question,
             user_context=user_context,
             chat_history=request.chat_history,
-            metadata_filter=meta_dict,
+            metadata_filter=request.metadata_filter,
         )
 
         return ChatQueryResponse(**result)
@@ -84,9 +79,15 @@ async def chat_query(
             detail=str(e),
         )
     except Exception as e:
+        error_msg = str(e)
+        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
+            detail_msg = "Failed to generate chat response: Google internal server error"
+        else:
+            detail_msg = f"Failed to generate chat response: {error_msg}"
+            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate chat response: {str(e)}",
+            detail=detail_msg,
         )
 
 
@@ -113,10 +114,8 @@ async def chat_stream(
     - NestJS can forward this stream to WebSocket clients.
     """
     try:
-        # Convert metadata filter keys from camelCase to snake_case
+        # Use metadata_filter as provided by the client
         meta_dict = request.metadata_filter or {}
-        if meta_dict:
-            meta_dict = convert_custom_metadata_to_snake(meta_dict)
 
         # Extract role from token and override context
         user_role = user.get("role", "student")
@@ -125,7 +124,7 @@ async def chat_stream(
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            cohort=user.get("cohort", user.get("class", "Unknown")),
+            enrollment_year=None,
             role=user_role,
         )
 
@@ -137,7 +136,7 @@ async def chat_stream(
                     question=request.question,
                     user_context=user_context,
                     chat_history=request.chat_history,
-                    metadata_filter=meta_dict,
+                    metadata_filter=request.metadata_filter,
                 ):
                     # SSE format: data: {json}\n\n
                     yield f"data: {chunk_json}\n\n"
@@ -148,8 +147,11 @@ async def chat_stream(
                 })
                 yield f"data: {error_data}\n\n"
             except Exception as e:
+                error_msg = str(e)
+                if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
+                    error_msg = "Failed to stream chat response: Google internal server error"
                 error_data = json.dumps({
-                    "error": str(e),
+                    "error": error_msg,
                     "done": True
                 })
                 yield f"data: {error_data}\n\n"
@@ -170,9 +172,15 @@ async def chat_stream(
             detail=str(e),
         )
     except Exception as e:
+        error_msg = str(e)
+        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
+            detail_msg = "Failed to stream chat response: Google internal server error"
+        else:
+            detail_msg = f"Failed to stream chat response: {error_msg}"
+            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to stream chat response: {str(e)}",
+            detail=detail_msg,
         )
 
 
@@ -189,15 +197,16 @@ async def chat_retrieve_preview(
     """Preview semantic retrieval result list for relevance tuning."""
     try:
         meta_dict = request.metadata_filter or {}
-        if meta_dict:
-            meta_dict = convert_custom_metadata_to_snake(meta_dict)
 
         user_role = user.get("role", "student")
         
         # Note: Using unified RetrievalService for preview to see context as processed by RAG
         retrieval = get_retrieval_service()
+        
+        meta_dict = request.metadata_filter.model_dump() if request.metadata_filter else {}
+        
         qdrant_meta_filter = await retrieval._filter_builder.build_qdrant_filter(
-            metadata=meta_dict,
+            metadata_filter=meta_dict,
             user_role=user_role
         )
 
@@ -239,7 +248,13 @@ async def chat_retrieve_preview(
             detail=str(e),
         )
     except Exception as e:
+        error_msg = str(e)
+        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
+            detail_msg = "Failed to preview Qdrant retrieval: Google internal server error"
+        else:
+            detail_msg = f"Failed to preview Qdrant retrieval: {error_msg}"
+            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview Qdrant retrieval: {str(e)}",
+            detail=detail_msg,
         )

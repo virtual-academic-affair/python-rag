@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 5.3.0 | April 2026
+Version 5.4.0 | May 2026
 ================================================================================
 
 MUC LUC (DETAILED INDEX)
@@ -30,7 +30,7 @@ MUC LUC (DETAILED INDEX)
      - 11.4. Qdrant Indexer (Semantic Chunking & Qdrant Push)
  12. FAQ Module v2 (Semantic FAQ & Auto-Synthesis)
  13. Hệ thống Metadata Types (Definitions & Rules)
-     - 13.1. System Metadata (academic_year, cohort)
+     - 13.1. System Metadata (academicYear, cohort)
      - 13.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY)
  14. Filter Builder Logic (Metadata-to-Vector Query Mapping)
      - 14.1. Metadata Filter Construction Logic
@@ -77,6 +77,7 @@ Dự án sử dụng kiến trúc RAG Modular (phi tập trung), kiểm soát ho
 SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT (Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant):
 1.  UPLOAD LAYER: Nhận file -> Validate Metadata (Required fields) -> R2 (Lưu file gốc) -> MongoDB (Status: uploading).
     - [NEW]: Hỗ trợ clientId để đẩy thông báo tiến trình real-time qua WebSocket.
+    - [NEW]: Mọi API Multipart/Form-data đều hỗ trợ song song `snake_case` và `camelCase` cho các trường dữ liệu đầu vào.
 2.  INDEXING LAYER (ASYNC):
     - LlamaParse: Trình phân tích PDF tốt nhất hiện nay, xử lý được bảng biểu (tables) trong quy chế.
     - PageIndex: Đóng vai trò kiến trúc sư mục lục. Nó không lấy text thô mà xây dựng một cây Phân cấp (Building an Heirarchical Tree).
@@ -102,7 +103,7 @@ app/
 │   ├── config.py             : Quản lý biến môi trường (.env) qua Pydantic Settings.
 │   ├── database.py           : Cấu hình Motor (Async MongoDB), khởi tạo indexes.
 │   ├── exceptions.py         : Hệ thống Exception tập trung.
-│   └── converters.py         : Logic chuyển đổi kiểu dữ liệu (vd: snake_case converters).
+│   └── converters.py         : Logic chuyển đổi kiểu dữ liệu (vd: camelCase converters cho API).
 ├── integrations/ (External Gateways - Pure Clients)
 │   ├── llamaparse/           : Client gọi Cloud LlamaParse API.
 │   ├── pageindex/            : Kết nối PageIndex engine (TOC Tree, Agent Tools).
@@ -143,7 +144,7 @@ BẢN ĐỒ KHỞI ĐỘNG (BƯỚC-BẰNG-BƯỚC):
 1.  DATABASE CONNECT: Khởi tạo pool kết nối MongoDB (Motor). Test kết nối bằng lệnh 'ping'.
 2.  ENSURE INDEXES: 
     - FILES collection: `idx_file_display_name_regex`.
-    - FILE_TOC_TREES collection: `idx_file_toc_trees_file_id` (Unique=True).
+    - FILE_TOC_TREES collection: `idx_file_toc_trees_fileId` (Unique=True).
     - METADATA_TYPES collection: `idx_metadata_types_key` (Unique=True).
 3.  STORAGE WARMUP: Khởi tạo R2 client. Nếu lỗi chỉ log warning (Safe bypass) để cho phép app khởi động ngay cả khi storage tạm lỗi.
 4.  RABBITMQ BINDING: Declare queue `email_ingest_queue` và bind exchange nếu cần.
@@ -225,10 +226,10 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 - Payload: Chứa đầy đủ các trường Pydantic của NestJS để tạo Entry hỗ trợ SV.
 
 8.2. INQUIRY SERVICE:
-- B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự là gì).
-- B2: Phân loại thắc mắc (`training`, `procedure`, `graduation`).
-- B3: RAG service lấy context từ tài liệu trường.
-- B4: Gemini soạn câu trả lời (Email Draft Body).
+- B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự) và các bộ lọc Metadata (Khóa, Năm học).
+- B2: [NEW] FAQ Pre-check: Tìm kiếm ngữ nghĩa trong FAQ Module v2. Nếu có câu trả lời sẵn -> Trả về ngay lập tức để tiết kiệm tài nguyên.
+- B3: Nếu FAQ không khớp, hệ thống gọi RAG service lấy context từ tài liệu trường dựa trên Vector Search.
+- B4: Gemini soạn câu trả lời (Email Draft Body). Đặc biệt: Các trích dẫn `(^...)` được tự động chuyển thành Link Markdown dẫn đến file gốc (original_url) của tài liệu.
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
 8.3. TASK SERVICE:
@@ -252,14 +253,14 @@ CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_DRAFT_REPLY_PROMPT):
 
 
 ================================================================================
-10. MODULAR RAG INGESTION PIPELINE (PIHASE-BY-PHASE)
+11. MODULAR RAG INGESTION PIPELINE (PIHASE-BY-PHASE)
 ================================================================================
 
 [Chi tiết RAG ingestion không đổi, đã tóm tắt phía trên]
 
 
 ================================================================================
-11. FAQ MODULE V2 (SEMANTIC FAQ & AUTO-SYNTHESIS)
+12. FAQ MODULE V2 (SEMANTIC FAQ & AUTO-SYNTHESIS)
 ================================================================================
 
 Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho các câu hỏi thường gặp, giúp giảm tải cho LLM và tăng tốc độ phản hồi.
@@ -267,8 +268,8 @@ Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho cá
 11.1. MANUAL FAQ MANAGEMENT (Quản lý thủ công):
 - Hỗ trợ thao tác CRUD (Tạo, Sửa, Xóa) cho FAQ.
 - Semantic Search: Sử dụng Gemini Embeddings để match câu hỏi người dùng với FAQ có sẵn thông qua Qdrant (cosine similarity).
-- Danh sách FAQ giờ đây được sắp xếp mặc định theo `created_at` (giảm dần).
-- Metadata Filter: Hỗ trợ lọc theo `academic_year` và `cohort`. Nếu mảng rỗng (empty array), FAQ áp dụng cho toàn bộ sinh viên.
+- Danh sách FAQ giờ đây được sắp xếp mặc định theo `createdAt` (giảm dần).
+- Metadata Filter: Hỗ trợ lọc theo `academicYear` và `cohort`. Nếu mảng rỗng (empty array), FAQ áp dụng cho toàn bộ sinh viên.
 - [NEW] Bulk Management: 
   - Hỗ trợ Import hàng loạt từ file Excel (.xlsx) với cơ chế map cột linh hoạt (theo tên hoặc ký tự).
   - [FORMATTING]: Hệ thống tự động bảo toàn định dạng Rich Text (In đậm, In nghiêng, Gạch chân) và các Hyperlink từ Excel, chuyển đổi chúng sang định dạng Markdown chuẩn.
@@ -293,11 +294,11 @@ Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho cá
 - **Unified Schema**: Gộp tên hiển thị và đường dẫn thành một trường Rich Text (HTML), cho phép AI và người dùng linh hoạt trong việc trình bày.
 - **Link Processing**: Mọi liên kết trong Rich Text được tự động xử lý bởi Frontend (hàm `fixRichTextLinks`) để mở trong tab mới, đảm bảo tính nhất quán với module FAQ.
 - **Shared Excel Integration**: Sử dụng module `app/integrations/excel` mới để nạp hàng loạt dữ liệu.
-- **Data Integrity**: Tự động xử lý các lỗi số nguyên từ Excel (vd: `2020.0` -> `2020`) và ép kiểu dữ liệu để vượt qua Pydantic validation (vd: `document_type` bắt buộc là string).
+- **Data Integrity**: Tự động xử lý các lỗi số nguyên từ Excel (vd: `2020.0` -> `2020`) và ép kiểu dữ liệu để vượt qua Pydantic validation (vd: `documentType` bắt buộc là string).
 
 11.4. HYBRID SEARCH STRATEGY (Tìm kiếm kết hợp):
 - Hệ thống áp dụng chiến lược Hybrid Search cho FAQ để đảm bảo độ chính xác tối đa:
-  - **Full-Text Search (FTS)**: Sử dụng MongoDB `$text` index trên các trường `question_unaccented` và `answer_unaccented`. Ưu tiên các kết quả khớp từ khóa chính xác (vd: "GPA", "học bổng").
+  - **Full-Text Search (FTS)**: Sử dụng MongoDB `$text` index. Hệ thống sử dụng tìm kiếm mềm dẻo (không bao ngoặc kép), ưu tiên kết quả khớp từ khóa chính xác nhưng vẫn hỗ trợ tìm kiếm linh hoạt (vd: "GPA", "học bổng").
   - **Semantic Match**: Sử dụng Qdrant Vector Search để tìm các câu hỏi có cùng ý nghĩa nhưng dùng từ ngữ khác nhau.
 - Sắp xếp (Ranking): Khi người dùng sử dụng tham số `search`, hệ thống ưu tiên hiển thị kết quả theo `textScore` (trọng số liên quan) từ MongoDB FTS.
 
@@ -309,7 +310,7 @@ Quy trình \"Nạp kiến thức\" cực kỳ chi tiết của hệ thống:
 BƯỚC 1: UPLOAD & QUICK ACK (`FileService.upload_file_quick`)
 - Nhận file qua FastAPI multipart.
 - Validate: Max 20MB, đuôi file (.pdf, .md, .docx, .html). Mime type check.
-- Metadata check: Bắt buộc có academic_year/cohort.
+- Metadata check: Bắt buộc có enrollmentYear, academicYear, và type. Các giá trị mặc định được sử dụng nếu thiếu.
 - R2 Storage: Đẩy file binary lên storage.
 - MongoDB: Tạo record ban đầu status=\"uploading\". Trả về Object thông tin file ngay lập tức.
 
@@ -323,7 +324,7 @@ BƯỚC 2: BACKGROUND PROCESSING (`FileService.process_file_background`)
 - Qdrant Indexer:
   - Chia nhỏ văn bản (Semantic Chunking).
   - Gemini Embedding -> Chuyển văn bản thành dãy số (vector).
-  - Push lên Qdrant kèm Payload: {file_id, text, metadata_filters}.
+  - Push lên Qdrant kèm Payload: {fileId, text, metadata_filters}.
 - Artifact storage: Upload bản `.md` đã bóc tách lên R2 (sát cạnh file gốc) để AI tham chiếu nhanh.
 - Status Update: Chuyển file sang status=\"ready\" (hoặc \"failed\" nếu lỗi).
 
@@ -333,28 +334,21 @@ BƯỚC 3: METADATA SYNC (Atomic Counter & Qdrant Update)
 
 
 ================================================================================
-11. HE THONG METADATA TYPES (DEFINITIONS & RULES)
+13. HE THONG METADATA TYPES (DEFINITIONS & RULES)
 ================================================================================
 
 Hệ thống Metadata giúp AI \"lọc\" tài liệu một cách chuẩn xác:
 
-PHÂN LOẠI METADATA (Types):
-- System Metadata: `is_system=True`. Không thể xóa qua API. Bao gồm:
-  - academic_year: (v2024, v2025...).
-  - cohort: (K62, K63...). 
-- Custom Metadata: (department, document_type, v.v.) dành cho người dùng tự định nghĩa.
-
-DỮ LIỆU CỦA MỘT AllowedValue:
-- value: Khóa dùng để search (vd: \"dao_tao\").
-- displayName: Tên hiển thị (vd: \"Phòng Đào tạo\").
-- totalFiles: Số lượng tài liệu đang mang tag này (Update nguyên tử khi create/delete file).
-- visibleRoles: [list] - Chỉ user có role này mới thấy tag này trên UI. Admin luôn thấy tất cả.
+PHÂN LOẠI METADATA (Hardened Schema):
+- enrollmentYear: Kiểu YearRange (fromYear, toYear). Mặc định 0-9999.
+- academicYear: Kiểu YearRange (fromYear, toYear).
+- type: Kiểu chuỗi (Document Type). Mặc định 'cong_van'.
 
 QUY TẮC VALIDATION (MetadataService):
-- Một file upload lên BẮT BUỘC phải mang ít nhất 1 tag thời gian (Năm học hoặc Khóa).
-- Nếu Metadata Type gán `is_active=False` (Soft Delete), hệ thống vẫn giữ dữ liệu cũ nhưng cấm upload file mới mang tag đó.
-- Cấm xóa Metadata Type nếu `total_files > 0`.
-
+- Hệ thống sử dụng một Schema cứng (Hardened Schema) định nghĩa sẵn các trường metadata.
+- Mọi API Request/Response đều bắt buộc sử dụng camelCase (vd: enrollmentYear thay vì enrollment_year).
+- Metadata object-based: Các trường năm học được bọc trong object YearRange để hỗ trợ tìm kiếm khoảng giao thoa.
+- Defaults: Nếu không cung cấp metadata khi upload, hệ thống tự động gán giá trị mặc định an toàn (0, 9999, cong_van).
 11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY):
 Hệ thống sử dụng cơ chế cập nhật bộ đếm nguyên tử để tránh sai lệch dữ liệu:
 - Tăng bộ đếm: Chỉ thực hiện khi lệnh `find_one_and_update` chuyển trạng thái file thành công từ `PROCESSING` -> `READY`.
@@ -363,7 +357,7 @@ Hệ thống sử dụng cơ chế cập nhật bộ đếm nguyên tử để t
 
 
 ================================================================================
-12. FILTER BUILDER LOGIC (VECTOR QUERY MAPPING)
+14. FILTER BUILDER LOGIC (VECTOR QUERY MAPPING)
 ================================================================================
 
 Chịu trách nhiệm chuyển đổi JSON Metadata Filter sang cú pháp Vector Query của Qdrant.
@@ -372,13 +366,13 @@ CƠ CHẾ LỌC DỮ LIỆU:
 Hệ thống tin tưởng vào xác thực người dùng ở tầng API Gateway. Khi đã vào đến AI Service, mọi người dùng hợp lệ đều có quyền truy vấn kho tài liệu chung.
 FilterBuilder xây dựng query dựa trên `metadataFilter` do người dùng cung cấp (nếu có).
 
-THUẬT TOÁN OR-LOGIC CÙNG KEY:
-- Hệ thống hỗ trợ tìm kiếm linh hoạt: `Condition(key=\"metadata.academic_year\", match={\"any\": [\"2024\", \"2025\", \"all\"]})`.
-- Kết quả: Tìm được tài liệu của 2024, 2025 VÀ những tài liệu chung (all).
+THUẬT TOÁN RANGE-OVERLAP:
+- Hệ thống hỗ trợ tìm kiếm theo khoảng năm: `enrollmentYear: {"fromYear": 2020, "toYear": 2022}`.
+- Logic: Tìm kiếm các tài liệu có khoảng năm giao thoa với khoảng yêu cầu.
 
 
 ================================================================================
-13. RAG SERVICE (STRATEGY & SEARCH FLOW)
+15. RAG SERVICE (STRATEGY & SEARCH FLOW)
 ================================================================================
 
 Tách biệt hoàn toàn việc \"Tìm mảnh\" và \"Tạo context\".
@@ -387,7 +381,7 @@ QUY TRÌNH TRUY VẤN (PAGEINDEX SEMANTIC SEARCH):
 1.  Embedding Query: Chuyển câu hỏi sang Vector.
 2.  Vector Search (Coarse Search): Yêu cầu Qdrant trả về Top 30 mảnh (Chunks) liên quan nhất.
 3.  PageIndex Semantic Reranking:
-    - Gom nhóm các Chunks theo `file_id`.
+    - Gom nhóm các Chunks theo `fileId`.
     - Tính điểm Document Score cho mỗi tệp theo công thức: 
       $DocScore = \sum ChunkScore / \sqrt{N + 1}$.
     - Sắp xếp lại danh sách tệp dựa trên DocScore.
@@ -398,7 +392,7 @@ QUY TRÌNH TRUY VẤN (PAGEINDEX SEMANTIC SEARCH):
 
 
 ================================================================================
-14. PAGEINDEX INTEGRATION — AGENTIC TOOLS
+16. PAGEINDEX INTEGRATION — AGENTIC TOOLS
 ================================================================================
 
 PageIndex cung cấp 3 công cụ \"mắt thần\" cho AI Agent, giúp nó chủ động điều hướng tài liệu lớn:
@@ -416,25 +410,33 @@ PageIndex cung cấp 3 công cụ \"mắt thần\" cho AI Agent, giúp nó chủ
     - Ý nghĩa: Giúp AI lấy được con số chính xác (vd: 50% học phí) từ văn bản mà không cần nạp context khổng lồ.
 
 
-15. CHAT SERVICE & AGENTIC RAG LOGIC
+17. CHAT SERVICE & AGENTIC RAG LOGIC
 ================================================================================
 
 Sử dụng vòng lặp `agent_loop` tích hợp lớp bảo vệ tối ưu:
 
-0.  RAG GATE (GATEKEEPER):
-    - Hệ thống sử dụng một lớp LLM phân tích nhanh ý định người dùng.
-    - Nếu câu hỏi là xã giao (Chào hỏi, cảm ơn) hoặc không cần dữ liệu chuyên môn -> Trả lời trực tiếp và ngắt luồng RAG ngay lập tức.
-    - Lợi ích: Tiết kiệm Token, giảm độ trễ, tránh nhiễu từ các tài liệu không liên quan.
+B0. AUTO-EXTRACT METADATA: 
+    - Nếu người dùng không gửi filter, hệ thống tự bóc tách "Khóa" hoặc "Năm học" từ câu hỏi (ví dụ: "K22" -> enrollmentYear: 2022).
 
-1.  Input: Câu hỏi + Chat History + Metadata Context.
-2.  Loop:
+B1. FAQ PRE-CHECK:
+    - Tìm kiếm nhanh trong FAQ Vector DB. Nếu trúng (Hit) với độ tin cậy cao -> Trả về câu trả lời FAQ ngay lập tức.
+
+B2. RAG GATE (GATEKEEPER):
+    - Hệ thống sử dụng một lớp LLM phân tích nhanh ý định người dùng.
+    - Nếu câu hỏi là xã giao (Chào hỏi, cảm ơn) hoặc không cần dữ liệu chuyên môn -> Trả về trực tiếp.
+    - Lợi ích: Tiết kiệm Token, giảm độ trễ.
+
+B3. Input: Câu hỏi + Chat History + Metadata Context.
+B4. Loop:
     - AI Agent phân tích câu hỏi. Nếu cần đọc tài liệu, nó sẽ gọi Tool.
     - PageIndex thực thi tool -> Trả lại kết quả văn bản.
     - AI Agent phân tích văn bản -> Nếu chưa đủ, lại gọi Tool tiếp; nếu đủ, sinh câu trả lời.
-3.  Final Answer Construction:
+B5. Final Answer Construction:
     - Câu trả lời được định dạng Markdown.
-    - Danh sách `sources` trích dẫn gồm: file_id, title, page_numbers.
-    - Hệ thống dùng `r2_storage.generate_presigned_url` tạo link tải file \"nóng\" (expire sau 3600s) cho sv.
+    - Chèn trích dẫn `(^Tên mục lục)` ngay sau khi dùng xong thông tin từ một mục tài liệu (không chèn ở từng câu).
+    - Danh sách `sources` trích dẫn gồm: fileId, title, page_numbers.
+    - Hệ thống dùng `r2_storage.generate_presigned_url` tạo link tải file "nóng" (expire sau 3600s) cho sv.
+    - Với Inquiry Email: Tự động chuyển đổi `(^...)` thành `(Xem thêm tại [Tên mục lục](url_file_gốc))`.
 
 15.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
 - Content-Type: `text/event-stream`.
@@ -443,7 +445,7 @@ Sử dụng vòng lặp `agent_loop` tích hợp lớp bảo vệ tối ưu:
 
 
 ================================================================================
-16. AUTH SERVICE & SECURITY LAYER (GRPC)
+18. AUTH SERVICE & SECURITY LAYER (GRPC)
 ================================================================================
 
 Dự án tuyệt đối không lưu Password. Mọi bảo mật dựa trên Nest-api gRPC.
@@ -463,7 +465,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
 
 
 ================================================================================
-17. CAU TRUC MONGODB SCHEMA (DETAILED FIELD-BY-FIELD)
+19. CAU TRUC MONGODB SCHEMA (DETAILED FIELD-BY-FIELD)
 ================================================================================
 
 17.1. Collection: `files`
@@ -478,33 +480,33 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - mime_type           : str (vd: application/pdf)
   - table_of_contents   : list (Mảng các tiêu đề văn bản phẳng)
   - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
-  - custom_metadata     : dict (Dạng {"academic_year": ["2025"], "department": ["cntt"]})
+  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024}, "type": "cong_van"})
   - status              : str (uploading, processing, ready, failed)
-  - created_at / updated_at: datetime.
+  - createdAt / updatedAt: datetime.
 
 17.2. Collection: `file_toc_trees`
   - _id                 : ObjectId
-  - file_id             : str (Mapping sang id của `files`, unique index)
+  - fileId             : str (Mapping sang id của `files`, unique index)
   - doc_name            : str (Tiêu đề tài liệu theo PageIndex)
   - doc_description     : str (Tóm tắt 1 câu nội dung)
   - structure           : array (Mảng các node JSON cây phân cấp mục lục)
 
-17.3. Collection: `metadata_types`
-  - key                 : str (Mã duy nhất, vd: academic_year, unique index)
-  - display_name        : str (Tên UI, vd: Năm học)
+17.3. Collection: `metadata_types` (Core Schema)
+  - key                 : str (Mã duy nhất, vd: academicYear, unique index)
+  - displayName         : str (Tên UI, vd: Năm học)
   - description         : str (Mô tả nhãn)
-  - allowed_values      : array [
+  - allowedValues       : array [
       {
         "value": str (Mã giá trị),
-        "display_name": str (Tên hiển thị),
-        "total_files": int (Biến đếm tệp),
+        "displayName": str (Tên hiển thị),
+        "totalFiles": int (Biến đếm tệp),
         "color": str (Mã hex),
-        "is_active": bool
+        "isActive": bool
       }
     ]
-  - total_files         : int (Tổng tệp mang tag cha này)
-  - is_system           : bool (Nếu true, cấm xóa nhãn này)
-  - is_active           : bool (Soft delete toàn bộ nhãn)
+  - totalFiles          : int (Tổng tệp mang tag cha này)
+  - isSystem            : bool (Nếu true, cấm xóa nhãn này)
+  - isActive            : bool (Soft delete toàn bộ nhãn)
 
 17.4. Collection: `faqs`
   - _id                 : ObjectId
@@ -513,9 +515,9 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - answer_rich_text    : str (HTML/Rich text trả lời)
   - answer_markdown     : str (Markdown trả lời)
   - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
-  - metadata_filter     : dict (Bộ lọc academic_year/cohort)
-  - is_active           : bool
-  - view_count          : int
+  - metadata_filter     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
+  - isActive           : bool
+  - viewCount          : int
   - source              : str (manual, synthesized, seed)
   - qdrant_point_id     : str (UUID map sang Qdrant vector)
 
@@ -531,7 +533,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
 
 
 ================================================================================
-18. REPOSITORY LAYER & BASE REPOSITORY CRUD
+20. REPOSITORY LAYER & BASE REPOSITORY CRUD
 ================================================================================
 
 Dự án áp dụng Repository Pattern (app/repositories/base.py) để bao bọc Motor (async pymongo).
@@ -549,7 +551,7 @@ LỚP KẾ THỪA ĐẶC BIỆT:
 
 
 ================================================================================
-19. STORAGE MANAGEMENT (CLOUDFLARE R2 & LOCAL CACHE)
+21. STORAGE MANAGEMENT (CLOUDFLARE R2 & LOCAL CACHE)
 ================================================================================
 
 19.1. R2 STORAGE:
@@ -574,7 +576,7 @@ LOGIC QUAN TRỌNG:
 
 
 ================================================================================
-20. RABBITMQ CONSUMER (CONSUMER RESILIENCE)
+22. RABBITMQ CONSUMER (CONSUMER RESILIENCE)
 ================================================================================
 
 - Thread Model: Chạy trên `threading.Thread` riêng.
@@ -584,7 +586,7 @@ LOGIC QUAN TRỌNG:
 
 
 ================================================================================
-21. HE THONG EXCEPTION HIERARCHY
+23. HE THONG EXCEPTION HIERARCHY
 ================================================================================
 
 Mỗi Exception được map vào một mã lỗi HTTP tương ứng trong Middleware hoặc trả về trực tiếp.
@@ -599,12 +601,12 @@ MÃ LỖI & Ý NGHĨA:
 
 
 ================================================================================
-22. DANH LUC REST API ENDPOINTS ĐẦY ĐỦ
+24. DANH LUC REST API ENDPOINTS ĐẦY ĐỦ
 ================================================================================
 
 PHÂN HỆ FILES:
 - GET /api/files                : List file (Metadata search, Keyword search, Phân trang).
-- POST /api/files               : Upload file (Quick flow, trả về file_id ngay).
+- POST /api/files               : Upload file (Quick flow, trả về fileId ngay).
 - GET /api/files/{id}           : Chi tiết file (Metadata, status).
 - PATCH /api/files/{id}         : Cập nhật tên hiển thị và metadata (Sync Qdrant).
 - GET /api/files/{id}/download   : Download file (Stream dữ liệu trực tiếp từ Server).
@@ -614,13 +616,8 @@ PHÂN HỆ CHAT:
 - POST /api/chat/query          : Chat QA đồng bộ.
 - POST /api/chat/stream         : Chat QA streaming (SSE).
 
-PHÂN HỆ METADATA:
-- GET /api/metadata             : List nhãn metadata (hỗ trợ search keywords, bộ lọc isActive).
-- POST /api/metadata            : Định nghĩa nhãn mới.
-- PATCH /api/metadata/{k}       : Sửa thông tin nhãn.
-- DELETE /api/metadata/{k}      : Xóa nhãn (nếu trống).
-- POST /api/metadata/{k}/values : Thêm giá trị cho nhãn.
-- PATCH /api/metadata/{k}/values/{v} : Sửa thuộc tính giá trị (color, visibility).
+PHÂN HỆ METADATA (Hardened):
+- GET /api/metadata/schema      : Lấy định nghĩa Schema metadata hiện tại của hệ thống.
 
 PHÂN HỆ HEALTH & SYSTEM:
 - GET /health                   : Trạng thái kết nối DB, R2, RabbitMQ, gRPC.
@@ -631,7 +628,7 @@ PHÂN HỆ HEALTH & SYSTEM:
 
 
 ================================================================================
-23. REAL-TIME NOTIFICATIONS (WEBSOCKET)
+25. REAL-TIME NOTIFICATIONS (WEBSOCKET)
 ================================================================================
 
 Hệ thống cung cấp kênh WebSocket `/api/files/progress/{clientId}` để theo dõi các bước xử lý file nặng.
@@ -640,10 +637,10 @@ CO CHE HOAT DONG:
 1. Singleton `FileStatusNotifier` lưu trữ các kết nối đang hoạt động.
 2. Khi `FileService` thực hiện các bước (R2 upload, LlamaParse, PageIndex), nó gọi `progress_callback`.
 3. Callback này gửi JSON payload tới các client đang lắng nghe clientId tương ứng.
-4. Payload Format: `{"step": "string", "message": "string", "file_id": "string"}`
+4. Payload Format: `{"step": "string", "message": "string", "fileId": "string"}`
 
 ================================================================================
-24. CAU HINH HE THONG (SETTINGS TABLE & .env IMPACTS)
+26. CAU HINH HE THONG (SETTINGS TABLE & .env IMPACTS)
 ================================================================================
 
 Các biến môi trường quan trọng:
@@ -666,7 +663,7 @@ Các biến môi trường quan trọng:
 
 
 ================================================================================
-24. SCRIPTS HO TRO BAO TRI (MAINTENANCE)
+27. SCRIPTS HO TRO BAO TRI (MAINTENANCE)
 ================================================================================
 
 1. scripts/init_db.py: 
@@ -688,7 +685,7 @@ Các biến môi trường quan trọng:
 
 
 ================================================================================
-25. AI PROMPTS TAP TRUNG HOA
+28. AI PROMPTS TAP TRUNG HOA
 ================================================================================
 
 Tất cả các prompt tại dự án được viết theo cấu trúc:
@@ -706,7 +703,7 @@ Xác nhận bản thảo Overview Version 4.5.0 (Extreme Detail).
 --------------------------------------------------------------------------------
 
 ================================================================================
-26. HE THONG SNAPSHOT & RESTORE (DATA PERSISTENCE)
+29. HE THONG SNAPSHOT & RESTORE (DATA PERSISTENCE)
 ================================================================================
 
 Hệ thống hỗ trợ cơ chế Snapshot để tránh nạp lại dữ liệu qua AI tốn phí khi cần khởi tạo lại database. Snapshot bao gồm Metadata trong MongoDB và Raw Vectors trong Qdrant.
@@ -725,11 +722,11 @@ LƯU Ý KỸ THUẬT:
 - Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.3.0 (Rich Text & Hyperlink Preservation).
+Xác nhận bản thảo Overview Version 5.4.0 (Granular Citations & Improved Search).
 --------------------------------------------------------------------------------
 
 ================================================================================
-28. PHU LUC: QUY CHUAN XU LY EXCEL & RICH TEXT
+30. PHU LUC: QUY CHUAN XU LY EXCEL & RICH TEXT
 ================================================================================
 
 Để đảm bảo tính nhất quán giữa các module FAQ và Forms, hệ thống sử dụng một bộ tiện ích chung tại `app/integrations/excel/utils.py`.

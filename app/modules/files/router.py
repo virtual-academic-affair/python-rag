@@ -21,16 +21,16 @@ from app.modules.files.schemas import (
     BatchFileUploadResult,
     BulkDeleteResponse,
     UpdateFileRequest,
+    FileUploadRequest,
+    BatchFileUploadRequest
 )
+from app.modules.metadata.schemas import FileMetadataResponse
 from app.modules.files.service import get_file_service
 from app.modules.files.notifier import get_file_status_notifier
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.modules.rag.ingestion.chunking import get_chunking_service
 from app.modules.rag.ingestion.service import get_ingestion_service
-from app.core.converters import (
-    convert_custom_metadata_to_snake,
-    convert_custom_metadata_to_camel,
-)
+
 from app.modules.files.utils import (
     get_download_url,
 )
@@ -41,13 +41,12 @@ from app.core.exceptions import (
     ConflictException,
     ValidationException,
 )
-from app.core.dependencies import require_admin, require_auth
+from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.files.models import FileStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["Files"])
-
 
 async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any], progress_cb=None):
     file_svc = get_file_service()
@@ -69,9 +68,7 @@ async def _background_process(file_id: str, bg_file_path: str, bg_display_name: 
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="File to upload"),
-    display_name: Optional[str] = Form(None, alias="displayName", description="Display name for the file"),
-    custom_metadata: Optional[str] = Form(None, alias="customMetadata", description="JSON string of custom metadata"),
-    client_id: Optional[str] = Form(None, alias="clientId", description="WebSocket client id for upload progress events"),
+    req: FileUploadRequest = Depends(from_form(FileUploadRequest)),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """Upload sync-to-R2 then continue parse/vector steps in background."""
@@ -81,10 +78,9 @@ async def upload_file(
 
     try:
         metadata_dict = {}
-        if custom_metadata:
+        if req.custom_metadata:
             try:
-                metadata_dict = json.loads(custom_metadata)
-                metadata_dict = convert_custom_metadata_to_snake(metadata_dict)
+                metadata_dict = json.loads(req.custom_metadata)
             except json.JSONDecodeError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -98,13 +94,13 @@ async def upload_file(
 
         notifier = get_file_status_notifier()
         async def _progress_callback(payload: Dict[str, Any]):
-            if client_id:
-                await notifier.notify(client_id, payload)
+            if req.client_id:
+                await notifier.notify(req.client_id, payload)
 
         file_doc, bg_payload = await file_svc.upload_file_quick(
             file_path=temp_file_path,
             original_filename=file.filename,
-            display_name=display_name,
+            display_name=req.display_name,
             custom_metadata=metadata_dict,
             progress_callback=_progress_callback,
         )
@@ -125,7 +121,7 @@ async def upload_file(
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
@@ -184,11 +180,10 @@ async def list_files(
         if metadata_filter:
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
-                custom_metadata_filter = convert_custom_metadata_to_snake(custom_metadata_filter)
 
                 from app.modules.metadata.service import get_metadata_service
                 metadata_svc = get_metadata_service()
-                is_valid, errors = await metadata_svc.validate_metadata(custom_metadata_filter)
+                is_valid, errors = metadata_svc.validate_file_metadata(custom_metadata_filter)
                 if not is_valid:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {', '.join(errors)}")
             except json.JSONDecodeError:
@@ -214,7 +209,7 @@ async def list_files(
                     mime_type=f.mime_type,
                     storage_path=f.storage_path,
                     status=f.status.value if hasattr(f.status, "value") else str(f.status),
-                    custom_metadata=convert_custom_metadata_to_camel(f.custom_metadata or {}),
+                    custom_metadata=FileMetadataResponse.from_model(f.custom_metadata) if f.custom_metadata else None,
                     file_url=get_download_url(f.storage_path),
                     markdown_file_url=get_download_url(f.markdown_storage_path),
                     table_of_contents=f.table_of_contents,
@@ -244,8 +239,7 @@ async def batch_upload_files(
     background_tasks: BackgroundTasks,
     request: Request,
     files: List[UploadFile] = File(..., description="Files to upload"),
-    display_names: Optional[str] = Form(None, alias="displayNames", description="JSON array of display names (one per file, use null for auto)"),
-    metadata_list: Optional[str] = Form(None, alias="metadataList", description="JSON array of metadata objects (one per file, use null or {} for no metadata)"),
+    req: BatchFileUploadRequest = Depends(from_form(BatchFileUploadRequest)),
     _admin: Dict[str, Any] = Depends(require_admin),
 ):
     """
@@ -255,21 +249,20 @@ async def batch_upload_files(
 
     try:
         names_list = []
-        if display_names:
+        if req.display_names:
             try:
-                names_list = json.loads(display_names)
+                names_list = json.loads(req.display_names)
                 if not isinstance(names_list, list):
                     raise HTTPException(status_code=400, detail="display_names must be a list")
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid display_names JSON")
 
         meta_list = []
-        if metadata_list:
+        if req.metadata_list:
             try:
-                meta_list = json.loads(metadata_list)
+                meta_list = json.loads(req.metadata_list)
                 if not isinstance(meta_list, list):
                     raise HTTPException(status_code=400, detail="metadata_list must be a list")
-                meta_list = [convert_custom_metadata_to_snake(m) if isinstance(m, dict) else m for m in meta_list]
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
 
@@ -362,7 +355,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
             table_of_contents=file_doc.table_of_contents,
@@ -400,11 +393,13 @@ async def download_file_endpoint(
             user_role=_user.get("role", "student"),
             file_format=requested_format,
         )
+        import urllib.parse
+        encoded_filename = urllib.parse.quote(filename)
         file_data = file_obj.read()
         return StreamingResponse(
             BytesIO(file_data),
             media_type=mime_type,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
         )
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -444,7 +439,7 @@ async def update_file(
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
             status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=convert_custom_metadata_to_camel(file_doc.custom_metadata or {}),
+            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
             markdown_file_url=get_download_url(file_doc.markdown_storage_path),
             table_of_contents=file_doc.table_of_contents,

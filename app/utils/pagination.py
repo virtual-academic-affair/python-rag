@@ -4,10 +4,11 @@ Provides pagination helpers for API responses.
 """
 
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
+from app.core.schemas import BaseSchema
 
 
-class PaginationParams(BaseModel):
+class PaginationParams(BaseSchema):
     """Pagination query parameters."""
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     limit: int = Field(default=20, ge=1, le=100, description="Items per page")
@@ -18,7 +19,7 @@ class PaginationParams(BaseModel):
         return (self.page - 1) * self.limit
 
 
-class PaginatedResponse(BaseModel):
+class PaginatedResponse(BaseSchema):
     """Paginated API response wrapper."""
     items: List[Any] = Field(..., description="List of items")
     total: int = Field(..., description="Total number of items")
