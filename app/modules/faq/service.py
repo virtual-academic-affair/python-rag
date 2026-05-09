@@ -411,13 +411,23 @@ class FaqService:
             )
             
             # Update candidate
-            await self._candidate_repo.update_by_id(candidate_id, {
+            update_fields = {
                 "status": "approved",
                 "reviewed_by": reviewer_id,
                 "reviewed_at": now,
                 "review_note": note,
                 "updated_at": now
-            })
+            }
+            
+            # Save overrides back to candidate so "All" tab shows updated info
+            if question_override:
+                update_fields["question"] = question_override
+            if answer_rich_text_override:
+                update_fields["answer_draft_rich_text"] = answer_rich_text_override
+            if metadata_filter_override:
+                update_fields["metadata_filter_suggestion"] = metadata_filter_override
+
+            await self._candidate_repo.update_by_id(candidate_id, update_fields)
             
         elif action == "reject":
             await self._candidate_repo.update_by_id(candidate_id, {
