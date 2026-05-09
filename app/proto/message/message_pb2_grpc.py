@@ -2,11 +2,10 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from . import common_pb2 as common__pb2
-from . import inquiry_pb2 as inquiry__pb2
+from . import message_pb2 as message__pb2
 
 
-class InquiryServiceStub(object):
+class MessageServiceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -15,42 +14,42 @@ class InquiryServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.Create = channel.unary_unary(
-                '/app_server.InquiryService/Create',
-                request_serializer=inquiry__pb2.CreateInquiryRequest.SerializeToString,
-                response_deserializer=common__pb2.SuccessResponse.FromString,
+        self.GetState = channel.unary_unary(
+                '/app_server.MessageService/GetState',
+                request_serializer=message__pb2.GetMessageStateRequest.SerializeToString,
+                response_deserializer=message__pb2.GetMessageStateResponse.FromString,
                 )
 
 
-class InquiryServiceServicer(object):
+class MessageServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def Create(self, request, context):
+    def GetState(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_InquiryServiceServicer_to_server(servicer, server):
+def add_MessageServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'Create': grpc.unary_unary_rpc_method_handler(
-                    servicer.Create,
-                    request_deserializer=inquiry__pb2.CreateInquiryRequest.FromString,
-                    response_serializer=common__pb2.SuccessResponse.SerializeToString,
+            'GetState': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetState,
+                    request_deserializer=message__pb2.GetMessageStateRequest.FromString,
+                    response_serializer=message__pb2.GetMessageStateResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'app_server.InquiryService', rpc_method_handlers)
+            'app_server.MessageService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class InquiryService(object):
+class MessageService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def Create(request,
+    def GetState(request,
             target,
             options=(),
             channel_credentials=None,
@@ -60,8 +59,8 @@ class InquiryService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/app_server.InquiryService/Create',
-            inquiry__pb2.CreateInquiryRequest.SerializeToString,
-            common__pb2.SuccessResponse.FromString,
+        return grpc.experimental.unary_unary(request, target, '/app_server.MessageService/GetState',
+            message__pb2.GetMessageStateRequest.SerializeToString,
+            message__pb2.GetMessageStateResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
