@@ -96,7 +96,7 @@ class GrpcClient:
         self._load_module(
             service_key="message",
             path_prefix="message.message",
-            request_map={"message_get_state": "GetStateRequest"},
+            request_map={"message_get_state": "GetMessageStateRequest"},
             stub_class_name="MessageServiceStub"
         )
 
@@ -282,18 +282,31 @@ class GrpcClient:
             return None
 
         request = request_cls(messageId=message_id)
+        logger.info(
+            "gRPC message state request: %s",
+            MessageToDict(request, preserving_proto_field_name=True),
+        )
+
         response = await self._call(
             service_key="message",
             rpc_name="GetState",
             request=request,
         )
         if response is None:
+            logger.warning("gRPC message state response is empty for messageId=%s", message_id)
             return None
 
-        return {
+        response_state = {
             "is_current": bool(getattr(response, "isCurrent", False)),
             "has_records": bool(getattr(response, "hasRecords", False)),
         }
+        logger.info(
+            "gRPC message state response(raw): %s",
+            MessageToDict(response, preserving_proto_field_name=True),
+        )
+        logger.info("gRPC message state response(normalized): %s", response_state)
+
+        return response_state
 
 
 # Backward compatibility bindings
