@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 
 from qdrant_client.http import models as qm
 
-from app.modules.metadata.schemas import FaqMetadataSchema
+from app.modules.metadata.schemas import FaqMetadataSchema, UnifiedFilterSchema
 from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class FilterBuilder:
     Logic:
     - enrollment_year: range overlap (doc.from <= user_year <= doc.to)
     - academic_year: range overlap
-    - type: exact match
+    - type: exact match (if single) or $in match (if array)
     """
 
     def __init__(self):
@@ -33,15 +33,14 @@ class FilterBuilder:
     ) -> Optional[qm.Filter]:
         """
         Build metadata query filter for Qdrant.
-        Input is expected to be a dict matching the FaqMetadata schema (or InquiryFilters).
+        Input is expected to be a dict matching the UnifiedFilterSchema.
         """
         if not metadata_filter:
             return None
 
-        # Parse using FaqMetadataSchema (which supports optional fields)
         try:
-            schema = FaqMetadataSchema.model_validate(metadata_filter)
-            model = schema.to_model()
+            # Use UnifiedFilterSchema which has all optional fields and no defaults
+            model = UnifiedFilterSchema.model_validate(metadata_filter)
         except Exception as e:
             logger.warning(f"Invalid metadata filter for Qdrant: {e}")
             return None
@@ -49,10 +48,9 @@ class FilterBuilder:
         must_conditions = []
 
         # 1. Enrollment year overlap
-        # user_from <= doc_to AND user_to >= doc_from
-        f = model.enrollment_year.from_year
-        t = model.enrollment_year.to_year
-        if f != YEAR_MIN or t != YEAR_MAX:
+        if model.enrollment_year:
+            f = model.enrollment_year.from_year
+            t = model.enrollment_year.to_year
             must_conditions.extend([
                 qm.FieldCondition(
                     key="metadata.enrollment_year_to",
@@ -65,9 +63,9 @@ class FilterBuilder:
             ])
 
         # 2. Academic year overlap
-        af = model.academic_year.from_year
-        at = model.academic_year.to_year
-        if af != YEAR_MIN or at != YEAR_MAX:
+        if model.academic_year:
+            af = model.academic_year.from_year
+            at = model.academic_year.to_year
             must_conditions.extend([
                 qm.FieldCondition(
                     key="metadata.academic_year_to",
@@ -79,15 +77,22 @@ class FilterBuilder:
                 )
             ])
 
-        # 3. Type
-        model_type = getattr(model, "type", None)
-        if model_type:
-            must_conditions.append(
-                qm.FieldCondition(
-                    key="metadata.type",
-                    match=qm.MatchValue(value=model_type.value)
+        # 3. Type (Array support)
+        if model.type:
+            if len(model.type) == 1:
+                must_conditions.append(
+                    qm.FieldCondition(
+                        key="metadata.type",
+                        match=qm.MatchValue(value=model.type[0].value)
+                    )
                 )
-            )
+            else:
+                must_conditions.append(
+                    qm.FieldCondition(
+                        key="metadata.type",
+                        match=qm.MatchAny(any=[t.value for t in model.type])
+                    )
+                )
 
         if not must_conditions:
             return None
@@ -109,30 +114,34 @@ class FilterBuilder:
             return {}
 
         try:
-            schema = FaqMetadataSchema.model_validate(metadata_filter)
-            model = schema.to_model()
+            # Use UnifiedFilterSchema which has all optional fields and no defaults
+            model = UnifiedFilterSchema.model_validate(metadata_filter)
         except Exception as e:
             logger.warning(f"Invalid metadata filter for Mongo: {e}")
             return {}
 
         mongo_filter = {}
 
-        # MongoDB stores metadata nested inside a prefix field (e.g. custom_metadata or metadata_filter)
-        f = model.enrollment_year.from_year
-        t = model.enrollment_year.to_year
-        if f != YEAR_MIN or t != YEAR_MAX:
+        # 1. Enrollment year overlap
+        if model.enrollment_year:
+            f = model.enrollment_year.from_year
+            t = model.enrollment_year.to_year
             mongo_filter[f"{mongo_prefix}.enrollment_year.to_year"] = {"$gte": f}
             mongo_filter[f"{mongo_prefix}.enrollment_year.from_year"] = {"$lte": t}
 
-        af = model.academic_year.from_year
-        at = model.academic_year.to_year
-        if af != YEAR_MIN or at != YEAR_MAX:
+        # 2. Academic year overlap
+        if model.academic_year:
+            af = model.academic_year.from_year
+            at = model.academic_year.to_year
             mongo_filter[f"{mongo_prefix}.academic_year.to_year"] = {"$gte": af}
             mongo_filter[f"{mongo_prefix}.academic_year.from_year"] = {"$lte": at}
 
-        model_type = getattr(model, "type", None)
-        if model_type:
-            mongo_filter[f"{mongo_prefix}.type"] = model_type.value
+        # 3. Type (Array support)
+        if model.type:
+            if len(model.type) == 1:
+                mongo_filter[f"{mongo_prefix}.type"] = model.type[0].value
+            else:
+                mongo_filter[f"{mongo_prefix}.type"] = {"$in": [t.value for t in model.type]}
 
         return mongo_filter
 

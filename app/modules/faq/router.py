@@ -25,6 +25,7 @@ from app.modules.faq.schemas import (
 from app.modules.faq.service import get_faq_service, FaqService
 from app.modules.faq.synthesizer import get_faq_synthesis_service
 from app.modules.faq.excel_parser import parse_excel_to_faq_rows
+from app.modules.metadata.service import get_metadata_service
 
 router = APIRouter(prefix="/faqs", tags=["FAQ"])
 
@@ -43,11 +44,14 @@ async def list_faqs(
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """List FAQs with optional filtering."""
-    import json
     meta = None
     if metadata_filter:
         try:
             meta = json.loads(metadata_filter)
+            metadata_svc = get_metadata_service()
+            is_valid, errors = metadata_svc.validate_unified_filter(meta)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"Invalid metadataFilter: {', '.join(errors)}")
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid metadataFilter JSON")
 

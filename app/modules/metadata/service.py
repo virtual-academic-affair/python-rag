@@ -15,7 +15,7 @@ from app.modules.metadata.models import (
     YEAR_MIN,
     YEAR_MAX,
 )
-from app.modules.metadata.schemas import FileMetadataSchema, FaqMetadataSchema
+from app.modules.metadata.schemas import FileMetadataSchema, FaqMetadataSchema, UnifiedFilterSchema
 
 import logging
 
@@ -58,13 +58,6 @@ class MetadataValidator:
             errors = self._flatten_pydantic_errors(exc)
             return False, errors, None
 
-    def validate_file_metadata(
-        self, raw: Dict[str, Any]
-    ) -> Tuple[bool, List[str]]:
-        """Simple pass/fail validation (without returning the model)."""
-        is_valid, errors, _ = self.validate_and_parse_file_metadata(raw)
-        return is_valid, errors
-
     # -----------------------------------------------------------------------
     # FAQ metadata
     # -----------------------------------------------------------------------
@@ -87,6 +80,26 @@ class MetadataValidator:
             logger.debug(f"FaqMetadata validation error: {exc}")
             errors = self._flatten_pydantic_errors(exc)
             return False, errors, None
+    # -----------------------------------------------------------------------
+    # Unified Filter (Search/List)
+    # -----------------------------------------------------------------------
+
+    def validate_unified_filter(
+        self, raw: Dict[str, Any]
+    ) -> Tuple[bool, List[str]]:
+        """Validate raw dict against UnifiedFilterSchema."""
+        errors: List[str] = []
+
+        if not raw:
+            return True, []
+
+        try:
+            UnifiedFilterSchema.model_validate(raw)
+            return True, []
+        except Exception as exc:
+            logger.debug(f"UnifiedFilter validation error: {exc}")
+            errors = self._flatten_pydantic_errors(exc)
+            return False, errors
 
     # -----------------------------------------------------------------------
     # Schema definition (for FE form rendering)

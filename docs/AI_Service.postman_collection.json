@@ -233,7 +233,7 @@
                                 },
                                 {
                                     "key": "customMetadata",
-                                    "value": "{\"enrollmentYear\":{\"fromYear\":2020,\"toYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}",
+                                    "value": "{\"enrollmentYear\":{\"fromYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}",
                                     "type": "text",
                                     "description": "Required: must include enrollmentYear, academicYear, and type"
                                 }
@@ -306,7 +306,7 @@
                                 },
                                 {
                                     "key": "metadataFilter",
-                                    "value": "{\"academicYear\": {\"fromYear\": 2023, \"toYear\": 2025}}",
+                                    "value": "{\"academicYear\": {\"fromYear\": 2023}, \"type\": [\"ctdt\", \"cong_van\"]}",
                                     "disabled": true,
                                     "description": "JSON filter for metadata. Supports range overlap search."
                                 },
@@ -475,7 +475,7 @@
                                 },
                                 {
                                     "key": "metadataList",
-                                    "value": "[{\"enrollmentYear\":{\"fromYear\":2020,\"toYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}, {\"enrollmentYear\":{\"fromYear\":2021}}]",
+                                    "value": "[{\"enrollmentYear\":{\"fromYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}, {\"type\":[\"ctdt\"]}]",
                                     "type": "text",
                                     "description": "JSON array - one object per file."
                                 }
@@ -807,7 +807,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 0,\n      \"toYear\": 9999\n    }\n  }\n}"
+                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024\n    }\n  }\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs",
@@ -1003,7 +1003,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": \"Updated question?\",\n  \"answerRichTextOverride\": \"Updated answer.\",\n  \"metadataFilterOverride\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 0,\n      \"toYear\": 9999\n    }\n  },\n  \"note\": \"Review note\"\n}"
+                            "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": \"Updated question?\",\n  \"answerRichTextOverride\": \"Updated answer.\",\n  \"metadataFilterOverride\": {\n    \"academicYear\": {\n      \"fromYear\": 2024\n    }\n  },\n  \"note\": \"Review note\"\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",

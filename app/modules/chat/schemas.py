@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import Field
 from app.core.schemas import BaseSchema
 from app.modules.rag.retrieval.schemas import SourceCitation
-from app.modules.metadata.schemas import FaqMetadataSchema
+from app.modules.metadata.schemas import UnifiedFilterSchema
 
 class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
@@ -18,7 +18,7 @@ class ChatHistoryItem(BaseSchema):
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
-    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
+    metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
@@ -31,11 +31,11 @@ class ChatQueryResponse(BaseSchema):
 class ChatStreamRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
     chat_history: List[ChatHistoryItem] = Field(default_factory=list)
-    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
+    metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
 
 class ChatRetrievePreviewRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
-    metadata_filter: Optional[FaqMetadataSchema] = Field(None, description="Metadata filter using fixed schema")
+    metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
     top_k: Optional[int] = Field(default=None, ge=1, le=20)
     min_score: Optional[float] = Field(default=None, ge=0)
     include_explain: bool = Field(default=True, description="Whether to include score breakdown details")

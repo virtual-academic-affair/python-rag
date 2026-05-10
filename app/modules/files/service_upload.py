@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Awaitable, Tuple
 
 from app.core.config import settings
-from app.core.exceptions import NotFoundException, ConflictException
+from app.core.exceptions import NotFoundException, ConflictException, ValidationException
 from app.modules.files.models import FileDocument, FileStatus
 from app.integrations.storage.client import r2_storage
 from app.modules.rag.ingestion.service import get_ingestion_service
@@ -20,6 +20,7 @@ from app.modules.files.utils import (
 from app.modules.files.upload_state import UploadStep, UploadState
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.core.text_utils import remove_accents
+from app.modules.metadata.service import get_metadata_service
 
 logger = logging.getLogger(__name__)
 
@@ -207,11 +208,9 @@ class FileUploadMixin:
         mime_type = detect_mime_type(file_path)
 
         # Metadata validation and normalization using stateless validator
-        from app.modules.metadata.service import get_metadata_service
         validator = get_metadata_service()
         is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(custom_metadata or {})
         if not is_valid:
-            from app.core.exceptions import ValidationException
             raise ValidationException(f"Invalid metadata: {', '.join(errors)}")
 
         # Use normalized metadata (with defaults) from here on

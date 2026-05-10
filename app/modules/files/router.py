@@ -26,6 +26,7 @@ from app.modules.files.schemas import (
 )
 from app.modules.metadata.schemas import FileMetadataResponse
 from app.modules.files.service import get_file_service
+from app.modules.metadata.service import get_metadata_service
 from app.modules.files.notifier import get_file_status_notifier
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.modules.rag.ingestion.chunking import get_chunking_service
@@ -181,9 +182,8 @@ async def list_files(
             try:
                 custom_metadata_filter = json.loads(metadata_filter)
 
-                from app.modules.metadata.service import get_metadata_service
                 metadata_svc = get_metadata_service()
-                is_valid, errors = metadata_svc.validate_file_metadata(custom_metadata_filter)
+                is_valid, errors = metadata_svc.validate_unified_filter(custom_metadata_filter)
                 if not is_valid:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {', '.join(errors)}")
             except json.JSONDecodeError:

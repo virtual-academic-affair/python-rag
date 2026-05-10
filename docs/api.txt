@@ -196,7 +196,7 @@ MỤC LỤC
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
 │   - fileStatus: string (ready|processing|failed)                             │
-│   - metadataFilter: JSON string (VD: {"enrollmentYear":{"fromYear":2020}})   │
+│   - metadataFilter: JSON string (VD: {"enrollmentYear":{"fromYear":2020}, "type": ["ctdt"]})│
 │   - keywords: string (Tìm theo tên tệp)                                      │
 │   - page/limit: Phân trang (mặc định 1/50)                                   │
 │                                                                              │
@@ -366,7 +366,7 @@ MỤC LỤC
 │                                                                              │
 │ REQUEST QUERY: ?is_active=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
 │   - is_active: bool (optional)                                               │
-│   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}} │
+│   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}, "type": ["ctdt"]} │
 │   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
