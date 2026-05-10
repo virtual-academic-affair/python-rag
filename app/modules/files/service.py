@@ -193,7 +193,6 @@ class FileService(FileUploadMixin):
 
         if custom_metadata is not None:
             # Validate metadata before updating using the stateless validator
-            from app.modules.metadata.service import get_metadata_service
             validator = get_metadata_service()
             is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(custom_metadata)
             if not is_valid:
@@ -247,6 +246,7 @@ class FileService(FileUploadMixin):
         builder = get_filter_builder()
         mongo_filter = await builder.build_mongo_filter(
             metadata_filter=custom_metadata_filter or {},
+            mongo_prefix="custom_metadata",
             user_role=user_role,
             skip_validation=True
         )

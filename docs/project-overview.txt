@@ -340,9 +340,9 @@ BƯỚC 3: METADATA SYNC (Atomic Counter & Qdrant Update)
 Hệ thống Metadata giúp AI \"lọc\" tài liệu một cách chuẩn xác:
 
 PHÂN LOẠI METADATA (Hardened Schema):
-- enrollmentYear: Kiểu YearRange (fromYear, toYear). Mặc định 0-9999.
-- academicYear: Kiểu YearRange (fromYear, toYear).
-- type: Kiểu chuỗi (Document Type). Mặc định 'cong_van'.
+- enrollmentYear: Kiểu YearRange (fromYear, toYear). Mặc định 0-9999. Hỗ trợ nhập một phía (vd: chỉ nhập fromYear thì toYear=9999).
+- academicYear: Kiểu YearRange (fromYear, toYear). Tương tự enrollmentYear.
+- type: Kiểu mảng (List[DocumentType]). Hỗ trợ lọc nhiều loại tài liệu cùng lúc bằng toán tử $in (Mongo) hoặc MatchAny (Qdrant).
 
 QUY TẮC VALIDATION (MetadataService):
 - Hệ thống sử dụng một Schema cứng (Hardened Schema) định nghĩa sẵn các trường metadata.
@@ -368,6 +368,9 @@ FilterBuilder xây dựng query dựa trên `metadataFilter` do người dùng c
 
 THUẬT TOÁN RANGE-OVERLAP:
 - Hệ thống hỗ trợ tìm kiếm theo khoảng năm: `enrollmentYear: {"fromYear": 2020, "toYear": 2022}`.
+- Hỗ trợ dải năm học không đầy đủ: 
+    - Nếu chỉ có `fromYear`: Tìm kiếm [fromYear, 9999].
+    - Nếu chỉ có `toYear`: Tìm kiếm [0, toYear].
 - Logic: Tìm kiếm các tài liệu có khoảng năm giao thoa với khoảng yêu cầu.
 
 
@@ -480,7 +483,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - mime_type           : str (vd: application/pdf)
   - table_of_contents   : list (Mảng các tiêu đề văn bản phẳng)
   - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
-  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024}, "type": "cong_van"})
+  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}, "type": "cong_van"})
   - status              : str (uploading, processing, ready, failed)
   - createdAt / updatedAt: datetime.
 

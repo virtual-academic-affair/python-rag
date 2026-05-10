@@ -14,6 +14,7 @@ from app.modules.faq.qdrant_faq import get_qdrant_faq_service, QdrantFaqService
 from app.core.text_utils import remove_accents
 from app.core.format_utils import markdown_to_rich_text, rich_text_to_markdown
 from app.modules.metadata.service import get_metadata_service
+from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.core.exceptions import ValidationException
 from bson import ObjectId
 
@@ -266,7 +267,6 @@ class FaqService:
             query["is_active"] = is_active
             
         if metadata_filter:
-            from app.modules.metadata.utils.filter_builder import get_filter_builder
             builder = get_filter_builder()
             mongo_filter = await builder.build_mongo_filter(metadata_filter, mongo_prefix="metadata_filter")
             query.update(mongo_filter)

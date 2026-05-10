@@ -26,7 +26,8 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 4.  **Hardened Metadata Architecture**:
     *   **Rigid Schema**: Chuyển đổi từ tag mảng sang cấu trúc đối tượng `YearRange` (`fromYear`, `toYear`) nghiêm ngặt.
     *   **Unified Schema Endpoint**: Truy cập `/api/metadata/schema` để lấy định nghĩa cấu trúc metadata chuẩn cho toàn hệ thống.
-    *   **Range Search**: Hỗ trợ tìm kiếm tài liệu theo khoảng năm giao thoa (overlap) chính xác.
+    *   **Range Search**: Hỗ trợ tìm kiếm tài liệu theo khoảng năm giao thoa (overlap) chính xác. Tự động áp dụng giá trị biên nếu chỉ cung cấp một phía (`fromYear` hoặc `toYear`).
+    *   **Multi-type Filtering**: Hỗ trợ lọc đồng thời nhiều loại tài liệu (mảng `type`).
 5.  **Forms Management Module**: Quản lý các liên kết biểu mẫu và quy trình học thuật:
     *   **Unified Content**: Gộp tên hiển thị và đường dẫn vào một trường Rich Text duy nhất, hỗ trợ định dạng linh hoạt.
     *   **Link Optimization**: Tự động xử lý mọi liên kết trong Rich Text để mở trong tab mới (`target="_blank"`), đảm bảo trải nghiệm người dùng không bị gián đoạn.

@@ -125,6 +125,21 @@ class FaqMetadataResponse(BaseSchema):
 
 
 # ---------------------------------------------------------------------------
+# Unified Filter Schema — For search / list endpoints
+# ---------------------------------------------------------------------------
+class UnifiedFilterSchema(BaseSchema):
+    """Generic schema for filtering by metadata.
+    All fields are optional.
+    """
+    enrollment_year: Optional[YearRangeSchema] = None
+    academic_year: Optional[YearRangeSchema] = None
+    type: Optional[List[DocumentType]] = Field(
+        None, 
+        description="Filter by document types (array)."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schema definition endpoint response
 # ---------------------------------------------------------------------------
 class MetadataSchemaResponse(BaseSchema):
