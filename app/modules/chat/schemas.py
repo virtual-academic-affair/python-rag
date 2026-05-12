@@ -19,6 +19,9 @@ class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
     metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
+    resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
+    citation_link_type: Optional[str] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
+    to_rich_text: Optional[bool] = Field(default=False, description="Convert final markdown answer to HTML rich text")
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
@@ -32,6 +35,8 @@ class ChatStreamRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
     chat_history: List[ChatHistoryItem] = Field(default_factory=list)
     metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
+    resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
+    citation_link_type: Optional[str] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
 
 class ChatRetrievePreviewRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)

@@ -18,6 +18,7 @@ from app.modules.metadata.models import (
 from app.modules.metadata.schemas import FileMetadataSchema, FaqMetadataSchema, UnifiedFilterSchema
 
 import logging
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +123,8 @@ class MetadataValidator:
 
     @staticmethod
     def _flatten_pydantic_errors(exc: Exception) -> List[str]:
-        try:
-            from pydantic import ValidationError
-            if isinstance(exc, ValidationError):
-                return [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()]
-        except ImportError:
-            pass
+        if isinstance(exc, ValidationError):
+            return [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()]
         return [str(exc)]
 
 

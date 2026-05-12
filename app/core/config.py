@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # API Configuration
     # ====================================
     APP_NAME: str = "AI Service"
-    APP_VERSION: str = "3.0.0"
+    APP_VERSION: str = "5.5.0"
     DEBUG: bool = False
 
     # Server Configuration

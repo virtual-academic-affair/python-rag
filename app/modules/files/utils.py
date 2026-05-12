@@ -3,6 +3,8 @@ File utility functions.
 Validation, type detection, and file handling helpers.
 """
 
+import filetype
+
 import os
 import logging
 from pathlib import Path
@@ -11,15 +13,10 @@ from slugify import slugify
 from datetime import datetime, timezone
 import re
 import uuid
-try:
-    import filetype
-    HAS_FILETYPE = True
-except ImportError:
-    HAS_FILETYPE = False
 
 from app.core.config import settings
 from app.core.exceptions import FileSizeException, FileTypeException
-from app.core.text_utils import remove_accents
+from app.utils.text_utils import remove_accents
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +57,12 @@ def detect_mime_type(file_path: str) -> str:
     }
     if ext in mime_types:
         return mime_types[ext]
-    if HAS_FILETYPE:
-        try:
-            kind = filetype.guess(file_path)
-            if kind is not None:
-                return kind.mime
-        except Exception:
-            pass
+    try:
+        kind = filetype.guess(file_path)
+        if kind is not None:
+            return kind.mime
+    except Exception:
+        pass
     return mime_types.get(ext, 'application/octet-stream')
 
 def generate_file_id() -> str:

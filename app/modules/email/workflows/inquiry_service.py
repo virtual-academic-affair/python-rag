@@ -9,6 +9,7 @@ from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.metadata.extraction import extract_metadata_from_text
 from app.modules.email.utils import extract_structured_data
 from app.modules.faq.service import get_faq_service
+from app.utils.format_utils import markdown_to_rich_text
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class InquiryService:
         content: str,
         message_id: Optional[int] = None,
         user_role: str = "student",
+        to_rich_text: bool = True,
     ) -> Dict[str, Any]:
         """
         Inquiry Workflow:
@@ -147,8 +149,13 @@ class InquiryService:
                 email_message_id=message_id,
             ))
 
+        # Convert to rich text if needed
+        final_answer = rag_result["answer"]
+        if to_rich_text:
+            final_answer = markdown_to_rich_text(final_answer)
+
         return {
-            "answer": rag_result["answer"],
+            "answer": final_answer,
             "sources": rag_result["sources"],
             "source": rag_result.get("source"),
             "question": extracted_question,

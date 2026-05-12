@@ -575,7 +575,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    }\n  }\n}"
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    }\n  },\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/query",
@@ -611,7 +611,7 @@
                         ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": []\n}"
+                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\"\n}"
                         },
                         "url": {
                             "raw": "{{base_url}}/api/chat/stream",

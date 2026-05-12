@@ -4,7 +4,7 @@ Utility for extracting metadata filters from text using regex patterns.
 import re
 import logging
 from typing import Optional, Dict, Any
-from app.core.text_utils import remove_accents
+from app.utils.text_utils import remove_accents
 from app.modules.metadata.schemas import YearRangeSchema
 
 logger = logging.getLogger(__name__)

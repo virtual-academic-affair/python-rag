@@ -1,6 +1,6 @@
 ================================================================================
 AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 5.4.0 | May 2026
+Version 5.5.0 | May 2026
 ================================================================================
 
 MUC LUC (DETAILED INDEX)
@@ -124,8 +124,8 @@ app/
 │   └── forms/                : [NEW] Quản lý biểu mẫu học thuật & Links.
 ├── pipelines/ (Multi-step Async Processes)
 │   └── ingestion/            : [NEW] Toàn bộ quy trình nạp liệu (LlamaParse -> Chunking -> Vector Push).
+├── utils/                    : Các tiện ích dùng chung (JSON, Text, Format utils).
 ├── repositories/             : Implement lớp truy cập dữ liệu (BaseRepository pattern).
-├── utils/                    : Các tiện ích dùng chung (DB Utils, Pagination).
 ├── proto/                    : Protobuf source và generated code.
 
 scripts/
@@ -227,13 +227,13 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 
 8.2. INQUIRY SERVICE:
 - B1: Gọi Gemini trích xuất `intent` (vấn đề thực sự) và các bộ lọc Metadata (Khóa, Năm học).
-- B2: [NEW] FAQ Pre-check: Tìm kiếm ngữ nghĩa trong FAQ Module v2. Nếu có câu trả lời sẵn -> Trả về ngay lập tức để tiết kiệm tài nguyên.
+- B2: [NEW] FAQ Pre-check: Tìm kiếm ngữ nghĩa trong FAQ Module v2. Hệ thống giờ đây lấy context của 5 FAQ gần nhất để đảm bảo tính nhất quán về văn phong và nội dung. Nếu có câu trả lời sẵn -> Trả về ngay lập tức để tiết kiệm tài nguyên.
 - B3: Nếu FAQ không khớp, hệ thống gọi RAG service lấy context từ tài liệu trường dựa trên Vector Search.
-- B4: Gemini soạn câu trả lời (Email Draft Body). Đặc biệt: Các trích dẫn `(^...)` được tự động chuyển thành Link Markdown dẫn đến file gốc (original_url) của tài liệu.
+- B4: Gemini soạn câu trả lời (Email Draft Body). Đặc biệt: Các trích dẫn `(^...)` được tự động chuyển thành Link Markdown dẫn đến file gốc (original_url) của tài liệu. Ngoài ra, hỗ trợ tham số `to_rich_text` để tự động convert sang HTML cho Client.
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
 8.3. TASK SERVICE:
-- Logic: AI trích xuất `name`, `description`, `due` (deadline) và `assignee_keywords` (ví dụ: \"cô Lan\").
+- Logic: AI trích xuất `name`, `description`, `due` (deadline) và `assignee_keywords` (ví dụ: "cô Lan").
 - Resolver: Chạy song song (`asyncio.gather`) các cuộc gọi gRPC `FindOneByKeyword` tới `AuthServiceStub` để lấy User ID thực tế.
 - gRPC Call: Gọi `rpc Create` của `TaskServiceStub` để tạo task và gán người thực hiện.
 
@@ -293,8 +293,8 @@ Module FAQ cung cấp một lớp "Pre-check" và bộ nhớ tập trung cho cá
 - Module này quản lý danh sách các liên kết biểu mẫu và quy trình học thuật, giúp sinh viên/giảng viên truy cập nhanh các mẫu đơn cần thiết.
 - **Unified Schema**: Gộp tên hiển thị và đường dẫn thành một trường Rich Text (HTML), cho phép AI và người dùng linh hoạt trong việc trình bày.
 - **Link Processing**: Mọi liên kết trong Rich Text được tự động xử lý bởi Frontend (hàm `fixRichTextLinks`) để mở trong tab mới, đảm bảo tính nhất quán với module FAQ.
-- **Shared Excel Integration**: Sử dụng module `app/integrations/excel` mới để nạp hàng loạt dữ liệu.
-- **Data Integrity**: Tự động xử lý các lỗi số nguyên từ Excel (vd: `2020.0` -> `2020`) và ép kiểu dữ liệu để vượt qua Pydantic validation (vd: `documentType` bắt buộc là string).
+- **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel/CSV với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
+- **Shared Excel Integration**: Sử dụng module `app/integrations/excel/utils.py` để dùng chung logic tìm kiếm cột cho cả Excel và CSV.
 
 11.4. HYBRID SEARCH STRATEGY (Tìm kiếm kết hợp):
 - Hệ thống áp dụng chiến lược Hybrid Search cho FAQ để đảm bảo độ chính xác tối đa:
@@ -316,7 +316,7 @@ BƯỚC 1: UPLOAD & QUICK ACK (`FileService.upload_file_quick`)
 
 BƯỚC 2: BACKGROUND PROCESSING (`FileService.process_file_background`)
 - Download file từ R2 vào thư mục temp máy chủ.
-- LlamaParse: Bóc tách file (vd: PDF) sang Markdown chất lượng cao, giữ được bảng điểm/thời khóa biểu.
+- LlamaParse: Bóc tách file (vd: PDF, TXT, DOCX) sang Markdown chất lượng cao, giữ được bảng biểu/thời khóa biểu.
 - PageIndex (`_ingest_to_vector_db`):
   - Phân tích MD để tạo cấu trúc mục lục.
   - Sinh ra 1 câu `doc_description` (Mô tả tài liệu).
@@ -445,6 +445,7 @@ B5. Final Answer Construction:
 - Content-Type: `text/event-stream`.
 - Format: `data: {"type": "text/thought/call", "content": "...", "done": false}`.
 - Final: `data: {"done": true, "sources": [...], "processingTimeMs": 1234}`.
+- [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
 
 
 ================================================================================
@@ -725,7 +726,7 @@ LƯU Ý KỸ THUẬT:
 - Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.4.0 (Granular Citations & Improved Search).
+Xác nhận bản thảo Overview Version 5.5.0 (Chat Customization & CSV support).
 --------------------------------------------------------------------------------
 
 ================================================================================

@@ -11,13 +11,14 @@ from datetime import datetime, timezone, timedelta
 
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
-from app.core.format_utils import markdown_to_rich_text
+from app.utils.format_utils import markdown_to_rich_text
 from app.modules.faq.repository import InteractionLogRepository, FaqCandidateRepository
 from app.integrations.llm.gemini import build_extraction_llm, chain_prompt
-from app.core.text_utils import remove_accents
-from app.core.json_utils import parse_json_safely
+from app.utils.text_utils import remove_accents
+from app.utils.json_utils import parse_json_safely
 from app.modules.metadata.service import get_metadata_service
 from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
+from app.modules.faq.service import get_faq_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ Trả về kết quả dưới dạng JSON với CHÍNH XÁC các khóa (keys) s
 # Prompt for Gemini to synthesize FAQ
 SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_TEXT),
-    ("human", "Dữ liệu nhóm (Cluster Data):\n{cluster_data}")
+    ("human", "Các FAQ gần đây nhất trong hệ thống (tham khảo để đảm bảo tính nhất quán về văn phong và nội dung):\n{recent_faqs}\n\nDữ liệu nhóm (Cluster Data):\n{cluster_data}")
 ])
 
 
@@ -127,7 +128,7 @@ class FaqSynthesisService:
             
         return groups
 
-    async def _synthesize_cluster(self, cluster: List[Dict[str, Any]], batch_id: str) -> Optional[Dict[str, Any]]:
+    async def _synthesize_cluster(self, cluster: List[Dict[str, Any]], batch_id: str, recent_faqs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Call LLM to synthesize a candidate from a cluster."""
         source_type = cluster[0].get("source_type", "mixed")
         
@@ -144,9 +145,19 @@ class FaqSynthesisService:
                 cluster_text += f"Meta: {meta}\n"
             cluster_text += "\n"
 
+        recent_faqs_text = ""
+        if recent_faqs:
+            for idx, faq in enumerate(recent_faqs):
+                recent_faqs_text += f"FAQ {idx+1}:\nQ: {faq.get('question')}\nA: {faq.get('answer_markdown')}\n\n"
+        else:
+            recent_faqs_text = "Chưa có FAQ nào trong hệ thống.\n\n"
+
         try:
             chain = chain_prompt(SYNTHESIS_PROMPT, self._llm)
-            response = await chain.ainvoke({"cluster_data": cluster_text})
+            response = await chain.ainvoke({
+                "recent_faqs": recent_faqs_text,
+                "cluster_data": cluster_text
+            })
             result = parse_json_safely(response.content or "")
             
             if not result or "question" not in result or "answer_draft" not in result:
@@ -203,6 +214,11 @@ class FaqSynthesisService:
         if total_logs == 0:
             return {"batch_id": batch_id, "candidates_created": 0, "total_logs_processed": 0, "clusters_found": 0, "failed_clusters": 0}
 
+        # Fetch top 5 recent FAQs for context
+        faq_svc = await get_faq_service()
+        recent_faqs_res = await faq_svc.list_faqs(is_active=True, limit=5)
+        recent_faqs = recent_faqs_res.get("items", [])
+
         # 2. Group by Metadata & Source
         groups = self._group_by_metadata(logs)
         logger.info(f"Grouped into {len(groups)} distinct metadata/source buckets.")
@@ -216,7 +232,6 @@ class FaqSynthesisService:
             if len(group_logs) < settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE:
                 continue
                 
-            import asyncio
             clusters = await asyncio.to_thread(
                 self._greedy_clustering, group_logs, settings.FAQ_SYNTHESIS_CLUSTERING_THRESHOLD
             )
@@ -225,7 +240,7 @@ class FaqSynthesisService:
             # 4. Filter and Synthesize
             for cluster in clusters:
                 if len(cluster) >= settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE:
-                    candidate_doc = await self._synthesize_cluster(cluster, batch_id)
+                    candidate_doc = await self._synthesize_cluster(cluster, batch_id, recent_faqs)
                     if candidate_doc:
                         await self._candidate_repo.create(candidate_doc)
                         candidates_created += 1

@@ -12,7 +12,7 @@ from app.integrations.llm.gemini import (
     env_thinking_level,
 )
 from app.modules.email.schemas import ClassRegistrationPayload
-from app.core.json_utils import parse_json_safely
+from app.utils.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ Output constraints (must follow):
             ]
         )
 
-        # Removed local JSON extraction helper. Using app.core.json_utils instead.
+        # Removed local JSON extraction helper. Using app.utils.json_utils instead.
 
     async def process(self, title: str, content: str, message_id: int | None) -> ClassRegistrationPayload:
         try:

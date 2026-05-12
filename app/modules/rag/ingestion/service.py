@@ -11,8 +11,6 @@ Flow:
 from __future__ import annotations
 import asyncio
 import hashlib
-import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -42,7 +40,7 @@ class IngestionService:
             self._toc_repo = FileTocTreeRepository()
         return self._toc_repo
 
-    async def ingest_pdf_chunks(
+    async def ingest_file(
         self,
         *,
         file_id: str,
@@ -52,15 +50,16 @@ class IngestionService:
         chunk_size_chars: int = 1800,
         chunk_overlap_chars: int = 250,
     ) -> dict[str, Any]:
-        """Ingest a PDF file by parsing, chunking, embedding, and storing."""
+        """Ingest a file (PDF, TXT, MD) by parsing/reading, chunking, embedding, and storing."""
         start_total = time.perf_counter()
         
-        # 1. Parse PDF to Markdown
+        # 1. Parse content to Markdown via LlamaParse
         start_parse = time.perf_counter()
         pages = await self._parser.parse_pdf_to_markdown(file_path)
         markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
+            
         parse_dur = time.perf_counter() - start_parse
-        logger.info(f"[Ingestion] Phase 1: Parse PDF to Markdown completed in {parse_dur:.2f}s")
+        logger.info(f"[Ingestion] Phase 1: Content extraction completed in {parse_dur:.2f}s")
 
         # 2 & 3. Run TOC Generation and Qdrant Indexing in parallel
         logger.info(f"[Ingestion] Phase 2 & 3: Running TOC Generation and Qdrant Indexing in parallel...")

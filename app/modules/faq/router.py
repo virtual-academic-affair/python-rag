@@ -24,8 +24,10 @@ from app.modules.faq.schemas import (
 )
 from app.modules.faq.service import get_faq_service, FaqService
 from app.modules.faq.synthesizer import get_faq_synthesis_service
-from app.modules.faq.excel_parser import parse_excel_to_faq_rows
+from app.modules.faq.excel_parser import parse_excel_to_faq_rows, parse_csv_to_faq_rows
 from app.modules.metadata.service import get_metadata_service
+from app.core.exceptions import handle_google_api_error
+from google.genai.errors import APIError
 
 router = APIRouter(prefix="/faqs", tags=["FAQ"])
 
@@ -179,6 +181,9 @@ async def trigger_synthesis(
         )
         return FaqSynthesisResponse(**result)
     except Exception as e:
+        if isinstance(e, APIError):
+            raise handle_google_api_error(e, prefix="Synthesis failed: ")
+            
         raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
 
 
@@ -237,18 +242,26 @@ async def preview_faq_import(
     """
     Upload Excel and preview extracted FAQ rows.
     """
-    import json
     metadata_map = json.loads(req.metadata_filter_json)
     content = await file.read()
     try:
-        result = parse_excel_to_faq_rows(
-            file_bytes=content,
-            question_col=req.question_col,
-            answer_col=req.answer_col,
-            metadata_map=metadata_map,
-            sheet_name=req.sheet_name,
-            skip_rows=req.skip_rows
-        )
+        if file.filename and file.filename.lower().endswith('.csv'):
+            result = parse_csv_to_faq_rows(
+                file_bytes=content,
+                question_col=req.question_col,
+                answer_col=req.answer_col,
+                metadata_map=metadata_map,
+                skip_rows=req.skip_rows
+            )
+        else:
+            result = parse_excel_to_faq_rows(
+                file_bytes=content,
+                question_col=req.question_col,
+                answer_col=req.answer_col,
+                metadata_map=metadata_map,
+                sheet_name=req.sheet_name,
+                skip_rows=req.skip_rows
+            )
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -264,19 +277,27 @@ async def import_faqs_from_excel(
     """
     Upload Excel and create FAQs in bulk.
     """
-    import json
     metadata_map = json.loads(req.metadata_filter_json)
     content = await file.read()
     try:
         # 1. Parse
-        parsed = parse_excel_to_faq_rows(
-            file_bytes=content,
-            question_col=req.question_col,
-            answer_col=req.answer_col,
-            metadata_map=metadata_map,
-            sheet_name=req.sheet_name,
-            skip_rows=req.skip_rows
-        )
+        if file.filename and file.filename.lower().endswith('.csv'):
+            parsed = parse_csv_to_faq_rows(
+                file_bytes=content,
+                question_col=req.question_col,
+                answer_col=req.answer_col,
+                metadata_map=metadata_map,
+                skip_rows=req.skip_rows
+            )
+        else:
+            parsed = parse_excel_to_faq_rows(
+                file_bytes=content,
+                question_col=req.question_col,
+                answer_col=req.answer_col,
+                metadata_map=metadata_map,
+                sheet_name=req.sheet_name,
+                skip_rows=req.skip_rows
+            )
         
         # 2. Filter valid rows
         valid_items = [

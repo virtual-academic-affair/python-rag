@@ -1,15 +1,19 @@
 """
 Repositories for the FAQ Module.
 """
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from pymongo import ASCENDING, DESCENDING
+from bson import ObjectId
 
 from app.repositories.base import BaseRepository
 from app.core.database import Database
 from app.core.config import settings
 from app.modules.faq.models import FaqDocument, FaqCandidateDocument, InteractionLogDocument
-from app.core.text_utils import remove_accents
+from app.utils.text_utils import remove_accents
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -29,7 +33,6 @@ class FaqRepository(BaseRepository):
         return await self.find_one({"qdrant_point_id": point_id})
 
     async def increment_view_count(self, faq_id: str) -> bool:
-        from bson import ObjectId
         result = await self.collection.update_one(
             {"_id": ObjectId(faq_id) if isinstance(faq_id, str) else faq_id},
             {"$inc": {"view_count": 1}}
@@ -90,7 +93,6 @@ class InteractionLogRepository(BaseRepository):
         if not question or len(question.strip()) < settings.FAQ_LOG_MIN_QUESTION_LENGTH:
             return doc
 
-        from bson import ObjectId
         cutoff_id = ObjectId.from_datetime(now - timedelta(hours=24))
 
         # Deduplicate based on exact unaccented question in the last 24h
@@ -114,7 +116,6 @@ class InteractionLogRepository(BaseRepository):
         })
 
     async def find_for_synthesis(self, date_from: datetime, date_to: datetime, source_types: List[str]) -> List[Dict[str, Any]]:
-        from bson import ObjectId
         # MongoDB ObjectIds encode the creation timestamp. We can query by _id range.
         # Alternatively, we could add created_at, but we decided to use _id for simplicity.
         # Since _id contains timestamp, we can generate dummy ObjectIds for bounds.
@@ -133,8 +134,6 @@ class InteractionLogRepository(BaseRepository):
         )
         
         if len(results) == 10000:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning("Synthesis log query hit the maximum limit of 10000. Some interactions might be skipped.")
             
         return results

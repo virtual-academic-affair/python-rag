@@ -12,7 +12,7 @@ from app.modules.forms.schemas import (
     FormBulkCreateResponse
 )
 from app.modules.forms.service import get_form_service, FormService
-from app.modules.forms.excel_parser import parse_excel_to_form_rows
+from app.modules.forms.excel_parser import parse_excel_to_form_rows, parse_csv_to_form_rows
 
 router = APIRouter(prefix="/forms", tags=["Forms"])
 
@@ -97,14 +97,24 @@ async def import_preview(
     form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
-    result = parse_excel_to_form_rows(
-        file_bytes=content,
-        document_type_col=document_type_col,
-        content_link_col=content_link_col,
-        notes_col=notes_col,
-        start_row=int(start_row),
-        preview_limit=10
-    )
+    if file.filename and file.filename.lower().endswith('.csv'):
+        result = parse_csv_to_form_rows(
+            file_bytes=content,
+            document_type_col=document_type_col,
+            content_link_col=content_link_col,
+            notes_col=notes_col,
+            start_row=int(start_row),
+            preview_limit=10
+        )
+    else:
+        result = parse_excel_to_form_rows(
+            file_bytes=content,
+            document_type_col=document_type_col,
+            content_link_col=content_link_col,
+            notes_col=notes_col,
+            start_row=int(start_row),
+            preview_limit=10
+        )
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     return FormImportPreviewResponse(
@@ -123,13 +133,22 @@ async def import_forms(
     form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
-    result = parse_excel_to_form_rows(
-        file_bytes=content,
-        document_type_col=document_type_col,
-        content_link_col=content_link_col,
-        notes_col=notes_col,
-        start_row=int(start_row)
-    )
+    if file.filename and file.filename.lower().endswith('.csv'):
+        result = parse_csv_to_form_rows(
+            file_bytes=content,
+            document_type_col=document_type_col,
+            content_link_col=content_link_col,
+            notes_col=notes_col,
+            start_row=int(start_row)
+        )
+    else:
+        result = parse_excel_to_form_rows(
+            file_bytes=content,
+            document_type_col=document_type_col,
+            content_link_col=content_link_col,
+            notes_col=notes_col,
+            start_row=int(start_row)
+        )
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     
