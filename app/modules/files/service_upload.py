@@ -19,7 +19,7 @@ from app.modules.files.utils import (
 )
 from app.modules.files.upload_state import UploadStep, UploadState
 from app.modules.files.toc_tree.repository import FileTocTreeRepository
-from app.core.text_utils import remove_accents
+from app.utils.text_utils import remove_accents
 from app.modules.metadata.service import get_metadata_service
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,7 @@ class FileUploadMixin:
     ) -> Dict[str, Any]:
         """Helper to trigger the ingestion service for RAG."""
         ingest_svc = get_ingestion_service()
-        result = await ingest_svc.ingest_pdf_chunks(
+        result = await ingest_svc.ingest_file(
             file_id=file_id,
             file_name=display_name,
             file_path=file_path,

@@ -2,6 +2,7 @@ import io
 import openpyxl
 import logging
 from typing import List, Dict, Any, Optional, Union
+from openpyxl.utils import column_index_from_string
 from openpyxl.cell.rich_text import CellRichText
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,6 @@ def get_column_index(sheet, col_identifier: str, header_row: int = 1) -> Optiona
         
     # 2. Check if it's a letter (e.g., 'A', 'AB')
     if col_identifier.isalpha():
-        from openpyxl.utils import column_index_from_string
         try:
             return column_index_from_string(col_identifier)
         except ValueError:
@@ -112,3 +112,24 @@ def get_cell_value(cell, format_numbers: bool = True) -> Any:
     if isinstance(val, str):
         return val.strip()
     return val
+
+def get_csv_column_index(header_row: List[str], col_identifier: str) -> Optional[int]:
+    """Helper to get 0-based index for CSV columns."""
+    if not col_identifier:
+        return None
+    col_str = str(col_identifier).strip()
+    
+    if col_str.isdigit():
+        return int(col_str) - 1
+        
+    if col_str.isalpha():
+        try:
+            return column_index_from_string(col_str) - 1
+        except ValueError:
+            pass
+            
+    for i, header in enumerate(header_row):
+        if header.strip().lower() == col_str.lower():
+            return i
+            
+    return None

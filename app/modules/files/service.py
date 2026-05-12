@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Callable, Awaitable, Literal
 
 from app.integrations.llamaparse.client import get_llamaparse_client
-from app.core.text_utils import remove_accents
+from app.utils.text_utils import remove_accents
 
 
 # Ensure essential Office mime types are registered globally for Google GenAI SDK

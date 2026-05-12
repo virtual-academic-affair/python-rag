@@ -1,6 +1,6 @@
 # AI Service - Unified Modular RAG & Email Classification
 
-**Version 5.4.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
+**Version 5.5.0** — Microservice hợp nhất giữa **phân loại email tự động** và **tìm kiếm tài liệu thông minh (Modular RAG)** phục vụ hệ thống quản lý học thuật đại học.
 
 ---
 
@@ -16,12 +16,13 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
     *   **Real-time Progress**: Theo dõi tiến trình nạp liệu thời gian thực qua WebSockets (`/api/files/progress/{clientId}`).
     *   **Semantic Scoring**: Sử dụng thuật toán **DocScore (PageIndex Formula)** để xếp hạng tài liệu dựa trên phân nhóm chunks và cấu trúc mục lục.
     *   **Agentic Search & Granular Citations**: AI Agent tự động điều hướng tài liệu và chèn trích dẫn `(^Tên mục lục)` ngay sau khi hoàn thành một ý câu hỏi. Với Inquiry Email, trích dẫn được tự động giải nén thành link file gốc.
+    *   **Chat Customization**: Hỗ trợ linh hoạt cấu hình trích dẫn (`resolveCitations`, `citationLinkType`) và chuyển đổi response sang Rich Text HTML trực tiếp từ API.
     *   **Tiêu chuẩn Ingestion Flow**: Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Qdrant (Chunks/Embeddings).
 3.  **Semantic FAQ Module (v2)**: Hệ thống quản lý câu hỏi thường gặp thông minh:
     *   **Hybrid Search**: Kết hợp **Semantic Match** (Gemini Embeddings) và **Native MongoDB Full-Text Search (FTS)**. Hệ thống hỗ trợ tìm kiếm mềm dẻo, đảm bảo tìm kiếm chính xác cả từ khóa thô và ý nghĩa ngữ nghĩa.
     *   **Auto-Synthesis**: Tự động gom cụm các tương tác người dùng (Clustering) và sử dụng LLM để tổng hợp FAQ mới từ dữ liệu thực tế.
-    *   **Bulk Import & Management**: Hỗ trợ nạp hàng loạt FAQ từ Excel (.xlsx) hoặc JSON với hiệu suất cao (parallel embeddings).
-    *   **[NEW] Formatting Preservation**: Tự động giữ nguyên định dạng Rich Text (Bold, Italic, Underline) và Hyperlinks từ file Excel, chuyển đổi sang Markdown để hiển thị đồng nhất.
+    *   **Bulk Import & Management**: Hỗ trợ nạp hàng loạt FAQ từ Excel (.xlsx) hoặc CSV (.csv) với hiệu suất cao (parallel embeddings).
+    *   **Formatting Preservation**: Tự động giữ nguyên định dạng Rich Text (Bold, Italic, Underline) và Hyperlinks từ file Excel, chuyển đổi sang Markdown để hiển thị đồng nhất.
     *   **Interaction Logging**: Theo dõi lịch sử chat/email để phục vụ cải tiến hệ thống và tổng hợp kiến thức.
 4.  **Hardened Metadata Architecture**:
     *   **Rigid Schema**: Chuyển đổi từ tag mảng sang cấu trúc đối tượng `YearRange` (`fromYear`, `toYear`) nghiêm ngặt.
@@ -31,7 +32,7 @@ Dự án này là trái tim xử lý AI của hệ thống, thực hiện hai nh
 5.  **Forms Management Module**: Quản lý các liên kết biểu mẫu và quy trình học thuật:
     *   **Unified Content**: Gộp tên hiển thị và đường dẫn vào một trường Rich Text duy nhất, hỗ trợ định dạng linh hoạt.
     *   **Link Optimization**: Tự động xử lý mọi liên kết trong Rich Text để mở trong tab mới (`target="_blank"`), đảm bảo trải nghiệm người dùng không bị gián đoạn.
-    *   **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
+    *   **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel hoặc CSV với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
 
 ---
 

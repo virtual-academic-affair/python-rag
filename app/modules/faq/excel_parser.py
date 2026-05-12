@@ -7,9 +7,10 @@ import openpyxl
 import logging
 from typing import List, Dict, Any, Optional, Tuple, Union
 import re
+import csv
 from openpyxl.cell.rich_text import CellRichText
-from app.core.format_utils import rich_text_to_markdown
-from app.integrations.excel import get_column_index, cell_to_rich_text, get_cell_value
+from app.utils.format_utils import rich_text_to_markdown, markdown_to_rich_text
+from app.integrations.excel import get_column_index, cell_to_rich_text, get_cell_value, get_csv_column_index
 from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
 from app.modules.metadata.utils.parsers import parse_year_range
 
@@ -124,3 +125,102 @@ def parse_excel_to_faq_rows(
     except Exception as e:
         logger.error(f"Error parsing Excel: {e}")
         raise ValueError(f"Failed to parse Excel file: {str(e)}")
+
+def parse_csv_to_faq_rows(
+    file_bytes: bytes,
+    question_col: str,
+    answer_col: str,
+    metadata_map: Optional[Dict[str, str]] = None,
+    skip_rows: int = 1,
+) -> Dict[str, Any]:
+    """
+    Parse CSV bytes and return a list of rows with question, answer, and metadata.
+    Treats CSV values as markdown.
+    """
+    try:
+        text = file_bytes.decode('utf-8-sig') # Handle BOM if present
+        reader = csv.reader(io.StringIO(text))
+        all_rows = list(reader)
+        
+        if len(all_rows) < skip_rows:
+            raise ValueError("CSV file has fewer rows than skip_rows")
+            
+        header_row = all_rows[skip_rows - 1] if skip_rows > 0 else []
+        
+        q_idx = get_csv_column_index(header_row, question_col)
+        a_idx = get_csv_column_index(header_row, answer_col)
+        
+        meta_indices = {}
+        if metadata_map:
+            for key, col in metadata_map.items():
+                idx = get_csv_column_index(header_row, col)
+                if idx is not None:
+                    meta_indices[key] = idx
+                    
+        if q_idx is None:
+            raise ValueError(f"Could not find question column: '{question_col}'")
+        if a_idx is None:
+            raise ValueError(f"Could not find answer column: '{answer_col}'")
+            
+        rows = []
+        valid_count = 0
+        invalid_count = 0
+        
+        for i, row in enumerate(all_rows[skip_rows:], start=skip_rows + 1):
+            q_val = row[q_idx].strip() if q_idx < len(row) else ""
+            a_val = row[a_idx].strip() if a_idx < len(row) else ""
+            
+            metadata = {
+                "enrollment_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX},
+                "academic_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX}
+            }
+            
+            for key, idx in meta_indices.items():
+                clean_val = row[idx].strip() if idx < len(row) else None
+                if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
+                    if not clean_val:
+                        continue
+                    rng = parse_year_range(clean_val)
+                    out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
+                    metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
+            
+            error = None
+            is_valid = True
+            
+            clean_q = re.sub(r'<[^>]+>', '', q_val).strip()
+            
+            if not q_val or not clean_q:
+                error = "Question is missing"
+                is_valid = False
+            elif not a_val or not re.sub(r'<[^>]+>', '', a_val).strip():
+                error = "Answer is missing"
+                is_valid = False
+            elif len(clean_q) < 5:
+                error = "Question too short (min 5 chars)"
+                is_valid = False
+                
+            row_data = {
+                "row_index": i,
+                "question": q_val,
+                "answer_rich_text": markdown_to_rich_text(a_val),
+                "answer_markdown": a_val,
+                "metadata": metadata,
+                "is_valid": is_valid,
+                "error": error
+            }
+            
+            rows.append(row_data)
+            if is_valid:
+                valid_count += 1
+            else:
+                invalid_count += 1
+                
+        return {
+            "rows": rows,
+            "total_rows": len(rows),
+            "valid_rows": valid_count,
+            "invalid_rows": invalid_count
+        }
+    except Exception as e:
+        logger.error(f"Error parsing CSV: {e}")
+        raise ValueError(f"Failed to parse CSV file: {str(e)}")

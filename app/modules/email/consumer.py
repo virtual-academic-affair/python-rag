@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import threading
 from typing import Any, Dict, Optional
 
@@ -141,10 +142,9 @@ def start_email_ingest_consumer(
                     attempt, max_retries, str(e), exc_info=True,
                 )
                 if attempt < max_retries:
-                    import time as _time
                     sleep_sec = min(retry_delay * attempt, 60)
                     logger.info("Reconnecting in %ds...", sleep_sec)
-                    _time.sleep(sleep_sec)
+                    time.sleep(sleep_sec)
                 else:
                     logger.error("Email ingest consumer exhausted all retries, giving up.")
 

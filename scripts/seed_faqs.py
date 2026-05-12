@@ -15,8 +15,8 @@ from app.core.config import settings
 from app.core.database import Database
 from app.modules.faq.service import get_faq_service
 from app.modules.metadata.service import get_metadata_service
-from app.core.text_utils import remove_accents
-from app.core.format_utils import rich_text_to_markdown
+from app.utils.text_utils import remove_accents
+from app.utils.format_utils import rich_text_to_markdown
 from datetime import datetime, timezone
 from bson import ObjectId
 

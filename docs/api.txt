@@ -55,7 +55,7 @@ MỤC LỤC
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "5.4.0",                                                      │
+│     "version": "5.5.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
 │     "qdrantConnected": true,                                                 │
@@ -293,15 +293,22 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
 │     "chatHistory": [],                                                       │
-│     "metadataFilter": {"academicYear": {"fromYear": 2025, "toYear": 2025}}   │
+│     "metadataFilter": {"academicYear": {"fromYear": 2025, "toYear": 2025}},  │
+│     "resolveCitations": false,                                               │
+│     "citationLinkType": "markdown",                                          │
+│     "toRichText": false                                                      │
 │   }                                                                          │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
 │     "answer": "Theo quyết định số...",                                       │
+│     "source": "rag",                                                         │
 │     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
 │     "processingTimeMs": 2500                                                 │
 │   }                                                                          │
+│                                                                              │
+│ GHI CHÚ: Nếu `toRichText=true`, trường `answer` sẽ chứa định dạng HTML.      │
+│          Nếu `toRichText=false`, trường `answer` sẽ chứa định dạng Markdown.  │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   0. Auto-Extraction: Tự động bóc tách Khóa/Năm học từ câu hỏi nếu thiếu.    │
@@ -320,7 +327,13 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/chat/stream            [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Hỏi đáp RAG thời gian thực qua Web Stream (SSE).                      │
+│ REQUEST BODY (JSON):                                                         │
+│   {                                                                          │
+│     "question": "...",                                                       │
+│     "chatHistory": [],                                                       │
+│     "resolveCitations": false,                                               │
+│     "citationLinkType": "markdown"                                           │
+│   }                                                                          │
 │                                                                              │
 │ RESPONSE (Event Stream):                                                     │
 │   - Thought: data: {"type": "thought", "content": "thinking...", "done": false}  │
@@ -472,7 +485,8 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Truy vấn Interaction Logs trong khoảng thời gian yêu cầu.               │
 │   2. Gom cụm (Clustering) các câu hỏi tương đồng dựa trên vector.            │
-│   3. Với mỗi cụm, gọi LLM tổng hợp câu trả lời chung và tạo FAQ Candidate.   │
+│   3. Với mỗi cụm, gọi LLM tổng hợp câu trả lời chung. Hệ thống truyền thêm   │
+│      Top 5 FAQ hiện có gần nhất làm tham chiếu để đảm bảo tính nhất quán.    │
 │   4. Lưu các ứng viên vào collection `faq_candidates` để chờ Admin duyệt.    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -520,11 +534,11 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/import/preview    [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Tải lên tệp Excel và xem trước các câu hỏi FAQ sẽ được trích xuất.    │
-│        Hệ thống tự động bảo toàn định dạng và chuyển sang Markdown.         │
+│ MÔ TẢ: Tải lên tệp Excel hoặc CSV và xem trước các FAQ sẽ được trích xuất.   │
+│        Hệ thống tự động bảo toàn định dạng và chuyển sang Markdown/HTML.     │
 │        Hỗ trợ: In đậm, In nghiêng, Gạch chân và Hyperlink.                   │
 │ REQUEST (Multipart):                                                         │
-│   - file: <binary .xlsx>                                                     │
+│   - file: <binary .xlsx or .csv>                                             │
 │   - question_col: string (Tên hoặc chữ cái cột câu hỏi, vd: "Câu hỏi", "B")  │
 │   - answer_col: string (Tên hoặc chữ cái cột trả lời, vd: "Trả lời", "C")    │
 │   - metadataFilterJson: JSON string (VD: {"academicYear": "D", "type": "E"}) │
@@ -554,7 +568,7 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/import            [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Import hàng loạt FAQ từ tệp Excel vào hệ thống.                       │
+│ MÔ TẢ: Import hàng loạt FAQ từ tệp Excel hoặc CSV vào hệ thống.              │
 │        Bảo toàn định dạng Rich Text (Bold, Italic, Underline, Links).        │
 │        Hỗ trợ song song embedding và bỏ qua các câu hỏi bị trùng lặp.        │
 │ REQUEST (Multipart): Tương tự endpoint preview.                              │
@@ -643,10 +657,10 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/forms/import-preview   [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xem trước dữ liệu biểu mẫu trích xuất từ file Excel.                  │
+│ MÔ TẢ: Xem trước dữ liệu biểu mẫu trích xuất từ file Excel hoặc CSV.         │
 │                                                                              │
 │ REQUEST (Multipart):                                                         │
-│   - file: <binary .xlsx>                                                     │
+│   - file: <binary .xlsx or .csv>                                             │
 │   - document_type_col: string (Cột loại văn bản, vd: "A")                    │
 │   - content_link_col: string (Cột link nội dung, vd: "B")                    │
 │   - notes_col: string (Cột ghi chú, vd: "C" - Optional)                      │
@@ -719,7 +733,8 @@ MỤC LỤC
 - 403 Forbidden: Sai Role người dùng (ForbiddenException).
 - 404 Not Found: Dữ liệu không tồn tại trong DB.
 - 409 Conflict: Dữ liệu đã tồn tại hoặc đang bị ràng buộc (Metadata in use).
-- 500 Internal Error: Lỗi hạ tầng (Qdrant, MongoDB, R2, Gemini API).
+- 500 Internal Error: Lỗi hạ tầng (Qdrant, MongoDB, R2).
+- 429 Too Many Requests: Lỗi Rate Limit từ Gemini API (Tự động retry ở client).
 
 --------------------------------------------------------------------------------
 LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
@@ -730,5 +745,5 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-Hoàn tất bản Đặc tả API chi tiết v5.4.0 (Full Compliance).
+Hoàn tất bản Đặc tả API chi tiết v5.5.0 (Full Compliance).
 --------------------------------------------------------------------------------

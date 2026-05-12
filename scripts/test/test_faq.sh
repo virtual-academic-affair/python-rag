@@ -362,6 +362,59 @@ else
     echo "❌ Failed Excel bulk import (Created: $IMPORT_CREATED, Failed: $IMPORT_FAILED)"
 fi
 
+# 4.11 Test CSV Import Preview
+echo -e "\n4.11 Test CSV Import Preview"
+cat << EOF > scripts/test/sample_bulk_faq_unique.csv
+STT,Câu hỏi,Trả lời,Năm học,Khóa
+1,"Câu hỏi CSV 1? ($TS)","Đây là câu trả lời CSV 1.","2024-2025",""
+2,"Câu hỏi CSV 2? ($TS)","Đây là câu trả lời CSV 2.","","2019"
+3,"Q","Short","",""
+EOF
+
+response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import/preview" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -F "file=@scripts/test/sample_bulk_faq_unique.csv" \
+    -F "question_col=Câu hỏi" \
+    -F "answer_col=Trả lời" \
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
+
+HTTP_CODE=$(echo "$response" | tail -n1)
+BODY=$(echo "$response" | sed '$d')
+
+echo "Status: $HTTP_CODE"
+echo "Response:"
+echo "$BODY" | jq .
+TOTAL_ROWS=$(echo "$BODY" | jq -r '.totalRows')
+if [ "$TOTAL_ROWS" -eq 3 ]; then
+    echo "✅ CSV import preview successful (Found 3 rows)"
+else
+    echo "❌ Failed CSV import preview (Expected 3 rows, found $TOTAL_ROWS)"
+fi
+
+# 4.12 Test CSV Import (Actual)
+echo -e "\n4.12 Test CSV Import (Actual)"
+response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -F "file=@scripts/test/sample_bulk_faq_unique.csv" \
+    -F "question_col=Câu hỏi" \
+    -F "answer_col=Trả lời" \
+    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}")
+
+HTTP_CODE=$(echo "$response" | tail -n1)
+BODY=$(echo "$response" | sed '$d')
+
+echo "Status: $HTTP_CODE"
+echo "Response:"
+echo "$BODY" | jq .
+IMPORT_CREATED=$(echo "$BODY" | jq -r '.created')
+IMPORT_FAILED=$(echo "$BODY" | jq -r '.failed')
+# Row 3 (short question) should fail, Row 1, 2 should succeed
+if [ "$IMPORT_CREATED" -eq 2 ] && [ "$IMPORT_FAILED" -eq 1 ]; then
+    echo "✅ CSV bulk import successful (2 created, 1 failed as expected)"
+else
+    echo "❌ Failed CSV bulk import (Created: $IMPORT_CREATED, Failed: $IMPORT_FAILED)"
+fi
+
 
 # 5. Clean up
 echo -e "\n5. Clean up - Delete FAQ"

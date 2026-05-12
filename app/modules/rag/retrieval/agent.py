@@ -162,7 +162,7 @@ class CitationStreamFormatter:
         self,
         sources_data: list[dict],
         resolve_citations: bool = False,
-        citation_link_type: str = "original",
+        citation_link_type: str = "markdown",
     ):
         self.sources_data = sources_data
         self.resolve_citations = resolve_citations
@@ -298,7 +298,6 @@ def get_agent_config(candidate_files: list[dict]) -> tuple[list[Callable], dict[
     """
     Build tools, map, and GenerateContentConfig for the RAG agent.
     """
-    from google.genai import types
     candidate_ids = [c["file_id"] for c in candidate_files]
     tools = build_pindex_tools(candidate_ids)
     tool_map = {tool.__name__: tool for tool in tools}

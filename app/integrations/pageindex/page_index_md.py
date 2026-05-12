@@ -1,11 +1,9 @@
+from app.integrations.pageindex.utils import *
+
 import asyncio
 import json
 import re
 import os
-try:
-    from .utils import *
-except:
-    from utils import *
 
 async def get_node_summary(node, summary_token_threshold=200, model=None):
     node_text = node.get('text')
@@ -301,8 +299,6 @@ async def md_to_tree(md_path, if_thinning=False, min_token_threshold=None, if_ad
 
 
 if __name__ == "__main__":
-    import os
-    import json
     
     # MD_NAME = 'Detect-Order-Construct'
     MD_NAME = 'cognitive-load'

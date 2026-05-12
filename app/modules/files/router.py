@@ -11,6 +11,7 @@ import tempfile
 import os
 import logging
 import json
+import urllib.parse
 from io import BytesIO
 
 from app.modules.files.schemas import (
@@ -393,7 +394,6 @@ async def download_file_endpoint(
             user_role=_user.get("role", "student"),
             file_format=requested_format,
         )
-        import urllib.parse
         encoded_filename = urllib.parse.quote(filename)
         file_data = file_obj.read()
         return StreamingResponse(

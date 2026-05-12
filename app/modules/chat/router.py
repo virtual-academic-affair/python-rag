@@ -6,6 +6,7 @@ Includes: query, stream, and retrieval preview (Qdrant).
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse
 import json
+from google.genai.errors import APIError
 
 
 from app.modules.chat.schemas import (
@@ -21,6 +22,8 @@ from app.core.dependencies import require_auth
 from app.modules.chat.service import get_chat_service
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.core.config import settings
+from app.core.exceptions import handle_google_api_error
+
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
@@ -69,6 +72,9 @@ async def chat_query(
             user_context=user_context,
             chat_history=request.chat_history,
             metadata_filter=request.metadata_filter,
+            resolve_citations=request.resolve_citations,
+            citation_link_type=request.citation_link_type,
+            to_rich_text=request.to_rich_text,
         )
 
         return ChatQueryResponse(**result)
@@ -78,16 +84,12 @@ async def chat_query(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except APIError as e:
+        raise handle_google_api_error(e)
     except Exception as e:
-        error_msg = str(e)
-        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
-            detail_msg = "Failed to generate chat response: Google internal server error"
-        else:
-            detail_msg = f"Failed to generate chat response: {error_msg}"
-            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=detail_msg,
+            detail=f"Failed to generate chat response: {str(e)}",
         )
 
 
@@ -137,6 +139,8 @@ async def chat_stream(
                     user_context=user_context,
                     chat_history=request.chat_history,
                     metadata_filter=request.metadata_filter,
+                    resolve_citations=request.resolve_citations,
+                    citation_link_type=request.citation_link_type,
                 ):
                     # SSE format: data: {json}\n\n
                     yield f"data: {chunk_json}\n\n"
@@ -146,12 +150,36 @@ async def chat_stream(
                     "done": True
                 })
                 yield f"data: {error_data}\n\n"
+            except APIError as e:
+                ai_code = getattr(e, "code", 500)
+                if not isinstance(ai_code, int) or ai_code < 400:
+                    ai_code = 500
+                if ai_code == 429:
+                    error_data = json.dumps({
+                        "error": "rate_limit_exceeded",
+                        "message": "Quá tải hệ thống AI. Vui lòng thử lại sau.",
+                        "status_code": 429,
+                        "done": True
+                    })
+                elif ai_code == 500 and ("500 INTERNAL" in str(e) or "Internal error encountered" in str(e)):
+                    error_data = json.dumps({
+                        "error": "ai_service_error",
+                        "message": "Google internal server error",
+                        "status_code": 500,
+                        "done": True
+                    })
+                else:
+                    error_data = json.dumps({
+                        "error": "ai_service_error",
+                        "message": str(e),
+                        "status_code": ai_code,
+                        "done": True
+                    })
+                yield f"data: {error_data}\n\n"
             except Exception as e:
-                error_msg = str(e)
-                if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
-                    error_msg = "Failed to stream chat response: Google internal server error"
                 error_data = json.dumps({
-                    "error": error_msg,
+                    "error": "internal_error",
+                    "message": f"Failed to stream chat response: {str(e)}",
                     "done": True
                 })
                 yield f"data: {error_data}\n\n"
@@ -171,16 +199,12 @@ async def chat_stream(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except APIError as e:
+        raise handle_google_api_error(e)
     except Exception as e:
-        error_msg = str(e)
-        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
-            detail_msg = "Failed to stream chat response: Google internal server error"
-        else:
-            detail_msg = f"Failed to stream chat response: {error_msg}"
-            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=detail_msg,
+            detail=f"Failed to stream chat response: {str(e)}",
         )
 
 
@@ -247,14 +271,10 @@ async def chat_retrieve_preview(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except APIError as e:
+        raise handle_google_api_error(e, prefix="Failed to preview Qdrant retrieval: ")
     except Exception as e:
-        error_msg = str(e)
-        if "500 INTERNAL" in error_msg or "Internal error encountered" in error_msg:
-            detail_msg = "Failed to preview Qdrant retrieval: Google internal server error"
-        else:
-            detail_msg = f"Failed to preview Qdrant retrieval: {error_msg}"
-            
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=detail_msg,
+            detail=f"Failed to preview Qdrant retrieval: {str(e)}",
         )

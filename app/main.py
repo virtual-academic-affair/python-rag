@@ -23,6 +23,8 @@ from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
 from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.faq.synthesizer import get_faq_synthesis_service
+import uvicorn
+from google.genai.errors import APIError
 
 # Load environment variables
 load_dotenv()
@@ -190,6 +192,7 @@ async def lifespan(_: FastAPI):
     # 4. Initialize gRPC and Orchestrator
     # GrpcClient is now used as a singleton wrapper via get_grpc_client
     email_orchestrator = EmailWorkflowOrchestrator()
+    _.state.email_orchestrator = email_orchestrator
     logger.info("Email Workflow Orchestrator initialized")
 
     if rabbitmq_service is not None:
@@ -348,6 +351,34 @@ async def value_error_handler(request: Request, exc: ValueError):
     )
 
 
+
+@app.exception_handler(APIError)
+async def genai_api_error_handler(request: Request, exc: APIError):
+    """Handle Google GenAI errors globally.
+    Masks only 500 INTERNAL errors, propagates all other codes and messages.
+    """
+    logger.error(f"GenAI API Error: {exc}")
+    
+    raw_msg = str(exc)
+    status_code = getattr(exc, "code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    if not isinstance(status_code, int) or status_code < 400:
+        status_code = 500
+        
+    safe_msg = raw_msg
+    if status_code == 500 and ("500 INTERNAL" in raw_msg or "Internal error encountered" in raw_msg):
+        safe_msg = "Google internal server error"
+        
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            error="rate_limit_exceeded" if status_code == 429 else "ai_service_error",
+            message=safe_msg,
+            details={"path": str(request.url)} if settings.DEBUG else None,
+        ).model_dump(),
+    )
+
+
 # ====================================
 # HEALTH CHECK ENDPOINT
 # ====================================
@@ -407,8 +438,6 @@ logger.info("✅ API routers included")
 # ====================================
 
 if __name__ == "__main__":
-    import uvicorn
-    
     uvicorn.run(
         "app.main:app",
         host=settings.HOST,

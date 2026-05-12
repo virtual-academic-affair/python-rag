@@ -1,5 +1,6 @@
 """Chat Service - Handles Agentic RAG chat operations."""
 import json
+import re
 import logging
 import time
 from typing import Optional, AsyncGenerator, Any
@@ -22,6 +23,7 @@ from app.modules.rag.retrieval.agent import (
 from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.service import get_faq_service
 from app.modules.metadata.extraction import extract_metadata_from_text
+from app.utils.format_utils import markdown_to_rich_text
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,9 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
         metadata_filter: Optional[dict[str, Any]] = None,
+        resolve_citations: bool = False,
+        citation_link_type: str = "markdown",
+        to_rich_text: bool = False,
     ) -> dict:
         """
         Generate Agentic Chat Response (non-streaming).
@@ -174,8 +179,13 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         if faq:
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat] FAQ hit: '{faq['question']}' ({processing_time_ms}ms)")
+            answer_markdown = faq["answer_markdown"]
+            final_answer = answer_markdown
+            if to_rich_text:
+                final_answer = markdown_to_rich_text(answer_markdown)
+            
             return {
-                "answer": faq["answer_markdown"],
+                "answer": final_answer,
                 "source": "faq",
                 "sources": [],
                 "steps": [],
@@ -194,8 +204,13 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
+            answer_markdown = direct_answer
+            final_answer = answer_markdown
+            if to_rich_text:
+                final_answer = markdown_to_rich_text(answer_markdown)
+
             return {
-                "answer": direct_answer,
+                "answer": final_answer,
                 "sources": [],
                 "steps": [],
                 "token_usage": gate_usage,
@@ -205,8 +220,11 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         candidate_files = state["candidate_files"]
 
         if not candidate_files:
+            answer_text = "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn."
+            if to_rich_text:
+                answer_text = markdown_to_rich_text(answer_text)
             return {
-                "answer": "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn.",
+                "answer": answer_text,
                 "sources": [],
                 "steps": [],
                 "processing_time_ms": int((time.time() - start_time) * 1000),
@@ -215,6 +233,8 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         result = await run_agent_loop(
             candidate_files=candidate_files,
             prompt_contents=state["history"],
+            resolve_citations=resolve_citations,
+            citation_link_type=citation_link_type,
         )
 
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -231,8 +251,13 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             processing_time_ms=processing_time_ms,
         ))
 
+        answer_markdown = result["final_answer"]
+        final_answer = answer_markdown
+        if to_rich_text:
+            final_answer = markdown_to_rich_text(answer_markdown)
+
         return {
-            "answer": result["final_answer"],
+            "answer": final_answer,
             "source": "llm",
             "sources": result["sources"],
             "steps": result["steps"],
@@ -246,6 +271,8 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
         metadata_filter: Optional[dict[str, Any]] = None,
+        resolve_citations: bool = False,
+        citation_link_type: str = "markdown",
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat response via SSE.
@@ -389,7 +416,11 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                             if in_answer_block:
                                 if stream_formatter is None:
                                     current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                                    stream_formatter = CitationStreamFormatter(current_sources)
+                                    stream_formatter = CitationStreamFormatter(
+                                        current_sources, 
+                                        resolve_citations=resolve_citations,
+                                        citation_link_type=citation_link_type
+                                    )
 
                                 match = re.search(r'<answer>(.*)', turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
                                 if match:
@@ -429,7 +460,11 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                         new_text = final_text[yielded_text_length:]
                         if stream_formatter is None:
                             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                            stream_formatter = CitationStreamFormatter(current_sources)
+                            stream_formatter = CitationStreamFormatter(
+                                current_sources,
+                                resolve_citations=resolve_citations,
+                                citation_link_type=citation_link_type
+                            )
                         
                         formatted = stream_formatter.process_chunk(new_text)
                         formatted_flush = stream_formatter.flush()

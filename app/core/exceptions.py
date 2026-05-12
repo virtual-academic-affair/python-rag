@@ -4,6 +4,8 @@ Unified exception hierarchy for classification and RAG features.
 """
 
 from typing import Optional, Any
+from fastapi import HTTPException
+from google.genai.errors import APIError
 
 
 class AppException(Exception):
@@ -137,3 +139,21 @@ class GrpcServerException(ExternalServiceException):
 
 # Legacy aliases for backward compatibility
 DatabaseException = AppException
+
+
+def handle_google_api_error(e: APIError, prefix: str = "") -> HTTPException:
+    """Convert a Google GenAI APIError to FastAPI HTTPException.
+
+    Rules:
+    - 500 INTERNAL (Google-side crash): mask the raw message → 500 "Google internal server error"
+    - All other codes (429, 503, 400...): pass the real HTTP code and message through as-is.
+    """
+    raw_msg = str(e)
+    code = getattr(e, "code", 500)
+    if not isinstance(code, int) or code < 400:
+        code = 500
+
+    if code == 500 and ("500 INTERNAL" in raw_msg or "Internal error encountered" in raw_msg):
+        return HTTPException(status_code=500, detail=f"{prefix}Google internal server error")
+
+    return HTTPException(status_code=code, detail=f"{prefix}{raw_msg}")

@@ -9,8 +9,8 @@ from typing import Any, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from app.integrations.llm.gemini import GeminiPromptChain, chain_prompt, GeminiGenAIChat
 from app.modules.email.schemas import InquiryFilters
-from app.core.text_utils import remove_accents
-from app.core.json_utils import parse_json_safely
+from app.utils.text_utils import remove_accents
+from app.utils.json_utils import parse_json_safely
 from app.modules.metadata.extraction import extract_metadata_from_text
 
 logger = logging.getLogger(__name__)

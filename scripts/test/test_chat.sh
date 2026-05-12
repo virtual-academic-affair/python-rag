@@ -36,6 +36,17 @@ check_response "$RESPONSE" "200" "Chat Query — RAG Search"
 # Verify has sources
 echo "$RESPONSE" | sed '$d' | grep -q '"citationId"' && log_success "  -> Citation check: Found sources (Correct)" || log_warning "  -> Citation check failed: No sources found"
 
+# 3.5. Chat query - RAG Search with Customizations (Rich Text & HTML Citations)
+log_info "POST /api/chat/query — RAG Search (Rich Text & HTML Citations)"
+QUERY_BODY='{"question": "Quy chế là gì?", "chatHistory": [], "toRichText": true, "resolveCitations": true, "citationLinkType": "html"}'
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" \
+    -d "$QUERY_BODY" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Chat Query — RAG Search (Customizations)"
+# Verify answer contains HTML tags (Rich Text)
+echo "$RESPONSE" | sed '$d' | grep -q '<p>' && log_success "  -> Rich Text check: answer contains HTML (Correct)" || log_warning "  -> Rich Text check failed: answer does not contain HTML"
+
 # 4. Chat streaming (SSE)
 log_info "POST /api/chat/stream — Streaming (max 60s)"
 QUERY_BODY='{"question": "GPA bao nhiêu thì được tốt nghiệp?", "chatHistory": []}'

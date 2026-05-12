@@ -6,7 +6,6 @@ import logging
 from typing import Any, List, Optional
 import hashlib
 import asyncio
-from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
 from app.core.config import settings
@@ -14,6 +13,7 @@ from app.core.config import settings
 from google import genai
 from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from google.genai import types
+from app.modules.metadata.models import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +46,9 @@ class QdrantIndexer:
         """
         await self.ensure_collection()
         
-        # Batch collect texts to embed
+        # Batch collect texts to embed — filter out empty-text chunks
         texts = [c.get("text", "") for c in chunks_data]
-        if not texts:
+        if not texts or all(not t.strip() for t in texts):
             return 0
             
         response = await self._genai_client.aio.models.embed_content(
@@ -61,12 +61,15 @@ class QdrantIndexer:
         points = []
         for i, chunk in enumerate(chunks_data):
             meta = chunk.get("metadata")
-            from app.modules.metadata.models import FileMetadata
-            if isinstance(meta, dict):
-                flat_meta = FileMetadata(**meta).to_qdrant_payload()
-            elif hasattr(meta, "to_qdrant_payload"):
-                flat_meta = meta.to_qdrant_payload()
-            else:
+            try:
+                if isinstance(meta, dict):
+                    flat_meta = FileMetadata(**meta).to_qdrant_payload()
+                elif hasattr(meta, "to_qdrant_payload"):
+                    flat_meta = meta.to_qdrant_payload()
+                else:
+                    flat_meta = {}
+            except Exception as meta_err:
+                logger.warning(f"[Indexer] Failed to parse chunk metadata, using empty: {meta_err}")
                 flat_meta = {}
 
             payload = {
@@ -119,20 +122,19 @@ class QdrantIndexer:
         """
         await self.ensure_collection()
         
-        from app.modules.metadata.models import FileMetadata
+        # We need to use `set_payload` or `overwrite_payload`
+        # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
         try:
             flat_meta = FileMetadata(**new_metadata).to_qdrant_payload()
         except Exception as e:
-            logger.warning(f"Failed to parse metadata for Qdrant update: {e}")
-            flat_meta = new_metadata # Fallback
+            logger.warning(f"Failed to parse metadata for Qdrant update: {e}. Skipping metadata update.")
+            return  # Skip update if metadata cannot be safely serialized
 
-        # We need to use `set_payload` or `overwrite_payload`
-        # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
         await asyncio.to_thread(
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
             payload={"metadata": flat_meta},
-            points_selector=qm.FilterSelector(
+            points=qm.FilterSelector(
                 filter=qm.Filter(
                     must=[
                         qm.FieldCondition(

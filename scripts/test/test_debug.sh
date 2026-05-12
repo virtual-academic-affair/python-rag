@@ -37,3 +37,15 @@ if check_response "$RESPONSE" "200" "Chunk Preview"; then
     CHUNK_COUNT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('chunkCount',0))" 2>/dev/null || echo "0")
     log_info "  -> Generated $CHUNK_COUNT chunks"
 fi
+
+# 3. Retrieval Preview
+log_info "POST /api/chat/retrieve-preview — Vector Retrieval test"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/retrieve-preview" \
+    -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
+    -d '{
+        "question": "Quy định về tốt nghiệp",
+        "topK": 5,
+        "minScore": 0.3
+    }' 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Retrieval Preview"
