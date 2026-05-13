@@ -61,3 +61,4 @@ class FormBulkImportRequest(BaseSchema):
 class FormBulkCreateResponse(BaseSchema):
     message: str
     count: int
+    created: Optional[int] = None

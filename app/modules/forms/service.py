@@ -56,13 +56,14 @@ class FormService:
     async def upsert_many(self, items: List[Dict[str, Any]]) -> int:
         count = 0
         for item in items:
+            # Find existing record by document_type only (Nội dung)
             existing = await self._repo.find_one({
-                "documentType": item["document_type"],
-                "contentLink": item["content_link"]
+                "documentType": item["document_type"]
             })
             if existing:
                 await self.update_form(
                     str(existing["_id"]),
+                    content_link=item.get("content_link"),
                     notes=item.get("notes")
                 )
                 count += 1

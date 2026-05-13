@@ -155,5 +155,6 @@ async def import_forms(
     count = await form_svc.upsert_many([item.dict() for item in result["rows"]])
     return FormBulkCreateResponse(
         message=f"Imported/updated {count} form templates successfully.",
-        count=count
+        count=count,
+        created=count
     )
