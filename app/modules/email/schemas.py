@@ -19,6 +19,8 @@ class LabelClassificationResponse(BaseSchema):
 
 class IngestEmailData(BaseSchema):
     message_id: int = Field(...)
+    thread_id: Optional[str] = Field(default=None)
+    gmail_message_id: Optional[str] = Field(default=None)
     subject: str = Field(default="")
     sender_email: str = Field(default="")
     sender_name: str = Field(default="")
