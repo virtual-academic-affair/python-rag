@@ -100,35 +100,50 @@ def start_email_ingest_consumer(
                 )
             return should_process
 
-        async def _emit_processing_started_event() -> None:
+        async def _emit_status_event(event_name: str, stage: str, reason: Optional[str] = None) -> None:
             payload = {
-                "event": "email_processing_started",
+                "event": event_name,
                 "messageId": message_id,
                 "threadId": thread_id,
-                "stage": "processing",
+                "stage": stage,
             }
+            if reason:
+                payload["reason"] = reason
             notifier = get_email_status_notifier()
             target_channel = thread_id or EMAIL_INGEST_PROGRESS_CHANNEL
             await notifier.notify(target_channel, payload)
 
         async def _handle():
             if not await _check_message_state():
+                await _emit_status_event(
+                    event_name="email_processing_skipped",
+                    stage="skipped",
+                    reason="message_state_not_processable",
+                )
                 return None
 
-            await _emit_processing_started_event()
+            await _emit_status_event(
+                event_name="email_processing_started",
+                stage="processing",
+            )
             logger.info(
                 "LLM input -> messageId=%s title=%r content_preview=%r",
                 message_id,
                 title,
                 content[:500],
             )
-            return await classifier.process_request(
+            result = await classifier.process_request(
                 message_id=message_id,
                 title=title,
                 content=content,
                 sender_email=msg.data.sender_email,
                 sender_name=msg.data.sender_name,
             )
+            await _emit_status_event(
+                event_name="email_processing_done",
+                stage="done",
+            )
+            return result
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_handle(), loop)
@@ -146,6 +161,21 @@ def start_email_ingest_consumer(
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             logger.error("Failed processing ingest message: %s", str(e), exc_info=True)
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    _emit_status_event(
+                        event_name="email_processing_failed",
+                        stage="failed",
+                        reason="processing_exception",
+                    ),
+                    loop,
+                ).result(timeout=10)
+            except Exception:
+                logger.debug(
+                    "Unable to emit failed status event for messageId=%s",
+                    message_id,
+                    exc_info=True,
+                )
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     def _run():
