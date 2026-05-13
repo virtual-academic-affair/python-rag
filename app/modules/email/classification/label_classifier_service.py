@@ -37,14 +37,16 @@ class LabelClassifierService:
     _CLASS_REG_KEYWORDS = [
         "đăng ký học phần",
         "dang ky hoc phan",
-        "học phần",
-        "hoc phan",
         "xin mở lớp",
         "mo lop",
         "hủy học phần",
         "huy hoc phan",
-        "mã học phần",
-        "ma hoc phan",
+        "đổi lớp",
+        "doi lop",
+        "thêm môn",
+        "them mon",
+        "bớt môn",
+        "bot mon",
     ]
 
     def __init__(self):
@@ -68,14 +70,24 @@ Label definitions:
 1) classRegistration
 - Student requests related to course/class registration operations.
 - Typical intents: đăng ký học phần, hủy học phần, đổi lớp, xin mở lớp, thêm/bớt môn, trùng lịch học, lớp đầy, điều kiện tiên quyết, mã môn/lớp học phần.
+- Also classify as classRegistration when student expresses actionable intent in natural language, e.g. "muốn học cải thiện ...", "muốn học lại ...", "xin đăng ký lớp ...".
 
 2) inquiry
 - Student asks for information, clarification, guidance, policy explanation.
 - Mostly Q&A, consultation, status checking; no explicit execution request like register/cancel/open class.
+- Examples: "học cải thiện là gì?", "điều kiện học lại như thế nào?", "khi nào mở đăng ký?".
 
 Decision priority (very important):
-- If registration intent appears clearly -> classRegistration.
-- Otherwise -> inquiry.
+- If there is any actionable request to perform registration operation now -> classRegistration.
+- If content is only asking policy/information without requesting execution -> inquiry.
+- Do not be biased by the presence of student profile lines (name, MSSV, class).
+
+Few-shot guidance:
+Input: "Em muốn học cải thiện môn Nhập môn lập trình 22C01"
+Output: classRegistration
+
+Input: "Cho em hỏi quy định học cải thiện môn Nhập môn lập trình"
+Output: inquiry
 
 Output constraints:
 - Return ONLY one raw label token: classRegistration OR inquiry.
@@ -209,7 +221,7 @@ Rules:
             if any(kw in combined_text for kw in self._CLASS_REG_KEYWORDS):
                 if label != SystemLabel.ClassRegistration.value:
                     logger.warning(
-                        "[CLASSIFY HEURISTIC] Override %s -> classRegistration due to strong registration keywords",
+                        "[CLASSIFY HEURISTIC] Override %s -> classRegistration due to explicit registration keywords",
                         label,
                     )
                 label = SystemLabel.ClassRegistration.value

@@ -64,12 +64,14 @@ def start_email_ingest_consumer(
             return
 
         message_id = msg.data.message_id
+        thread_id = msg.data.thread_id
         title = msg.data.subject
         content = msg.data.content
 
         logger.info(
-            "Parsed ingest message: messageId=%s senderEmail=%s senderName=%s subject=%r content_len=%s",
+            "Parsed ingest message: messageId=%s threadId=%s senderEmail=%s senderName=%s subject=%r content_len=%s",
             message_id,
+            thread_id,
             msg.data.sender_email,
             msg.data.sender_name,
             title,
@@ -102,10 +104,12 @@ def start_email_ingest_consumer(
             payload = {
                 "event": "email_processing_started",
                 "messageId": message_id,
+                "threadId": thread_id,
                 "stage": "processing",
             }
             notifier = get_email_status_notifier()
-            await notifier.notify(EMAIL_INGEST_PROGRESS_CHANNEL, payload)
+            target_channel = thread_id or EMAIL_INGEST_PROGRESS_CHANNEL
+            await notifier.notify(target_channel, payload)
 
         async def _handle():
             if not await _check_message_state():
