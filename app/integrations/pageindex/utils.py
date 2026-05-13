@@ -576,11 +576,11 @@ def add_node_text_with_labels(node, pdf_pages):
 
 
 async def generate_node_summary(node, model=None):
-    prompt = f"""You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document.
+    prompt = f"""Bạn được cung cấp một phần của tài liệu. Nhiệm vụ của bạn là tóm tắt nội dung chính của phần tài liệu này.
 
-    Partial Document Text: {node['text']}
+    Nội dung phần tài liệu: {node['text']}
     
-    Directly return the description, do not include any other text.
+    Trả về trực tiếp phần mô tả, không kèm theo bất kỳ nội dung nào khác.
     """
     response = await llm_acompletion(model, prompt)
     return response
@@ -620,12 +620,12 @@ def create_clean_structure_for_description(structure):
 
 
 def generate_doc_description(structure, model=None):
-    prompt = f"""Your are an expert in generating descriptions for a document.
-    You are given a structure of a document. Your task is to generate a one-sentence description for the document, which makes it easy to distinguish the document from other documents.
+    prompt = f"""Bạn là chuyên gia tạo mô tả cho tài liệu học thuật.
+    Bạn được cung cấp cấu trúc mục lục của một tài liệu. Nhiệm vụ của bạn là tạo ra một câu mô tả ngắn gọn cho tài liệu, giúp phân biệt tài liệu này với các tài liệu khác.
         
-    Document Structure: {structure}
+    Cấu trúc tài liệu: {structure}
     
-    Directly return the description, do not include any other text.
+    Trả về trực tiếp phần mô tả bằng tiếng Việt, không kèm theo bất kỳ nội dung nào khác.
     """
     response = llm_completion(model, prompt)
     return response

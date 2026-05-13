@@ -31,11 +31,18 @@ class ParsedMarkdownPage:
 
 
 class LlamaParseClient:
-    """Service that wraps LlamaParse Cloud parsing for PDF input."""
+    """Service that wraps LlamaParse Cloud parsing for PDF input.
+    
+    Hỗ trợ cả PDF thường và PDF dạng ảnh scan thông qua chế độ premium_mode
+    của LlamaParse (sử dụng multimodal OCR để trích xuất text từ ảnh scan).
+    """
 
     async def parse_pdf_to_markdown(self, file_path: str) -> list[ParsedMarkdownPage]:
         """
         Parse a PDF file and return normalized markdown blocks.
+
+        - Bật premium_mode để LlamaParse tự động OCR các trang scan.
+        - Cảnh báo nếu trang trả về nội dung trống (có thể do scan chất lượng kém).
 
         Raises:
             ValidationException: if API key is missing or parse fails.
@@ -45,29 +52,34 @@ class LlamaParseClient:
                 "LLAMA_CLOUD_API_KEY is not configured. Please set it in environment to use LlamaParse."
             )
 
-
-
         parser = LlamaParse(
             api_key=settings.LLAMA_CLOUD_API_KEY,
             result_type=settings.LLAMA_PARSE_RESULT_TYPE,
             language=settings.LLAMA_PARSE_LANGUAGE,
+            # Dùng auto_mode thay vì premium_mode để tối ưu chi phí:
+            # - LlamaParse tự phát hiện từng trang là text hay scan.
+            # - Chỉ bật Premium (OCR multimodal) cho các trang cần thiết.
+            # - Hiệu quả hơn detect thủ công vì xử lý được file PDF "hỗn hợp"
+            #   (một số trang text, một số trang scan ảnh).
+            auto_mode=True,
         )
 
-        logger.info("LlamaParse: parsing file %s", file_path)
+        logger.info("LlamaParse: parsing file %s (auto_mode=True: per-page Standard/Premium selection)", file_path)
 
         try:
             documents = await asyncio.wait_for(
                 parser.aload_data(file_path),
-                timeout=300.0
+                timeout=600.0
             )
         except asyncio.TimeoutError:
             logger.error("LlamaParse parse timeout for file %s", file_path)
-            raise ExternalServiceException(f"LlamaParse timeout: failed to parse PDF {file_path} within 300s")
+            raise ExternalServiceException(f"LlamaParse timeout: failed to parse PDF {file_path} within 600s")
         except Exception as exc:
             logger.error("LlamaParse parse failed: %s", exc, exc_info=True)
             raise ExternalServiceException(f"LlamaParse failed to parse PDF: {exc}") from exc
 
         pages: list[ParsedMarkdownPage] = []
+        empty_page_count = 0
         for i, doc in enumerate(documents):
             metadata = getattr(doc, "metadata", {}) or {}
             raw_text = getattr(doc, "text", "") or ""
@@ -75,6 +87,15 @@ class LlamaParseClient:
 
             page_index = self._extract_page_index(metadata, default=i + 1)
 
+            # Cảnh báo nếu trang trả về trống — thường gặp khi file scan chất
+            # lượng quá thấp hoặc trang chỉ chứa ảnh mà OCR không nhận ra được.
+            if not normalized_text.strip():
+                empty_page_count += 1
+                logger.warning(
+                    "LlamaParse: page %d of %s returned empty content (possible low-quality scan)",
+                    page_index, file_path
+                )
+            
             pages.append(
                 ParsedMarkdownPage(
                     page_index=page_index,
@@ -85,6 +106,13 @@ class LlamaParseClient:
 
         if not pages:
             raise ValidationException("LlamaParse returned empty result for this PDF.")
+
+        if empty_page_count > 0:
+            logger.warning(
+                "LlamaParse: %d/%d pages returned empty content for %s. "
+                "File may be a low-quality scanned PDF.",
+                empty_page_count, len(pages), file_path
+            )
 
         pages.sort(key=lambda p: p.page_index)
         return pages

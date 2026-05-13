@@ -50,13 +50,19 @@ class QdrantIndexer:
         texts = [c.get("text", "") for c in chunks_data]
         if not texts or all(not t.strip() for t in texts):
             return 0
-            
-        response = await self._genai_client.aio.models.embed_content(
-            model=self._embed_model_name,
-            contents=texts,
-            config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
-        )
-        embeddings = [e.values for e in response.embeddings]
+
+        # Gemini API giới hạn tối đa 100 requests/batch — chia nhỏ nếu cần
+        EMBED_BATCH_SIZE = 100
+        embeddings = []
+        for i in range(0, len(texts), EMBED_BATCH_SIZE):
+            batch_texts = texts[i:i + EMBED_BATCH_SIZE]
+            logger.info(f"[Indexer] Embedding batch {i // EMBED_BATCH_SIZE + 1} ({len(batch_texts)} chunks)...")
+            response = await self._genai_client.aio.models.embed_content(
+                model=self._embed_model_name,
+                contents=batch_texts,
+                config=types.EmbedContentConfig(output_dimensionality=settings.QDRANT_VECTOR_SIZE)
+            )
+            embeddings.extend([e.values for e in response.embeddings])
         
         points = []
         for i, chunk in enumerate(chunks_data):

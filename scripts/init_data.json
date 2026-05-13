@@ -1,40 +1,84 @@
 {
   "files": [
     {
-      "filename": "quy_che_dao_tao.txt",
-      "displayName": "Quy chế đào tạo 2024-2025",
+      "filename": "CTĐT_CLC-khóa-2020.pdf",
+      "displayName": "CTĐT CLC Khóa 2020",
       "metadata": {
-        "type": "quyet_dinh",
-        "academic_year": {"from_year": 2024, "to_year": 2025}
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2020, "to_year": 2020 }
       }
     },
     {
-      "filename": "huong_dan_dang_ky.txt",
-      "displayName": "Hướng dẫn đăng ký học phần",
+      "filename": "CTDT_CLC-khoa-2021.pdf",
+      "displayName": "CTĐT CLC Khóa 2021",
+      "metadata": {
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2021, "to_year": 2021 }
+      }
+    },
+    {
+      "filename": "CTDT_CLC_Khoa-2022.pdf",
+      "displayName": "CTĐT CLC Khóa 2022",
+      "metadata": {
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2022, "to_year": 2022 }
+      }
+    },
+    {
+      "filename": "CTDT_CLC_Khoa-2023.pdf",
+      "displayName": "CTĐT CLC Khóa 2023",
+      "metadata": {
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2023, "to_year": 2023 }
+      }
+    },
+    {
+      "filename": "CTDT_CLC_Khoa-2024.pdf",
+      "displayName": "CTĐT CLC Khóa 2024",
+      "metadata": {
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2024, "to_year": 2024 }
+      }
+    },
+    {
+      "filename": "CTDT_TCTA_Khoa-2025.pdf",
+      "displayName": "CTĐT & TCTA Khóa 2025",
+      "metadata": {
+        "type": "ctdt",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2025, "to_year": 2025 }
+      }
+    },
+    {
+      "filename": "CV_cong-nhan-tin-chi-bat-buoc-chuyen-nganh-lam-tu-chon-chuyen-nganh-tu-khoa-2020-den-khoa-2022.pdf",
+      "displayName": "Công văn công nhận tín chỉ chuyên ngành",
       "metadata": {
         "type": "cong_van",
-        "academic_year": {"from_year": 2024, "to_year": 2025}
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2020, "to_year": 2022 }
       }
     },
     {
-      "filename": "quy_dinh_hoc_bong.txt",
-      "displayName": "Quy định học bổng sinh viên",
+      "filename": "QD-1175_Quy-che-dao-tao-trinh-do-DH-2021.pdf",
+      "displayName": "Quy chế đào tạo ĐH 2021",
       "metadata": {
-        "type": "quyet_dinh"
+        "type": "quyet_dinh",
+        "academic_year": { "from_year": 2021, "to_year": 9999 },
+        "enrollment_year": { "from_year": 0, "to_year": 9999 }
       }
     },
     {
-      "filename": "quy_che_nghien_cuu_khoa_hoc.txt",
-      "displayName": "Quy chế nghiên cứu khoa học",
+      "filename": "QD1984_QD-chuan-NN-2024_-CNTT-CLC.pdf",
+      "displayName": "QĐ chuẩn ngoại ngữ 2024 (CLC)",
       "metadata": {
-        "type": "quyet_dinh"
-      }
-    },
-    {
-      "filename": "huong_dan_sinh_hoat_cong_dan.txt",
-      "displayName": "Hướng dẫn sinh hoạt công dân",
-      "metadata": {
-        "type": "cong_van"
+        "type": "quyet_dinh",
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 2024, "to_year": 2024 }
       }
     }
   ]

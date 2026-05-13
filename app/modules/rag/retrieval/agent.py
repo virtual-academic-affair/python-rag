@@ -12,6 +12,7 @@ from app.integrations.storage.client import r2_storage
 from app.core.config import settings
 from app.integrations.llm.gemini import gemini_client
 from google.genai import types
+from app.utils.format_utils import sanitize_latex_in_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -425,6 +426,7 @@ async def run_agent_loop(
 
     sources_data = await build_sources_from_steps(steps, candidate_files)
     final_answer = verify_citations(final_answer, sources_data, resolve_citations, citation_link_type)
+    final_answer = sanitize_latex_in_markdown(final_answer)
 
     return {
         "final_answer": final_answer,
