@@ -1,7 +1,5 @@
 """Workflow service for classRegistration label."""
-import json
 import logging
-import re
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -77,6 +75,11 @@ Field normalization rules:
 - academicYear: numeric year (e.g., 2025), not string; if term text only and no year -> null.
 - note: concise free-text note from email (payment reason, urgency, constraints...).
 - slotInfo: keep schedule text as in email (e.g., "Thứ 2, tiết 1-3").
+- className vs subjectCode (critical disambiguation):
+  - If text is introduced by class keywords like "lớp", "mã lớp", "nhóm lớp", map it to className.
+  - If text is introduced by subject keywords like "môn", "học phần", "mã môn", map it to subjectCode.
+  - In Vietnamese university context, values like "22C01", "22CLC03", "KTPM01" are commonly class codes; if no explicit "mã môn" evidence, prefer className.
+  - Do NOT put a class code into subjectCode.
 - isInCurriculum:
   - true only when explicitly indicates in-program/in curriculum/chương trình đào tạo.
   - otherwise false.

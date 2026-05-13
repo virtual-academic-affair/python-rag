@@ -8,6 +8,10 @@ from typing import Any, Dict, Optional
 from app.modules.email.schemas import IngestMessage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
 from app.integrations.grpc.client import get_grpc_client
+from app.modules.email.notifier import (
+    EMAIL_INGEST_PROGRESS_CHANNEL,
+    get_email_status_notifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +98,20 @@ def start_email_ingest_consumer(
                 )
             return should_process
 
+        async def _emit_processing_started_event() -> None:
+            payload = {
+                "event": "email_processing_started",
+                "messageId": message_id,
+                "stage": "processing",
+            }
+            notifier = get_email_status_notifier()
+            await notifier.notify(EMAIL_INGEST_PROGRESS_CHANNEL, payload)
+
         async def _handle():
             if not await _check_message_state():
                 return None
+
+            await _emit_processing_started_event()
             logger.info(
                 "LLM input -> messageId=%s title=%r content_preview=%r",
                 message_id,
