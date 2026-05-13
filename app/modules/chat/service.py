@@ -23,7 +23,7 @@ from app.modules.rag.retrieval.agent import (
 from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.service import get_faq_service
 from app.modules.metadata.extraction import extract_metadata_from_text
-from app.utils.format_utils import markdown_to_rich_text
+from app.utils.format_utils import markdown_to_rich_text, sanitize_latex_in_markdown
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -522,6 +522,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         if current_sources is None:
             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
             
+        final_answer_accumulated = sanitize_latex_in_markdown(final_answer_accumulated)
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[Chat-Stream] Kết thúc stream thành công. Final answer: '{final_answer_accumulated[:200]}...' (Completed in {processing_time_ms}ms). Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
         

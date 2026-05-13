@@ -1,9 +1,0 @@
-# Quy định học bổng khuyến khích học tập
-
-## Đối tượng xét học bổng
-Tất cả sinh viên hệ chính quy có kết quả học tập và rèn luyện từ loại Khá trở lên.
-
-## Mức học bổng
-1. Loại Xuất sắc: 150% học phí.
-2. Loại Giỏi: 120% học phí.
-3. Loại Khá: 100% học phí.

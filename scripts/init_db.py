@@ -240,7 +240,7 @@ async def upload_files(files_config: list) -> list[str]:
     fail_count = 0
     uploaded_ids = []
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         for file_config in files_config:
             filename = file_config["filename"]
             display_name = file_config["displayName"]
@@ -299,10 +299,10 @@ async def wait_for_ingestion(file_ids: list[str]):
     completed_ids = set()
     failed_ids = set()
     
-    max_wait_minutes = 15
+    max_wait_minutes = 60
     start_time = time.time()
     
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         while pending_ids:
             if (time.time() - start_time) > (max_wait_minutes * 60):
                 logger.warning(f"  ⚠ Timeout waiting for ingestion after {max_wait_minutes} minutes")
