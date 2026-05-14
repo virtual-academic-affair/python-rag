@@ -6,19 +6,19 @@ from pydantic import Field
 from app.core.schemas import BaseSchema
 
 
-from app.modules.metadata.schemas import FaqMetadataSchema, FaqMetadataResponse
+from app.modules.metadata.schemas import FaqMetadataSchema, FaqMetadataResponse, FaqMetadataCreateSchema
 
 
 class FaqCreateRequest(BaseSchema):
     question: str = Field(..., min_length=5, max_length=500)
     answer_rich_text: str = Field(..., min_length=5, max_length=50000)
-    metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
+    metadata_filter: FaqMetadataCreateSchema = Field(default_factory=FaqMetadataCreateSchema)
 
 
 class FaqUpdateRequest(BaseSchema):
     question: Optional[str] = Field(None, min_length=5, max_length=500)
     answer_rich_text: Optional[str] = Field(None, min_length=5, max_length=50000)
-    metadata_filter: Optional[FaqMetadataSchema] = None
+    metadata_filter: Optional[FaqMetadataCreateSchema] = None
     is_active: Optional[bool] = None
 
 
@@ -116,7 +116,7 @@ class FaqReviewRequest(BaseSchema):
     action: Literal["approve", "reject"] = Field(..., description="Action to take on the candidate")
     question_override: Optional[str] = Field(None, description="Modify the question before approving")
     answer_rich_text_override: Optional[str] = Field(None, description="Modify the answer before approving")
-    metadata_filter_override: Optional[FaqMetadataSchema] = Field(None, description="Modify the metadata filters before approving")
+    metadata_filter_override: Optional[FaqMetadataCreateSchema] = Field(None, description="Modify the metadata filters before approving")
     note: Optional[str] = None
 
 
@@ -162,7 +162,7 @@ class FaqImportPreviewResponse(BaseSchema):
 class FaqBulkCreateItem(BaseSchema):
     question: str = Field(..., min_length=5, max_length=500)
     answer_rich_text: str = Field(..., min_length=5, max_length=50000)
-    metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
+    metadata_filter: FaqMetadataCreateSchema = Field(default_factory=FaqMetadataCreateSchema)
 
 
 class FaqBulkCreateRequest(BaseSchema):

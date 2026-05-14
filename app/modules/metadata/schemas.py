@@ -61,11 +61,11 @@ class YearRangeResponse(BaseSchema):
 # ---------------------------------------------------------------------------
 class FileMetadataSchema(BaseSchema):
     """Request body for customMetadata when uploading / updating a file."""
-    enrollment_year: YearRangeSchema = Field(
+    enrollment_year: Optional[YearRangeSchema] = Field(
         default_factory=YearRangeSchema,
         description="Enrollment year range the document applies to.",
     )
-    academic_year: YearRangeSchema = Field(
+    academic_year: Optional[YearRangeSchema] = Field(
         default_factory=YearRangeSchema,
         description="Academic year range the document is valid for.",
     )
@@ -76,8 +76,8 @@ class FileMetadataSchema(BaseSchema):
 
     def to_model(self) -> FileMetadata:
         return FileMetadata(
-            enrollment_year=self.enrollment_year.to_model(),
-            academic_year=self.academic_year.to_model(),
+            enrollment_year=self.enrollment_year.to_model() if self.enrollment_year else YearRangeSchema().to_model(),
+            academic_year=self.academic_year.to_model() if self.academic_year else YearRangeSchema().to_model(),
             type=self.type,
         )
 
@@ -102,13 +102,26 @@ class FileMetadataResponse(BaseSchema):
 # ---------------------------------------------------------------------------
 class FaqMetadataSchema(BaseSchema):
     """Request body for FAQ metadata_filter."""
-    enrollment_year: YearRangeSchema = Field(default_factory=YearRangeSchema)
-    academic_year: YearRangeSchema = Field(default_factory=YearRangeSchema)
+    enrollment_year: Optional[YearRangeSchema] = None
+    academic_year: Optional[YearRangeSchema] = None
 
     def to_model(self) -> FaqMetadata:
         return FaqMetadata(
-            enrollment_year=self.enrollment_year.to_model(),
-            academic_year=self.academic_year.to_model(),
+            enrollment_year=self.enrollment_year.to_model() if self.enrollment_year else None,
+            academic_year=self.academic_year.to_model() if self.academic_year else None,
+        )
+
+
+class FaqMetadataCreateSchema(BaseSchema):
+    """Used specifically when creating/updating FAQs to ensure 0-9999 defaults."""
+    enrollment_year: Optional[YearRangeSchema] = Field(default_factory=YearRangeSchema)
+    academic_year: Optional[YearRangeSchema] = Field(default_factory=YearRangeSchema)
+
+    def to_model(self) -> FaqMetadata:
+        # For creation, we always want a concrete model, so we use defaults if None
+        return FaqMetadata(
+            enrollment_year=self.enrollment_year.to_model() if self.enrollment_year else YearRangeSchema().to_model(),
+            academic_year=self.academic_year.to_model() if self.academic_year else YearRangeSchema().to_model(),
         )
 
 
