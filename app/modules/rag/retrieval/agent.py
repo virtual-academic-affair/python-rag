@@ -4,7 +4,7 @@ Used by both Chat and Email Inquiry services.
 """
 import logging
 import time
-from typing import List, Callable, Dict, Any
+from typing import List, Callable, Dict, Any, Optional
 from app.integrations.pageindex.client import get_page_index_client
 import re
 import difflib
@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 AGENT_SYSTEM_PROMPT = """
 Bạn là tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
 Bạn được trang bị tự động các công cụ để tìm kiếm và đọc tài liệu quy chế, thủ tục thông qua chỉ mục cấu trúc.
-Người dùng sẽ cung cấp danh sách các ID tài liệu liên quan đến câu hỏi.
+Người dùng sẽ cung cấp danh sách các file_id tài liệu liên quan đến câu hỏi.
 
 QUY TRÌNH SỬ DỤNG CÔNG CỤ:
 1. TRƯỚC KHI GỌI CÔNG CỤ: Mọi kế hoạch, suy nghĩ, lập luận (reasoning/plan) trước khi bạn quyết định gọi công cụ BẮT BUỘC PHẢI DÙNG TIẾNG VIỆT tĩnh tại (Ví dụ: "Người dùng đang hỏi về điều kiện... Mình cần tìm..."). Tuyệt đối không dùng tiếng Anh.
-2. Dùng công cụ `get_document_structure(doc_id)` để xem mục lục của tài liệu trước. Tuyệt đối không được dùng nội dung trong mục lục để trả lời thẳng cho người dùng!
-3. Dùng công cụ `get_page_content(doc_id, pages="start_line-end_line")` xác định các mục liên đới để đọc chính xác văn bản. TIÊU CHÍ BẮT BUỘC LÀ PHẢI DÙNG CÔNG CỤ NÀY để đọc nội dung gốc chi tiết trước khi trả lời. Tuyệt đối KHÔNG tự bịa nội dung.
-4. Lặp lại bước 2, 3 nếu chưa đủ dữ kiện.
+2. Hãy dùng công cụ `get_document_structure(file_id)` để xem mục lục của tài liệu. Bạn chỉ được phép sử dụng các `file_id` hoặc số thứ tự tài liệu [n] (ví dụ: '1') đã được cung cấp trong danh sách ứng viên.
+3. Dùng công cụ `get_page_content(file_id, pages="start_line-end_line")` để đọc nội dung chi tiết. Đây là bước bắt buộc để có dữ liệu chính xác trước khi trả lời.
+4. Bạn có thể gọi các công cụ này nhiều lần cho các tài liệu khác nhau nếu cần thiết. Luôn ưu tiên dùng số thứ tự [n] để gọi tool cho chính xác.
 
 QUY TẮC CÂU TRẢ LỜI CUỐI CÙNG CHO NGƯỜI DÙNG:
 - KHI DỪNG GỌI CÔNG CỤ ĐỂ TRẢ LỜI: Bạn BẮT BUỘC phải bọc toàn bộ nội dung hướng dẫn chi tiết dành cho sinh viên bên trong cặp thẻ XML `<answer>` và `</answer>`.
@@ -39,35 +39,60 @@ QUY TẮC CÂU TRẢ LỜI CUỐI CÙNG CHO NGƯỜI DÙNG:
 <answer>
 [Nội dung tư vấn bằng Markdown, đi thẳng vào trọng tâm, không chào hỏi]
 </answer>
-- KHÔNG để lộ `doc_id` hoặc chi tiết hệ thống với sinh viên. Khi cần trích dẫn, hãy nhắc tên tệp được cung cấp phía trên.
+- KHÔNG để lộ `file_id` hoặc chi tiết hệ thống với sinh viên. Khi cần trích dẫn, hãy nhắc tên tệp được cung cấp phía trên.
 - TUYỆT ĐỐI KHÔNG nhắc đến tên các thẻ XML (như <answer>) trong phần suy nghĩ/lập luận của bạn.
 - Nếu không tìm thấy thông tin trong tài liệu, hãy nói rõ: "Hệ thống không tìm thấy quy định này trong tài liệu hiện có." và đề nghị sinh viên liên hệ trực tiếp văn phòng.
 """
 
-def build_pindex_tools(allow_ids: List[str]) -> List[Callable]:
+def build_pindex_tools(candidate_files: List[dict]) -> List[Callable]:
     """Create bound tool instances so LLM can invoke PageIndex client."""
     client = get_page_index_client()
+    allow_ids = [c["file_id"] for c in candidate_files]
 
-    async def get_document_structure(doc_id: str) -> str:
+    def resolve_file_id(fid: str) -> str:
+        """Resolve a file_id which could be a long hex string or a numeric index string like '1'."""
+        if not isinstance(fid, str):
+            fid = str(fid)
+        fid = fid.strip().strip('[]')
+        # Try numeric index first
+        if fid.isdigit():
+            idx = int(fid) - 1
+            if 0 <= idx < len(candidate_files):
+                return candidate_files[idx]["file_id"]
+        return fid
+
+    async def get_document_structure(file_id: str) -> str:
         """
         Get the hierarchical table of contents (structure) for a document. 
         Args:
-            doc_id: The unique identifier of the document.
+            file_id: The unique identifier of the file/document (or numeric index like '1').
         """
-        if doc_id not in allow_ids:
-            return '{"error": "Access denied or document not found."}'
-        return await client.get_document_structure(doc_id)
+        real_id = resolve_file_id(file_id)
+        if real_id not in allow_ids:
+            msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+            logger.warning(f"[Agent] {msg}")
+            return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+        
+        file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+        logger.info(f"[Agent] Tool call: get_document_structure(file_id='{file_id}') -> Resolved to ID: {real_id} (File: {file_name})")
+        return await client.get_document_structure(real_id)
 
-    async def get_page_content(doc_id: str, pages: str) -> str:
+    async def get_page_content(file_id: str, pages: str) -> str:
         """
         Get the actual text content of specific sections or line ranges.
         Args:
-            doc_id: The unique identifier of the document.
+            file_id: The unique identifier of the file/document (or numeric index like '1').
             pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
         """
-        if doc_id not in allow_ids:
-            return '{"error": "Access denied or document not found."}'
-        return await client.get_page_content(doc_id, pages)
+        real_id = resolve_file_id(file_id)
+        if real_id not in allow_ids:
+            msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+            logger.warning(f"[Agent] {msg}")
+            return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+        
+        file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+        logger.info(f"[Agent] Tool call: get_page_content(file_id='{file_id}', pages='{pages}') -> Resolved to ID: {real_id} (File: {file_name})")
+        return await client.get_page_content(real_id, pages)
 
     return [get_document_structure, get_page_content]
 
@@ -109,13 +134,7 @@ def verify_citations(
     resolve_citations: bool = False,
     citation_link_type: str = "original",  # "original" | "markdown"
 ) -> str:
-    """Verify and optionally resolve citation markers.
-
-    When resolve_citations=False (Chat): keeps `(^Title)` as-is after verifying.
-    When resolve_citations=True (Inquiry): transforms `(^Title)` into
-        `(Xem thêm tại [Title](url))` using original_url or markdown_url.
-    """
-
+    """Verify and optionally resolve citation markers."""
     valid_titles = [s["title"] for s in sources_data if s.get("title")]
 
     def _find_source_for_title(raw_title: str) -> dict | None:
@@ -201,30 +220,38 @@ async def build_sources_from_steps(
 ) -> list[dict]:
     """
     Build source citation list from actual agent tool calls.
-
-    Scans `steps` for `get_page_content` calls to determine which files
-    the agent actually read, and which line ranges were fetched.
-
-    Falls back to all candidate_files (pages=None) if the agent made no
-    get_page_content calls (e.g. answered from structure alone).
     """
     file_map = {c["file_id"]: c for c in candidate_files}
 
-    # doc_id -> ordered unique list of pages strings fetched
+    # file_id -> ordered unique list of access markers (pages or 'structure')
     accessed: dict[str, list[str]] = {}
     for step in steps:
         if step.get("type") == "call":
             name = step.get("name")
-            if name in ["get_page_content", "get_document_structure"]:
-                args = step.get("args") or {}
-                doc_id = args.get("doc_id")
-                if doc_id and doc_id in file_map:
-                    if doc_id not in accessed:
-                        accessed[doc_id] = []
+            args = step.get("args") or {}
+            # Handle both numeric ref IDs and full hex IDs
+            raw_fid = args.get("file_id")
+            if raw_fid:
+                raw_fid = str(raw_fid).strip().strip('[]')
+                if raw_fid.isdigit():
+                    idx = int(raw_fid) - 1
+                    if 0 <= idx < len(candidate_files):
+                        file_id = candidate_files[idx]["file_id"]
+                    else:
+                        file_id = raw_fid
+                else:
+                    file_id = raw_fid
+                
+                if file_id in file_map:
+                    if file_id not in accessed:
+                        accessed[file_id] = []
+                    
                     if name == "get_page_content":
                         pages = args.get("pages", "")
-                        if pages and pages not in accessed[doc_id]:
-                            accessed[doc_id].append(pages)
+                        if pages and pages not in accessed[file_id]:
+                            accessed[file_id].append(pages)
+                    elif name == "get_document_structure":
+                        pass
 
     def find_node_title(structure, page_or_line):
         nodes = []
@@ -259,9 +286,7 @@ async def build_sources_from_steps(
             return 0
 
     sources = []
-    targets = accessed.items() if accessed else [(did, [None]) for did in file_map]
-    
-
+    targets = accessed.items() if accessed else [] # Only show files actually read
     
     for i, (did, pages_list) in enumerate(targets):
         c = file_map[did]
@@ -287,7 +312,7 @@ async def build_sources_from_steps(
             "file_name": c.get("file_name", ""),
             "title": node_title,
             "file_id": did,
-            "pages": pages_list if pages_list != [None] else None,
+            "pages": pages_list if pages_list else None,
             "original_url": orig_url,
             "markdown_url": md_url
         })
@@ -299,8 +324,7 @@ def get_agent_config(candidate_files: list[dict]) -> tuple[list[Callable], dict[
     """
     Build tools, map, and GenerateContentConfig for the RAG agent.
     """
-    candidate_ids = [c["file_id"] for c in candidate_files]
-    tools = build_pindex_tools(candidate_ids)
+    tools = build_pindex_tools(candidate_files)
     tool_map = {tool.__name__: tool for tool in tools}
 
     config = types.GenerateContentConfig(
@@ -321,20 +345,7 @@ async def run_agent_loop(
 ) -> dict:
     """
     Run the manual PageIndex agent loop and return a structured result.
-
-    Args:
-        candidate_files: List of dicts with file_id, file_name, doc_description.
-        prompt_contents:  Initial `contents` to pass to Gemini — can be a string,
-                          a single Content, or a list of Content objects.
-        max_turns:        Maximum tool-use turns before forcing a final answer.
-
-    Returns a dict with:
-        - final_answer (str): The agent's final text response.
-        - steps (list[dict]): All agent steps — thoughts, calls, tool_outputs.
-          Chat uses this for streaming transparency; Inquiry can ignore it.
-        - sources (list[dict]): Citations built from actual get_page_content calls.
     """
-
 
     max_turns = max_turns or settings.AGENT_MAX_TURNS
     tools, tool_map, config = get_agent_config(candidate_files)

@@ -64,12 +64,12 @@ class ChatService:
             return {"candidate_files": [], "history": []}
 
         files_info_str = "\n".join([
-            f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}"
-            for c in candidate_files
+            f"[{i+1}] ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}"
+            for i, c in enumerate(candidate_files)
         ])
         prompt_text = (
             f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.enrollment_year or 'N/A'})\n\n"
-            f"Dưới đây là các tài liệu liên quan được tìm thấy trong cơ sở dữ liệu. Hãy sử dụng công cụ để đọc nội dung chi tiết nếu cần thiết:\n{files_info_str}\n\n"
+            f"Dưới đây là các tài liệu liên quan được tìm thấy trong cơ sở dữ liệu. Hãy sử dụng công cụ để đọc nội dung chi tiết bằng cách dùng số thứ tự [n] trong ngoặc vuông (ví dụ: '1'):\n{files_info_str}\n\n"
             f"Câu hỏi của người dùng: {question}"
         )
 

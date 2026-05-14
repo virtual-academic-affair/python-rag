@@ -142,9 +142,14 @@ class QdrantFaqService:
         if not metadata_filter_dict:
             return None
             
+        # Fast-path: Nếu tất cả các giá trị đều là None/rỗng, bỏ qua luôn không cần validate
+        if all(v is None for v in metadata_filter_dict.values()):
+            return None
+
         from app.modules.metadata.schemas import FaqMetadataSchema
         from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
         try:
+            # Chỉ validate khi thực sự có dữ liệu
             schema = FaqMetadataSchema.model_validate(metadata_filter_dict)
             model = schema.to_model()
         except Exception as e:
@@ -154,22 +159,24 @@ class QdrantFaqService:
         must_conditions = []
 
         # 1. Enrollment year
-        f = model.enrollment_year.from_year
-        t = model.enrollment_year.to_year
-        if f != YEAR_MIN or t != YEAR_MAX:
-            must_conditions.extend([
-                qm.FieldCondition(key="metadata_filter.enrollment_year_to", range=qm.Range(gte=f)),
-                qm.FieldCondition(key="metadata_filter.enrollment_year_from", range=qm.Range(lte=t))
-            ])
+        if model.enrollment_year:
+            f = model.enrollment_year.from_year
+            t = model.enrollment_year.to_year
+            if f != YEAR_MIN or t != YEAR_MAX:
+                must_conditions.extend([
+                    qm.FieldCondition(key="metadata_filter.enrollment_year_to", range=qm.Range(gte=f)),
+                    qm.FieldCondition(key="metadata_filter.enrollment_year_from", range=qm.Range(lte=t))
+                ])
 
         # 2. Academic year
-        af = model.academic_year.from_year
-        at = model.academic_year.to_year
-        if af != YEAR_MIN or at != YEAR_MAX:
-            must_conditions.extend([
-                qm.FieldCondition(key="metadata_filter.academic_year_to", range=qm.Range(gte=af)),
-                qm.FieldCondition(key="metadata_filter.academic_year_from", range=qm.Range(lte=at))
-            ])
+        if model.academic_year:
+            af = model.academic_year.from_year
+            at = model.academic_year.to_year
+            if af != YEAR_MIN or at != YEAR_MAX:
+                must_conditions.extend([
+                    qm.FieldCondition(key="metadata_filter.academic_year_to", range=qm.Range(gte=af)),
+                    qm.FieldCondition(key="metadata_filter.academic_year_from", range=qm.Range(lte=at))
+                ])
 
         # 3. Type
         model_type = getattr(model, "type", None)
