@@ -56,15 +56,16 @@ class LlamaParseClient:
             api_key=settings.LLAMA_CLOUD_API_KEY,
             result_type=settings.LLAMA_PARSE_RESULT_TYPE,
             language=settings.LLAMA_PARSE_LANGUAGE,
-            # Dùng auto_mode thay vì premium_mode để tối ưu chi phí:
-            # - LlamaParse tự phát hiện từng trang là text hay scan.
-            # - Chỉ bật Premium (OCR multimodal) cho các trang cần thiết.
-            # - Hiệu quả hơn detect thủ công vì xử lý được file PDF "hỗn hợp"
-            #   (một số trang text, một số trang scan ảnh).
-            auto_mode=True,
+            # Nếu bật premium_mode=True, LlamaParse sẽ ép dùng Multimodal OCR cho mọi trang.
+            # Nếu tắt, dùng auto_mode=True để hệ thống tự phát hiện trang nào cần OCR (tiết kiệm hơn).
+            premium_mode=settings.LLAMA_PARSE_USE_PREMIUM,
+            auto_mode=not settings.LLAMA_PARSE_USE_PREMIUM,
         )
 
-        logger.info("LlamaParse: parsing file %s (auto_mode=True: per-page Standard/Premium selection)", file_path)
+        logger.info(
+            "LlamaParse: parsing file %s (premium_mode=%s, auto_mode=%s)", 
+            file_path, settings.LLAMA_PARSE_USE_PREMIUM, not settings.LLAMA_PARSE_USE_PREMIUM
+        )
 
         try:
             documents = await asyncio.wait_for(

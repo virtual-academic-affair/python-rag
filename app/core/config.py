@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     LLAMA_CLOUD_API_KEY: Optional[str] = None
     LLAMA_PARSE_RESULT_TYPE: str = "markdown"
     LLAMA_PARSE_LANGUAGE: str = "vi"
+    LLAMA_PARSE_USE_PREMIUM: bool = False
 
     # Qdrant retrieval tuning
     QDRANT_URL: str = "http://localhost:6333"
