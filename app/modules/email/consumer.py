@@ -110,8 +110,11 @@ def start_email_ingest_consumer(
             if reason:
                 payload["reason"] = reason
             notifier = get_email_status_notifier()
-            target_channel = thread_id or EMAIL_INGEST_PROGRESS_CHANNEL
-            await notifier.notify(target_channel, payload)
+            targets = {EMAIL_INGEST_PROGRESS_CHANNEL}
+            if thread_id:
+                targets.add(thread_id)
+            for target in targets:
+                await notifier.notify(target, payload)
 
         async def _handle():
             if not await _check_message_state():
