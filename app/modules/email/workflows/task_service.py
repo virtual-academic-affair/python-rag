@@ -11,6 +11,7 @@ from app.integrations.llm.gemini import (
     chain_prompt,
     env_thinking_level,
 )
+from app.utils.retry import async_retry
 from app.integrations.grpc.client import get_grpc_client
 from app.modules.email.schemas import TaskPayload
 from app.utils.json_utils import parse_json_safely
@@ -120,8 +121,9 @@ Output constraints:
                 )
 
             chain = chain_prompt(self.extract_prompt, self.llm)
-            result = await chain.ainvoke(
-                {"title": title, "content": content, "message_id": message_id}
+            result = await async_retry(
+                chain.ainvoke,
+                {"title": title, "content": content, "message_id": message_id},
             )
             logger.info("[TASK EXTRACT RESULT] raw=%r", result.content)
 

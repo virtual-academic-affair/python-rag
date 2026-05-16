@@ -1,6 +1,7 @@
 import logging
 
 from app.integrations.grpc.client import get_grpc_client
+from app.utils.retry import async_retry
 from app.modules.email.classification.label_classifier_service import (
     LabelClassifierService,
 )
@@ -80,7 +81,8 @@ class EmailWorkflowOrchestrator:
             )
             if self.grpc_client is not None:
                 try:
-                    grpc_ok = await self.grpc_client.create_class_registration(
+                    grpc_ok = await async_retry(
+                        self.grpc_client.create_class_registration,
                         payload=extracted,
                     )
                     if not grpc_ok:
@@ -103,7 +105,8 @@ class EmailWorkflowOrchestrator:
                 )
                 if self.grpc_client is not None and message_id is not None:
                     try:
-                        grpc_ok = await self.grpc_client.create_inquiry(
+                        grpc_ok = await async_retry(
+                            self.grpc_client.create_inquiry,
                             message_id=message_id,
                             answer=draft_result["answer"],
                             extracted_question=draft_result.get("question"),
@@ -131,7 +134,8 @@ class EmailWorkflowOrchestrator:
             )
             if self.grpc_client is not None and message_id is not None:
                 try:
-                    grpc_ok = await self.grpc_client.create_inquiry(
+                    grpc_ok = await async_retry(
+                        self.grpc_client.create_inquiry,
                         message_id=message_id,
                         answer=draft_result["answer"],
                         extracted_question=draft_result.get("question"),

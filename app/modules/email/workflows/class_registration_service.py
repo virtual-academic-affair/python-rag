@@ -9,6 +9,7 @@ from app.integrations.llm.gemini import (
     chain_prompt,
     env_thinking_level,
 )
+from app.utils.retry import async_retry
 from app.modules.email.schemas import ClassRegistrationPayload
 from app.utils.json_utils import parse_json_safely
 
@@ -126,8 +127,9 @@ Output constraints (must follow):
                 )
 
             chain = chain_prompt(self.extract_prompt, self.llm)
-            result = await chain.ainvoke(
-                {"title": title, "content": content, "message_id": message_id}
+            result = await async_retry(
+                chain.ainvoke,
+                {"title": title, "content": content, "message_id": message_id},
             )
             logger.info("[EXTRACT RESULT] raw=%r", result.content)
 

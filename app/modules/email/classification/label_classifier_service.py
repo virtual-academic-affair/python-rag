@@ -12,6 +12,7 @@ from app.integrations.llm.gemini import (
     chain_prompt,
     env_thinking_level,
 )
+from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ Rules:
         """Use LLM to split mixed-intent email content into inquiry/class-registration parts."""
         try:
             chain = chain_prompt(self.mixed_split_prompt, self.llm)
-            result = await chain.ainvoke({"title": title, "content": content})
+            result = await async_retry(chain.ainvoke, {"title": title, "content": content})
             raw = (result.content or "").strip()
             logger.info("[MIXED SPLIT RESULT] raw=%r", raw)
 
@@ -211,7 +212,7 @@ Rules:
                 )
 
             chain = chain_prompt(self.classification_prompt, self.llm)
-            result = await chain.ainvoke({"title": title, "content": content})
+            result = await async_retry(chain.ainvoke, {"title": title, "content": content})
             raw_label = (result.content or "").strip()
             logger.info("[CLASSIFY RESULT] raw_label=%r", raw_label)
 
