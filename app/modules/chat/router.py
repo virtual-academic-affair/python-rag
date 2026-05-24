@@ -6,6 +6,7 @@ Includes: query, stream, and retrieval preview (Qdrant).
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse
 import json
+from uuid import uuid4
 from google.genai.errors import APIError
 
 
@@ -17,9 +18,17 @@ from app.modules.chat.schemas import (
     ChatRetrievePreviewRequest,
     ChatRetrievePreviewResponse,
     ChatRetrievePreviewItem,
+    ChatPaginationRequest,
+    ChatSessionListResponse,
+    ChatSessionItem,
+    ChatMessageListResponse,
+    ChatMessageItem,
+    ChatSessionRenameRequest,
+    ChatSessionMutationResponse,
 )
 from app.core.dependencies import require_auth
 from app.modules.chat.service import get_chat_service
+from app.modules.chat.history_repository import get_chat_history_repository
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.core.config import settings
 from app.core.exceptions import handle_google_api_error
@@ -65,6 +74,17 @@ async def chat_query(
             role=user_role,
         )
 
+        session_id = request.session_id or str(uuid4())
+
+        chat_history_repo = get_chat_history_repository()
+        await chat_history_repo.ensure_session(session_id=session_id, user_id=user_context.user_id)
+        await chat_history_repo.append_message(
+            session_id=session_id,
+            user_id=user_context.user_id,
+            role="user",
+            content=request.question,
+        )
+
         # Generate response using unified retrieval service
         chat_svc = get_chat_service()
         result = await chat_svc.generate_chat_response(
@@ -77,7 +97,17 @@ async def chat_query(
             to_rich_text=request.to_rich_text,
         )
 
-        return ChatQueryResponse(**result)
+        await chat_history_repo.append_message(
+            session_id=session_id,
+            user_id=user_context.user_id,
+            role="assistant",
+            content=result.get("answer", ""),
+            token_usage=result.get("token_usage"),
+            sources=result.get("sources"),
+            processing_time_ms=result.get("processing_time_ms"),
+        )
+
+        return ChatQueryResponse(session_id=session_id, **result)
 
     except ValueError as e:
         raise HTTPException(
@@ -130,8 +160,19 @@ async def chat_stream(
             role=user_role,
         )
 
+        session_id = request.session_id or str(uuid4())
+        chat_history_repo = get_chat_history_repository()
+        await chat_history_repo.ensure_session(session_id=session_id, user_id=user_context.user_id)
+        await chat_history_repo.append_message(
+            session_id=session_id,
+            user_id=user_context.user_id,
+            role="user",
+            content=request.question,
+        )
+
         async def event_generator():
             """Generator for SSE events."""
+            assistant_chunks: list[str] = []
             try:
                 chat_svc = get_chat_service()
                 async for chunk_json in chat_svc.stream_chat_response(
@@ -142,6 +183,21 @@ async def chat_stream(
                     resolve_citations=request.resolve_citations,
                     citation_link_type=request.citation_link_type,
                 ):
+                    payload = json.loads(chunk_json)
+                    if payload.get("chunk"):
+                        assistant_chunks.append(payload["chunk"])
+                    if payload.get("done") is True:
+                        await chat_history_repo.append_message(
+                            session_id=session_id,
+                            user_id=user_context.user_id,
+                            role="assistant",
+                            content="".join(assistant_chunks),
+                            token_usage=payload.get("token_usage"),
+                            sources=payload.get("sources"),
+                            processing_time_ms=payload.get("processing_time_ms"),
+                        )
+                        payload["session_id"] = session_id
+                        chunk_json = json.dumps(payload, ensure_ascii=False)
                     # SSE format: data: {json}\n\n
                     yield f"data: {chunk_json}\n\n"
             except ValueError as e:
@@ -208,6 +264,138 @@ async def chat_stream(
         )
 
 
+@router.get(
+    "/sessions",
+    response_model=ChatSessionListResponse,
+    summary="List chat sessions by current user",
+)
+async def list_chat_sessions(
+    page: int = 1,
+    page_size: int = 20,
+    user: dict = Depends(require_auth),
+):
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    skip = (page - 1) * page_size
+
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    sessions, total = await repo.list_sessions_by_user(user_id=user_id, limit=page_size, skip=skip)
+
+    items = [
+        ChatSessionItem(
+            session_id=s.get("session_id", ""),
+            title=s.get("title"),
+            status=s.get("status", "active"),
+            message_count=int(s.get("message_count", 0)),
+            last_message_at=s.get("last_message_at").isoformat() if s.get("last_message_at") else None,
+            created_at=s.get("created_at").isoformat() if s.get("created_at") else None,
+            updated_at=s.get("updated_at").isoformat() if s.get("updated_at") else None,
+        )
+        for s in sessions
+    ]
+
+    return ChatSessionListResponse(page=page, page_size=page_size, total=total, items=items)
+
+
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=ChatMessageListResponse,
+    summary="List messages in a chat session",
+)
+async def list_chat_messages(
+    session_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    user: dict = Depends(require_auth),
+):
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    skip = (page - 1) * page_size
+
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    messages, total = await repo.list_messages_by_session(
+        session_id=session_id,
+        user_id=user_id,
+        limit=page_size,
+        skip=skip,
+    )
+
+    items = [
+        ChatMessageItem(
+            role=m.get("role", "assistant"),
+            content=m.get("content", ""),
+            sequence=int(m.get("sequence", 0)),
+            token_usage=m.get("token_usage"),
+            sources=m.get("sources"),
+            processing_time_ms=m.get("processing_time_ms"),
+            created_at=m.get("created_at").isoformat() if m.get("created_at") else None,
+        )
+        for m in messages
+    ]
+
+    return ChatMessageListResponse(
+        session_id=session_id,
+        page=page,
+        page_size=page_size,
+        total=total,
+        items=items,
+    )
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=ChatSessionMutationResponse,
+    summary="Rename a chat session",
+)
+async def rename_chat_session(
+    session_id: str,
+    request: ChatSessionRenameRequest,
+    user: dict = Depends(require_auth),
+):
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    updated = await repo.rename_session(session_id=session_id, user_id=user_id, title=request.title)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return ChatSessionMutationResponse(session_id=session_id, success=True)
+
+
+@router.post(
+    "/sessions/{session_id}/archive",
+    response_model=ChatSessionMutationResponse,
+    summary="Archive a chat session",
+)
+async def archive_chat_session(
+    session_id: str,
+    user: dict = Depends(require_auth),
+):
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    updated = await repo.archive_session(session_id=session_id, user_id=user_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return ChatSessionMutationResponse(session_id=session_id, success=True)
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    response_model=ChatSessionMutationResponse,
+    summary="Delete a chat session and its messages",
+)
+async def delete_chat_session(
+    session_id: str,
+    user: dict = Depends(require_auth),
+):
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    deleted = await repo.delete_session(session_id=session_id, user_id=user_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return ChatSessionMutationResponse(session_id=session_id, success=True)
+
+
 @router.post(
     "/retrieve-preview",
     response_model=ChatRetrievePreviewResponse,
@@ -223,12 +411,12 @@ async def chat_retrieve_preview(
         meta_dict = request.metadata_filter or {}
 
         user_role = user.get("role", "student")
-        
+
         # Note: Using unified RetrievalService for preview to see context as processed by RAG
         retrieval = get_retrieval_service()
-        
+
         meta_dict = request.metadata_filter.model_dump() if request.metadata_filter else {}
-        
+
         qdrant_meta_filter = await retrieval._filter_builder.build_qdrant_filter(
             metadata_filter=meta_dict,
             user_role=user_role

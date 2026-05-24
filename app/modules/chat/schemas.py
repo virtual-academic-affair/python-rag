@@ -17,6 +17,7 @@ class ChatHistoryItem(BaseSchema):
 
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
+    session_id: Optional[str] = Field(default=None, description="Chat session ID")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
     metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
@@ -25,6 +26,7 @@ class ChatQueryRequest(BaseSchema):
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
+    session_id: str = Field(..., description="Chat session ID")
     source: str = Field(default="llm", description="Source of the answer: 'llm', 'faq', or 'bypass'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
@@ -33,6 +35,7 @@ class ChatQueryResponse(BaseSchema):
 
 class ChatStreamRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
+    session_id: Optional[str] = Field(default=None, description="Chat session ID")
     chat_history: List[ChatHistoryItem] = Field(default_factory=list)
     metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
@@ -61,3 +64,52 @@ class ChatRetrievePreviewResponse(BaseSchema):
     count: int
     cache_stats: Optional[Dict[str, Any]] = None
     items: List[ChatRetrievePreviewItem] = Field(default_factory=list)
+
+
+class ChatPaginationRequest(BaseSchema):
+    page: int = Field(default=1, ge=1, description="Page number")
+    page_size: int = Field(default=20, ge=1, le=100, description="Items per page")
+
+
+class ChatSessionItem(BaseSchema):
+    session_id: str
+    title: Optional[str] = None
+    status: str
+    message_count: int
+    last_message_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ChatSessionListResponse(BaseSchema):
+    page: int
+    page_size: int
+    total: int
+    items: List[ChatSessionItem] = Field(default_factory=list)
+
+
+class ChatMessageItem(BaseSchema):
+    role: str
+    content: str
+    sequence: int
+    token_usage: Optional[Dict[str, Any]] = None
+    sources: Optional[List[Dict[str, Any]]] = Field(default=None)
+    processing_time_ms: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+class ChatMessageListResponse(BaseSchema):
+    session_id: str
+    page: int
+    page_size: int
+    total: int
+    items: List[ChatMessageItem] = Field(default_factory=list)
+
+
+class ChatSessionRenameRequest(BaseSchema):
+    title: str = Field(..., min_length=1, max_length=200)
+
+
+class ChatSessionMutationResponse(BaseSchema):
+    session_id: str
+    success: bool
