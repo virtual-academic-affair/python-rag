@@ -184,15 +184,25 @@ async def chat_stream(
                     citation_link_type=request.citation_link_type,
                 ):
                     payload = json.loads(chunk_json)
-                    if payload.get("chunk"):
-                        assistant_chunks.append(payload["chunk"])
+                    if payload.get("type") == "text" and payload.get("content"):
+                        assistant_chunks.append(payload["content"])
+
                     if payload.get("done") is True:
+                        assistant_content = "".join(assistant_chunks)
+                        if not assistant_content:
+                            assistant_content = (
+                                payload.get("answer")
+                                or payload.get("content")
+                                or payload.get("final_answer")
+                                or ""
+                            )
+
                         await chat_history_repo.append_message(
                             session_id=session_id,
                             user_id=user_context.user_id,
                             role="assistant",
-                            content="".join(assistant_chunks),
-                            token_usage=payload.get("token_usage"),
+                            content=assistant_content,
+                            token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
                             sources=payload.get("sources"),
                             processing_time_ms=payload.get("processing_time_ms"),
                         )
