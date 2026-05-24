@@ -75,6 +75,21 @@ class ChatHistoryRepository:
         )
         sequence = int((session or {}).get("message_count", 1))
 
+        if role == "user" and sequence == 1:
+            await self._sessions.update_one(
+                {
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "title": None,
+                },
+                {
+                    "$set": {
+                        "title": content,
+                        "updated_at": now,
+                    }
+                },
+            )
+
         message_doc = {
             "session_id": session_id,
             "user_id": user_id,
