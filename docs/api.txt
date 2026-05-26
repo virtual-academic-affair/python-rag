@@ -31,14 +31,14 @@ MỤC LỤC
  2. Email Classification       (2 endpoints)
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
  4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
- 5. Chat & RAG Tooling         (3 endpoints) [🔒 auth]
+ 5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
  6. FAQ MODULE APIs            (11 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
  8. Debug & Preview APIs       (2 endpoints) [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 36 ENDPOINTS
+ TỔNG: 41 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -292,6 +292,7 @@ MỤC LỤC
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
 │     "chatHistory": [],                                                       │
 │     "metadataFilter": {"academicYear": {"fromYear": 2025, "toYear": 2025}},  │
 │     "resolveCitations": false,                                               │
@@ -302,26 +303,21 @@ MỤC LỤC
 │ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
 │     "answer": "Theo quyết định số...",                                       │
-│     "source": "rag",                                                         │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
+│     "source": "llm",                                                         │
 │     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
 │     "processingTimeMs": 2500                                                 │
 │   }                                                                          │
 │                                                                              │
-│ GHI CHÚ: Nếu `toRichText=true`, trường `answer` sẽ chứa định dạng HTML.      │
-│          Nếu `toRichText=false`, trường `answer` sẽ chứa định dạng Markdown.  │
-│                                                                              │
+│ GHI CHÚ: Nếu không truyền `sessionId`, hệ thống sẽ tự tạo session mới.       │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   0. Auto-Extraction: Tự động bóc tách Khóa/Năm học từ câu hỏi nếu thiếu.    │
-│   1. FAQ Pre-check: Tìm kiếm nhanh trong kho FAQ Module v2. Nếu có câu trả   │
-│      lời sẵn thì trả về ngay (Source: 'faq'), bỏ qua toàn bộ luồng RAG.      │
-│   2. RAG Gate (Gatekeeper): Sử dụng AI phân tích ý định. Nếu là câu chào hỏi │
-│      hoặc xã giao, trả lời trực tiếp và BYPASS hoàn toàn luồng RAG tốn kém.  │
-│   3. RAG Service: Vector search lấy Top-30 chunks (Coarse Search).           │
-│   4. PageIndex Semantic Reranking: Chọn lọc Top-5 Files tốt nhất.            │
-│   5. Agentic Loop: LLM quyết định dùng Tools để đọc sâu nội dung từng trang. │
-│      Chèn trích dẫn `(^...)` sau khi dùng xong thông tin từ một mục.         │
-│   6. Finalize: Giải đáp câu hỏi và tổng hợp nguồn trích dẫn.                 │
-│      Lưu ý: Với Inquiry Email, trích dẫn được giải nén thành link file gốc.  │
+│   1. Xác thực JWT -> lấy `user_id` từ claim `sub`.                           │
+│   2. Resolve `sessionId` (dùng giá trị client truyền hoặc tự sinh UUID).     │
+│   3. Ensure session trong Mongo (`chat_sessions`).                            │
+│   4. Lưu message user vào `chat_messages`.                                    │
+│   5. Chạy luồng RAG đồng bộ để tạo câu trả lời.                               │
+│   6. Lưu message assistant (answer, sources, token usage, processing time).   │
+│   7. Trả response chứa `sessionId` để FE tiếp tục hội thoại cùng session.     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -330,6 +326,7 @@ MỤC LỤC
 │ REQUEST BODY (JSON):                                                         │
 │   {                                                                          │
 │     "question": "...",                                                       │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
 │     "chatHistory": [],                                                       │
 │     "resolveCitations": false,                                               │
 │     "citationLinkType": "markdown"                                           │
@@ -339,9 +336,85 @@ MỤC LỤC
 │   - Thought: data: {"type": "thought", "content": "thinking...", "done": false}  │
 │   - Text:    data: {"type": "text", "content": "Hello", "done": false}           │
 │   - Call:    data: {"type": "call", "name": "get_doc", "args": {...}, "done": false} │
-│   - Final:   data: {"done": true, "sources": [...], "processingTimeMs": 1234}    │
+│   - Final:   data: {"done": true, "sessionId": "...", "sources": [...]}             │
 │                                                                              │
-│ LUỒNG XỬ LÝ: Tương tự `/query` nhưng response được chunking ngay lập tức.    │
+│ GHI CHÚ: `sessionId` được trả ở event cuối (`done=true`).                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Resolve `sessionId` như `/query` và ensure session.                      │
+│   3. Lưu message user trước khi stream.                                       │
+│   4. Stream từng event SSE từ ChatService.                                    │
+│   5. Gom text assistant từ các event `type=text`.                             │
+│   6. Khi `done=true`: lưu message assistant + inject `sessionId` vào event cuối.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/chat/sessions           [🔒 AUTH]                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy danh sách chat sessions của user hiện tại (phân trang).           │
+│ QUERY: ?page=1&page_size=20                                                  │
+│ RESPONSE 200:                                                                 │
+│   { "page": 1, "pageSize": 20, "total": 2, "items": [ ... ] }          │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Chuẩn hóa phân trang (`page>=1`, `1<=page_size<=100`).                  │
+│   3. Query `chat_sessions` theo `user_id`, sort `last_message_at` giảm dần.   │
+│   4. Trả về danh sách session + tổng số bản ghi.                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/chat/sessions/{sessionId}/messages [🔒 AUTH]                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy lịch sử message của một session thuộc user hiện tại.              │
+│ QUERY: ?page=1&page_size=50                                                  │
+│ RESPONSE 200:                                                                 │
+│   { "sessionId": "...", "page": 1, "pageSize": 50, "total": 2,        │
+│     "items": [ {"role":"user",...}, {"role":"assistant",...} ] }       │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Chuẩn hóa phân trang.                                                    │
+│   3. Query `chat_messages` theo `session_id + user_id`.                       │
+│   4. Sort theo `sequence` tăng dần để giữ đúng thứ tự hội thoại.             │
+│   5. Trả về messages + total.                                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/chat/sessions/{sessionId} [🔒 AUTH]                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Đổi tên session chat.                                                  │
+│ REQUEST: { "title": "Tư vấn học phí" }                                     │
+│ RESPONSE 200: { "sessionId": "...", "success": true }                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Update `chat_sessions` theo `session_id + user_id` (set title, updatedAt).│
+│   3. Không tìm thấy session -> trả 404 `Session not found`.                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/chat/sessions/{sessionId}/archive [🔒 AUTH]                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Archive (lưu trữ mềm) một session chat.                                │
+│ RESPONSE 200: { "sessionId": "...", "success": true }                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Update `chat_sessions` theo `session_id + user_id`:                      │
+│      - `status = "archived"`                                                 │
+│      - cập nhật `updatedAt`.                                                  │
+│   3. Không tìm thấy session -> 404 `Session not found`.                       │
+│ GHI CHÚ: Archive KHÔNG xóa message; chỉ đổi trạng thái session.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/chat/sessions/{sessionId} [🔒 AUTH]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa session chat và toàn bộ messages thuộc session đó.                │
+│ RESPONSE 200: { "sessionId": "...", "success": true }                    │
+│ RESPONSE 404: { "detail": "Session not found" }                            │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Xóa session trong `chat_sessions` theo `session_id + user_id`.           │
+│   3. Xóa toàn bộ messages trong `chat_messages` theo cùng khóa.               │
+│   4. Nếu không có session để xóa -> trả 404.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
