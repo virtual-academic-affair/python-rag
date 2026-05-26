@@ -92,6 +92,7 @@ class ChatMessageItem(BaseSchema):
     role: str
     content: str
     sequence: int
+    message_type: str = Field(default="text", description="Message type: text or thinking")
     token_usage: Optional[Dict[str, Any]] = None
     sources: Optional[List[Dict[str, Any]]] = Field(default=None)
     processing_time_ms: Optional[int] = None

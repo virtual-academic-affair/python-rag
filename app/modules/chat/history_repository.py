@@ -51,6 +51,7 @@ class ChatHistoryRepository:
         token_usage: Optional[dict[str, Any]] = None,
         sources: Optional[list[dict[str, Any]]] = None,
         processing_time_ms: Optional[int] = None,
+        message_type: str = "text",
     ) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         session = await self._sessions.find_one_and_update(
@@ -95,7 +96,7 @@ class ChatHistoryRepository:
             "user_id": user_id,
             "role": role,
             "content": content,
-            "message_type": "text",
+            "message_type": message_type,
             "token_usage": token_usage,
             "sources": sources or [],
             "processing_time_ms": processing_time_ms,
@@ -106,8 +107,17 @@ class ChatHistoryRepository:
         message_doc["_id"] = str(result.inserted_id)
         return message_doc
 
-    async def list_sessions_by_user(self, user_id: str, limit: int, skip: int) -> tuple[list[dict[str, Any]], int]:
-        query = {"user_id": user_id}
+    async def list_sessions_by_user(
+        self,
+        user_id: str,
+        limit: int,
+        skip: int,
+        status: Optional[str] = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        query: dict[str, Any] = {"user_id": user_id}
+        if status:
+            query["status"] = status
+
         total = await self._sessions.count_documents(query)
         cursor = self._sessions.find(query).sort("last_message_at", DESCENDING).skip(skip).limit(limit)
         sessions = await cursor.to_list(length=limit)
@@ -139,6 +149,14 @@ class ChatHistoryRepository:
         result = await self._sessions.update_one(
             {"session_id": session_id, "user_id": user_id},
             {"$set": {"status": self.SESSION_STATUS_ARCHIVED, "updated_at": now}},
+        )
+        return result.matched_count > 0
+
+    async def unarchive_session(self, session_id: str, user_id: str) -> bool:
+        now = datetime.now(timezone.utc)
+        result = await self._sessions.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            {"$set": {"status": self.SESSION_STATUS_ACTIVE, "updated_at": now}},
         )
         return result.matched_count > 0
 

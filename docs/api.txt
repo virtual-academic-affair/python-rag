@@ -31,14 +31,14 @@ MỤC LỤC
  2. Email Classification       (2 endpoints)
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
  4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
- 5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
+ 5. Chat & RAG Tooling         (9 endpoints) [🔒 auth]
  6. FAQ MODULE APIs            (11 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
  8. Debug & Preview APIs       (2 endpoints) [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 41 ENDPOINTS
+ TỔNG: 42 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -344,22 +344,27 @@ MỤC LỤC
 │   2. Resolve `sessionId` như `/query` và ensure session.                      │
 │   3. Lưu message user trước khi stream.                                       │
 │   4. Stream từng event SSE từ ChatService.                                    │
-│   5. Gom text assistant từ các event `type=text`.                             │
-│   6. Khi `done=true`: lưu message assistant + inject `sessionId` vào event cuối.│
+│   5. Gom text assistant từ event `type=text` và gom thinking từ `type=thought`.│
+│   6. Khi `done=true`: lưu thinking (`message_type=thinking`), lưu answer text  │
+│      (`message_type=text`), rồi inject `sessionId` vào event cuối.            │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/chat/sessions           [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy danh sách chat sessions của user hiện tại (phân trang).           │
-│ QUERY: ?page=1&page_size=20                                                  │
+│ QUERY: ?page=1&page_size=20&status_filter=archived                           │
+│ GHI CHÚ:                                                                      │
+│   - Mặc định (không truyền `status_filter`): chỉ trả session `active`.        │
+│   - Có truyền `status_filter`: chỉ nhận `active` | `archived`.                │
 │ RESPONSE 200:                                                                 │
 │   { "page": 1, "pageSize": 20, "total": 2, "items": [ ... ] }          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id`.                                           │
 │   2. Chuẩn hóa phân trang (`page>=1`, `1<=page_size<=100`).                  │
-│   3. Query `chat_sessions` theo `user_id`, sort `last_message_at` giảm dần.   │
-│   4. Trả về danh sách session + tổng số bản ghi.                              │
+│   3. Resolve `status_filter`: mặc định `active`, nếu có thì validate giá trị. │
+│   4. Query `chat_sessions` theo `user_id + status`, sort `last_message_at` ↓. │
+│   5. Trả về danh sách session + tổng số bản ghi.                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -369,13 +374,17 @@ MỤC LỤC
 │ QUERY: ?page=1&page_size=50                                                  │
 │ RESPONSE 200:                                                                 │
 │   { "sessionId": "...", "page": 1, "pageSize": 50, "total": 2,        │
-│     "items": [ {"role":"user",...}, {"role":"assistant",...} ] }       │
+│     "items": [                                                                 │
+│       {"role":"assistant","messageType":"thinking","content":"..."},   │
+│       {"role":"assistant","messageType":"text","content":"..."}       │
+│     ] }                                                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id`.                                           │
 │   2. Chuẩn hóa phân trang.                                                    │
 │   3. Query `chat_messages` theo `session_id + user_id`.                       │
 │   4. Sort theo `sequence` tăng dần để giữ đúng thứ tự hội thoại.             │
-│   5. Trả về messages + total.                                                 │
+│   5. Mỗi message có `messageType` (`text` hoặc `thinking`) để FE render đúng.│
+│   6. Trả về messages + total.                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -402,6 +411,19 @@ MỤC LỤC
 │      - cập nhật `updatedAt`.                                                  │
 │   3. Không tìm thấy session -> 404 `Session not found`.                       │
 │ GHI CHÚ: Archive KHÔNG xóa message; chỉ đổi trạng thái session.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/chat/sessions/{sessionId}/unarchive [🔒 AUTH]                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Bỏ archive, chuyển session về trạng thái active.                      │
+│ RESPONSE 200: { "sessionId": "...", "success": true }                    │
+│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
+│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   2. Update `chat_sessions` theo `session_id + user_id`:                      │
+│      - `status = "active"`                                                   │
+│      - cập nhật `updatedAt`.                                                  │
+│   3. Không tìm thấy session -> 404 `Session not found`.                       │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐

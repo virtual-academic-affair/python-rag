@@ -18,7 +18,6 @@ from app.modules.chat.schemas import (
     ChatRetrievePreviewRequest,
     ChatRetrievePreviewResponse,
     ChatRetrievePreviewItem,
-    ChatPaginationRequest,
     ChatSessionListResponse,
     ChatSessionItem,
     ChatMessageListResponse,
@@ -60,9 +59,6 @@ async def chat_query(
     - RAG Service does NOT manage sessions. Chat history must be sent from NestJS.
     """
     try:
-        # Use metadata_filter as provided by the client
-        meta_dict = request.metadata_filter or {}
-
         # Extract role from token and override context
         user_role = user.get("role", "student")
 
@@ -146,9 +142,6 @@ async def chat_stream(
     - NestJS can forward this stream to WebSocket clients.
     """
     try:
-        # Use metadata_filter as provided by the client
-        meta_dict = request.metadata_filter or {}
-
         # Extract role from token and override context
         user_role = user.get("role", "student")
 
@@ -173,6 +166,7 @@ async def chat_stream(
         async def event_generator():
             """Generator for SSE events."""
             assistant_chunks: list[str] = []
+            thought_chunks: list[str] = []
             try:
                 chat_svc = get_chat_service()
                 async for chunk_json in chat_svc.stream_chat_response(
@@ -184,6 +178,8 @@ async def chat_stream(
                     citation_link_type=request.citation_link_type,
                 ):
                     payload = json.loads(chunk_json)
+                    if payload.get("type") == "thought" and payload.get("content"):
+                        thought_chunks.append(payload["content"])
                     if payload.get("type") == "text" and payload.get("content"):
                         assistant_chunks.append(payload["content"])
 
@@ -197,6 +193,16 @@ async def chat_stream(
                                 or ""
                             )
 
+                        thought_content = "\n".join(thought_chunks).strip()
+                        if thought_content:
+                            await chat_history_repo.append_message(
+                                session_id=session_id,
+                                user_id=user_context.user_id,
+                                role="assistant",
+                                content=thought_content,
+                                message_type="thinking",
+                            )
+
                         await chat_history_repo.append_message(
                             session_id=session_id,
                             user_id=user_context.user_id,
@@ -205,6 +211,7 @@ async def chat_stream(
                             token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
                             sources=payload.get("sources"),
                             processing_time_ms=payload.get("processing_time_ms"),
+                            message_type="text",
                         )
                         payload["session_id"] = session_id
                         chunk_json = json.dumps(payload, ensure_ascii=False)
@@ -282,6 +289,7 @@ async def chat_stream(
 async def list_chat_sessions(
     page: int = 1,
     page_size: int = 20,
+    status_filter: str | None = None,
     user: dict = Depends(require_auth),
 ):
     page = max(1, page)
@@ -290,7 +298,26 @@ async def list_chat_sessions(
 
     repo = get_chat_history_repository()
     user_id = str(user.get("sub", ""))
-    sessions, total = await repo.list_sessions_by_user(user_id=user_id, limit=page_size, skip=skip)
+
+    normalized_status_filter = (
+        status_filter.strip().lower() if status_filter else repo.SESSION_STATUS_ACTIVE
+    )
+    valid_statuses = {
+        repo.SESSION_STATUS_ACTIVE,
+        repo.SESSION_STATUS_ARCHIVED,
+    }
+    if normalized_status_filter not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid status_filter. Allowed values: active, archived",
+        )
+
+    sessions, total = await repo.list_sessions_by_user(
+        user_id=user_id,
+        limit=page_size,
+        skip=skip,
+        status=normalized_status_filter,
+    )
 
     items = [
         ChatSessionItem(
@@ -337,6 +364,7 @@ async def list_chat_messages(
             role=m.get("role", "assistant"),
             content=m.get("content", ""),
             sequence=int(m.get("sequence", 0)),
+            message_type=m.get("message_type", "text"),
             token_usage=m.get("token_usage"),
             sources=m.get("sources"),
             processing_time_ms=m.get("processing_time_ms"),
@@ -384,6 +412,23 @@ async def archive_chat_session(
     repo = get_chat_history_repository()
     user_id = str(user.get("sub", ""))
     updated = await repo.archive_session(session_id=session_id, user_id=user_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return ChatSessionMutationResponse(session_id=session_id, success=True)
+
+
+@router.post(
+    "/sessions/{session_id}/unarchive",
+    response_model=ChatSessionMutationResponse,
+    summary="Unarchive a chat session",
+)
+async def unarchive_chat_session(
+    session_id: str,
+    user: dict = Depends(require_auth),
+):
+    repo = get_chat_history_repository()
+    user_id = str(user.get("sub", ""))
+    updated = await repo.unarchive_session(session_id=session_id, user_id=user_id)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return ChatSessionMutationResponse(session_id=session_id, success=True)
