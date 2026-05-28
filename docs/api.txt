@@ -302,13 +302,9 @@ MỤC LỤC
 │   {                                                                          │
 │     "answer": "Theo quyết định số...",                                       │
 │     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
-│     "source": "llm",                                                         │
+│     "source": "llm",      ← "llm" | "faq" | "bypass"                        │
 │     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
-│     "steps": [                                                               │
-│       {"type": "query_analysis", "original_question": "...", ...},           │
-│       {"type": "faq_check", "hit": false},                                    │
-│       {"type": "retrieval", "candidate_files": [...]}                        │
-│     ],                                                                       │
+│     "steps": [ ... ],     ← Xem bảng PIPELINE STEPS bên dưới                │
 │     "processingTimeMs": 2500                                                 │
 │   }                                                                          │
 │                                                                              │
@@ -321,6 +317,68 @@ MỤC LỤC
 │      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
 │   4. Chạy luồng RAG đồng bộ (kiểm tra FAQ trước, sau đó retrieve văn bản).   │
 │   5. Trả response chứa `sessionId` và danh sách steps xử lý chi tiết.         │
+│      Steps được lưu vào MongoDB và có thể truy xuất qua GET messages API.    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PIPELINE STEPS — CẤU TRÚC TỪNG LOẠI STEP                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Steps được trả trong trường `steps[]` của /query và được stream trong /stream│
+│ Steps cũng được lưu vào MongoDB và trả về qua GET /messages (trường `steps`) │
+│                                                                              │
+│ 1. QUERY_ANALYSIS — Phân tích & chuẩn hóa câu hỏi (bước đầu tiên luôn có)   │
+│    {                                                                         │
+│      "type": "query_analysis",                                               │
+│      "original_question": "Cho hỏi học phí CLC?",                            │
+│      "effective_question": "Học phí chương trình chất lượng cao là bao nhiêu?"│
+│      "needs_rag": true,     ← false nếu câu hỏi không cần tra tài liệu      │
+│      "metadata_filter": {   ← Bộ lọc tài liệu được trích xuất từ ngữ cảnh  │
+│        "academic_year": {"from_year": 2024, "to_year": 2025},               │
+│        "enrollment_year": {"from_year": 2021, "to_year": 2021}              │
+│      }                                                                       │
+│    }                                                                         │
+│                                                                              │
+│ 2. FAQ_CHECK — Kiểm tra câu hỏi có khớp FAQ đã có sẵn không                 │
+│    {                                                                         │
+│      "type": "faq_check",                                                    │
+│      "hit": true,                ← true: trả lời từ FAQ, false: tiếp tục RAG │
+│      "faq_question": "Học phí CLC?"  ← chỉ có khi hit=true                 │
+│    }                                                                         │
+│                                                                              │
+│ 3. RETRIEVAL — Kết quả tra cứu tài liệu từ Qdrant                           │
+│    {                                                                         │
+│      "type": "retrieval",                                                    │
+│      "candidate_files": [                                                    │
+│        {"file_id": "abc123", "file_name": "Quy chế ĐT", "doc_score": 0.92}  │
+│      ]                                                                       │
+│    }                                                                         │
+│                                                                              │
+│ 4. THOUGHT — Nội dung suy luận nội bộ của LLM (chỉ có trong /stream)        │
+│    Lưu ý: type=thought không được lưu vào steps[], chỉ stream cho FE        │
+│    {"type": "thought", "content": "Tôi cần tìm trong tài liệu...", "done": false}│
+│                                                                              │
+│ 5. CALL — Agent gọi một công cụ (tool call)                                  │
+│    {                                                                         │
+│      "type": "call",                                                         │
+│      "name": "get_page_content",   ← tên hàm tool được gọi                 │
+│      "args": {"ref_id": 1, "page_num": 0}  ← tham số của tool call         │
+│    }                                                                         │
+│                                                                              │
+│ 6. TOOL_OUTPUT — Kết quả trả về từ tool (chỉ stream cho FE, không lưu DB)   │
+│    {"type": "tool_output", "name": "get_page_content", "output": "...", "done": false}│
+│                                                                              │
+│ 7. REASONING — Văn bản phân tích trung gian trước <answer> (chỉ stream)     │
+│    {"type": "reasoning", "content": "Dựa trên tài liệu...", "done": false}  │
+│                                                                              │
+│ 8. TEXT — Nội dung câu trả lời cuối cùng (chỉ trong /stream)                │
+│    {"type": "text", "content": "Học phí CLC năm 2025 là...", "done": false} │
+│                                                                              │
+│ THỨ TỰ ĐIỂN HÌNH CỦA STEPS TRONG MỘT REQUEST:                               │
+│   query_analysis → faq_check → retrieval → call(s) → [text trong stream]    │
+│                                                                              │
+│ LƯU VÀO MONGODB:                                                             │
+│   Chỉ các bước pipeline cấp cao được lưu: query_analysis, faq_check,        │
+│   retrieval, call. Không lưu thought, tool_output, reasoning, text.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -335,15 +393,42 @@ MỤC LỤC
 │   }                                                                          │
 │                                                                              │
 │ RESPONSE (Event Stream - Server-Sent Events):                                │
-│   - Step 1:  data: {"type": "query_analysis", "original_question": "...", ...}│
-│   - Step 2:  data: {"type": "faq_check", "hit": false, ...}                  │
-│   - Step 3:  data: {"type": "retrieval", "candidate_files": [...], ...}      │
-│   - Thought: data: {"type": "thought", "content": "thinking...", "done": false}  │
-│   - Text:    data: {"type": "text", "content": "Hello", "done": false}           │
-│   - Call:    data: {"type": "call", "name": "get_doc", "args": {...}, "done": false} │
-│   - Final:   data: {"done": true, "sessionId": "...", "sources": [...]}             │
+│   Mỗi event có dạng: data: {json}\n\n                                       │
 │                                                                              │
-│ GHI CHÚ: `sessionId` được trả ở event cuối (`done=true`).                    │
+│   [1] data: {"type":"query_analysis","originalQuestion":"...",              │
+│              "effectiveQuestion":"...","needsRag":true,                      │
+│              "metadataFilter":{...}, "done":false}                           │
+│                                                                              │
+│   [2] data: {"type":"faq_check","hit":false,"done":false}                    │
+│       hoặc: {"type":"faq_check","hit":true,"faqQuestion":"...","done":false} │
+│                                                                              │
+│   [3] data: {"type":"retrieval","candidateFiles":[...],"done":false}          │
+│                                                                              │
+│   [4] data: {"type":"thought","content":"...","done":false}                  │
+│        ← Suy luận nội bộ LLM, FE có thể ẩn hoặc hiện dạng collapsible      │
+│                                                                              │
+│   [5] data: {"type":"call","name":"get_page_content",                        │
+│              "args":{"ref_id":1,"page_num":0},"done":false}                  │
+│        ← Agent đang gọi tool để đọc nội dung tài liệu                      │
+│                                                                              │
+│   [6] data: {"type":"tool_output","name":"get_page_content",                 │
+│              "output":"...","done":false}                                    │
+│        ← Kết quả trả về từ tool                                             │
+│                                                                              │
+│   [7] data: {"type":"reasoning","content":"...","done":false}                │
+│        ← Văn bản phân tích trước <answer> block                             │
+│                                                                              │
+│   [8] data: {"type":"text","content":"Học phí CLC là...","done":false}       │
+│        ← Nội dung câu trả lời cuối cùng, stream theo từng chunk             │
+│                                                                              │
+│   [DONE] data: {"done":true, "source":"llm", "sessionId":"...",              │
+│                 "sources":[...], "steps":[...], "processingTimeMs":1234}     │
+│        ← Event cuối: steps[] chứa query_analysis, faq_check, retrieval, call│
+│                                                                              │
+│ GHI CHÚ:                                                                     │
+│   - `sessionId` được trả ở event cuối (`done=true`).                         │
+│   - steps[] trong event done được lưu vào MongoDB và truy xuất qua GET msgs │
+│   - thought/tool_output/reasoning/text chỉ stream, không lưu vào steps[]    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id` và trích xuất `enrollment_year` tự động.  │
 │   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
@@ -377,10 +462,43 @@ MỤC LỤC
 │ MÔ TẢ: Lấy lịch sử message của một session thuộc user hiện tại.              │
 │ QUERY: ?page=1&pageSize=50                                                  │
 │ RESPONSE 200:                                                                 │
-│   { "sessionId": "...", "page": 1, "pageSize": 50, "total": 2,        │
+│   { "sessionId": "...", "page": 1, "pageSize": 50, "total": 3,        │
 │     "items": [                                                                 │
-│       {"role":"assistant","messageType":"thinking","content":"..."},   │
-│       {"role":"assistant","messageType":"text","content":"..."}       │
+│       {                                                                        │
+│         "role": "user",                                                       │
+│         "content": "Học phí CLC là bao nhiêu?",                              │
+│         "sequence": 1,                                                        │
+│         "messageType": "text",                                                │
+│         "steps": [],                                                          │
+│         "sources": [],                                                        │
+│         "createdAt": "2025-01-01T08:00:00"                                   │
+│       },                                                                      │
+│       {                                                                        │
+│         "role": "assistant",                                                  │
+│         "content": "...",      ← nội dung thinking (chỉ có trong /stream)    │
+│         "sequence": 2,                                                        │
+│         "messageType": "thinking",                                            │
+│         "steps": [],                                                          │
+│         "sources": [],                                                        │
+│         "createdAt": "2025-01-01T08:00:01"                                   │
+│       },                                                                      │
+│       {                                                                        │
+│         "role": "assistant",                                                  │
+│         "content": "Học phí CLC là 25 triệu đồng/năm.",                     │
+│         "sequence": 3,                                                        │
+│         "messageType": "text",                                                │
+│         "tokenUsage": {"promptTokenCount": 1200, "candidatesTokenCount": 300},│
+│         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
+│         "steps": [                                                            │
+│           {"type":"query_analysis","originalQuestion":"...",                 │
+│            "effectiveQuestion":"...","needsRag":true,"metadataFilter":{...}}, │
+│           {"type":"faq_check","hit":false},                                   │
+│           {"type":"retrieval","candidateFiles":[...]},                        │
+│           {"type":"call","name":"get_page_content","args":{"ref_id":1}}       │
+│         ],                                                                    │
+│         "processingTimeMs": 2450,                                             │
+│         "createdAt": "2025-01-01T08:00:02"                                   │
+│       }                                                                       │
 │     ] }                                                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id`.                                           │
@@ -388,7 +506,8 @@ MỤC LỤC
 │   3. Query `chat_messages` theo `session_id + user_id`.                       │
 │   4. Sort theo `sequence` tăng dần để giữ đúng thứ tự hội thoại.             │
 │   5. Mỗi message có `messageType` (`text` hoặc `thinking`) để FE render đúng.│
-│   6. Trả về messages + total.                                                 │
+│   6. Message assistant loại `text` chứa đầy đủ `steps[]`, `sources[]`.       │
+│   7. Trả về messages + total.                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
