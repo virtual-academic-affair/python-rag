@@ -227,11 +227,16 @@ class ChatService:
         if to_rich_text:
             final_answer = markdown_to_rich_text(answer_markdown)
 
+        # Only persist structural pipeline steps — filter out verbose LLM internals
+        # (thought, tool_output, reasoning are too large and not useful for history)
+        PERSIST_STEP_TYPES = {"query_analysis", "faq_check", "retrieval", "call"}
+        agent_call_steps = [s for s in result["steps"] if s.get("type") in PERSIST_STEP_TYPES]
+
         return {
             "answer": final_answer,
             "source": "llm",
             "sources": result["sources"],
-            "steps": pipeline_steps + result["steps"],
+            "steps": pipeline_steps + agent_call_steps,
             "token_usage": result.get("tokenUsage"),
             "processing_time_ms": processing_time_ms,
         }
@@ -252,9 +257,8 @@ class ChatService:
         source attribution logic.
 
         Yields JSON strings:
-          - {type: "thought", content, done: false}
+          - {type: "reasoning", content, done: false}  ← suy luận nội bộ (thought) + kế hoạch Agent
           - {type: "call", name, args, done: false}
-          - {type: "tool_output", name, output, done: false}
           - {type: "text", content, done: false}
           - {done: true, sources: [...], processing_time_ms: ...}
         """
@@ -376,14 +380,14 @@ class ChatService:
         logger.info(f"[Chat] Bắt đầu stream response về cho người dùng (Khởi động Agent Stream)")
 
         for turn_idx in range(settings.AGENT_MAX_TURNS):
-            logger.info(f"[Chat-Stream] Vòng lặp stream turn {turn_idx + 1}")
+            logger.info(f"[Chat-Stream] === Turn {turn_idx + 1}/{settings.AGENT_MAX_TURNS} ===")
             tool_calls_in_turn = []
             model_response_parts = []
 
             turn_text_buffer = ""
             in_answer_block = False
             yielded_text_length = 0
-            emitted_reasoning = False
+            yielded_reasoning_length = 0
 
             stream = await gemini_client.client.aio.models.generate_content_stream(
                 model=settings.GEMINI_MODEL,
@@ -407,101 +411,141 @@ class ChatService:
                     if hasattr(part, "thought") and part.thought:
                         thought_content = str(part.thought)
                         if thought_content != "True":
-                            yield json.dumps({"type": "thought", "content": thought_content, "done": False})
+                            # Emit as reasoning — same channel as planning text, simpler for FE
+                            yield json.dumps({"type": "reasoning", "content": thought_content, "done": False})
 
                     if part.function_call:
                         call = part.function_call
                         tool_calls_in_turn.append(call)
                         stream_steps.append({"type": "call", "name": call.name, "args": dict(call.args)})
                         logger.info(f"[Chat-Stream] Chuẩn bị gọi tool: {call.name} (args: {call.args})")
-                        yield json.dumps({"type": "call", "name": call.name, "args": call.args, "done": False})
+
+                        # Map file_id to friendly file_name
+                        raw_fid = str(call.args.get("file_id", ""))
+                        fid = raw_fid.strip().strip("[]")
+                        file_name = "tài liệu quy chế"
+                        for c in candidate_files:
+                            c_fid = str(c.get("file_id", "")).strip()
+                            if c_fid == fid:
+                                file_name = c.get("file_name", "tài liệu")
+                                break
+                        else:
+                            # Try matching as numerical index
+                            if fid.isdigit():
+                                idx = int(fid) - 1
+                                if 0 <= idx < len(candidate_files):
+                                    file_name = candidate_files[idx].get("file_name", "tài liệu")
+
+                        # Yield a descriptive reasoning event
+                        if call.name == "get_document_structure":
+                            reasoning_status = f"Đang tra cứu cấu trúc mục lục của '{file_name}'...\n"
+                        elif call.name == "get_page_content":
+                            pages = call.args.get("pages", "")
+                            reasoning_status = f"Đang đọc nội dung chi tiết (phần/dòng {pages}) từ '{file_name}'...\n"
+                        else:
+                            reasoning_status = f"Đang thực hiện tra cứu bổ sung qua công cụ {call.name}...\n"
+
+                        yield json.dumps({"type": "reasoning", "content": reasoning_status, "done": False})
+                        yield json.dumps({"type": "call", "name": call.name, "args": dict(call.args), "done": False})
 
                     if part.text:
                         turn_text_buffer += part.text
-                        if not tool_calls_in_turn:
-                            import re
-                            if not in_answer_block:
-                                match = re.search(r'<answer>', turn_text_buffer, flags=re.IGNORECASE)
-                                if match:
-                                    logger.info("[Chat-Stream] Agent bắt đầu stream nội dung <answer> cuối cùng!")
-                                    in_answer_block = True
-                                    pre_think = turn_text_buffer[:match.start()].strip()
-                                    if pre_think and not emitted_reasoning:
-                                        yield json.dumps({"type": "reasoning", "content": pre_think, "done": False})
-                                        emitted_reasoning = True
-                            
-                            if in_answer_block:
-                                if stream_formatter is None:
-                                    current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                                    stream_formatter = CitationStreamFormatter(
-                                        current_sources, 
-                                        resolve_citations=resolve_citations,
-                                        citation_link_type=citation_link_type
-                                    )
+                        if not in_answer_block:
+                            match = re.search(r'<answer>', turn_text_buffer, flags=re.IGNORECASE)
+                            if match:
+                                logger.info("[Chat-Stream] Agent bắt đầu stream nội dung <answer> cuối cùng!")
+                                pre_think = turn_text_buffer[:match.start()]
+                                new_reasoning = pre_think[yielded_reasoning_length:]
+                                if new_reasoning:
+                                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
+                                    yielded_reasoning_length += len(new_reasoning)
+                                in_answer_block = True
+                            else:
+                                # Progressive stream of reasoning before the answer tag is hit
+                                new_reasoning = turn_text_buffer[yielded_reasoning_length:]
+                                if new_reasoning:
+                                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
+                                    yielded_reasoning_length += len(new_reasoning)
 
-                                match = re.search(r'<answer>(.*)', turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
-                                if match:
-                                    inside_content = match.group(1)
-                                    end_match = re.search(r'</answer>', inside_content, flags=re.IGNORECASE)
-                                    if end_match:
-                                        final_to_yield = inside_content[:end_match.start()]
-                                        new_text = final_to_yield[yielded_text_length:]
-                                        if new_text:
-                                            formatted = stream_formatter.process_chunk(new_text)
-                                            formatted_flush = stream_formatter.flush()
-                                            combined = formatted + formatted_flush
-                                            if combined:
-                                                final_answer_accumulated += combined
-                                                yield json.dumps({"type": "text", "content": combined, "done": False})
-                                            yielded_text_length += len(new_text)
-                                    else:
-                                        safe_len = len(inside_content) - 15
-                                        if safe_len > yielded_text_length:
-                                            new_text = inside_content[yielded_text_length:safe_len]
-                                            formatted = stream_formatter.process_chunk(new_text)
-                                            if formatted:
-                                                yield json.dumps({"type": "text", "content": formatted, "done": False})
-                                            yielded_text_length += len(new_text)
+                        if in_answer_block:
+                            if stream_formatter is None:
+                                current_sources = await build_sources_from_steps(stream_steps, candidate_files)
+                                stream_formatter = CitationStreamFormatter(
+                                    current_sources, 
+                                    resolve_citations=resolve_citations,
+                                    citation_link_type=citation_link_type
+                                )
+
+                            match = re.search(r'<answer>\r?\n?(.*)', turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
+                            if match:
+                                inside_content = match.group(1)
+                                end_match = re.search(r'</answer>', inside_content, flags=re.IGNORECASE)
+                                if end_match:
+                                    final_to_yield = inside_content[:end_match.start()]
+                                    new_text = final_to_yield[yielded_text_length:]
+                                    if new_text:
+                                        formatted = stream_formatter.process_chunk(new_text)
+                                        formatted_flush = stream_formatter.flush()
+                                        combined = formatted + formatted_flush
+                                        if combined:
+                                            final_answer_accumulated += combined
+                                            yield json.dumps({"type": "text", "content": combined, "done": False})
+                                        yielded_text_length += len(new_text)
+                                else:
+                                    safe_len = len(inside_content) - 15
+                                    if safe_len > yielded_text_length:
+                                        new_text = inside_content[yielded_text_length:safe_len]
+                                        formatted = stream_formatter.process_chunk(new_text)
+                                        if formatted:
+                                            final_answer_accumulated += formatted
+                                            yield json.dumps({"type": "text", "content": formatted, "done": False})
+                                        yielded_text_length += len(new_text)
 
             # Yield accumulated text based on whether this turn had tool calls
             if tool_calls_in_turn:
-                if turn_text_buffer:
-                    yield json.dumps({"type": "reasoning", "content": turn_text_buffer, "done": False})
+                new_reasoning = turn_text_buffer[yielded_reasoning_length:]
+                if new_reasoning:
+                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
+                    yielded_reasoning_length += len(new_reasoning)
             else:
                 if turn_text_buffer:
-                    pre_think, final_text = parse_agent_response(turn_text_buffer)
-                    if pre_think and not emitted_reasoning:
-                        yield json.dumps({"type": "reasoning", "content": pre_think, "done": False})
-                    
-                    if len(final_text) > yielded_text_length:
-                        new_text = final_text[yielded_text_length:]
-                        if stream_formatter is None:
-                            current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                            stream_formatter = CitationStreamFormatter(
-                                current_sources,
-                                resolve_citations=resolve_citations,
-                                citation_link_type=citation_link_type
-                            )
-                        
-                        formatted = stream_formatter.process_chunk(new_text)
-                        formatted_flush = stream_formatter.flush()
-                        combined = formatted + formatted_flush
-                        if combined:
-                            final_answer_accumulated += combined
-                            yield json.dumps({"type": "text", "content": combined, "done": False})
-                    
-                    if not final_text and not pre_think and len(turn_text_buffer) > 0 and yielded_text_length == 0:
-                        # Fallback IF somehow parse returns empty but we have data
-                        if stream_formatter is None:
-                            current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                            stream_formatter = CitationStreamFormatter(current_sources)
+                    if in_answer_block:
+                        pre_think, final_text = parse_agent_response(turn_text_buffer)
+                        if len(final_text) > yielded_text_length:
+                            new_text = final_text[yielded_text_length:]
+                            if stream_formatter is None:
+                                current_sources = await build_sources_from_steps(stream_steps, candidate_files)
+                                stream_formatter = CitationStreamFormatter(
+                                    current_sources,
+                                    resolve_citations=resolve_citations,
+                                    citation_link_type=citation_link_type
+                                )
                             
-                        formatted = stream_formatter.process_chunk(turn_text_buffer)
-                        formatted_flush = stream_formatter.flush()
-                        combined = formatted + formatted_flush
-                        if combined:
-                            final_answer_accumulated += combined
-                            yield json.dumps({"type": "text", "content": combined, "done": False})
+                            formatted = stream_formatter.process_chunk(new_text)
+                            formatted_flush = stream_formatter.flush()
+                            combined = formatted + formatted_flush
+                            if combined:
+                                final_answer_accumulated += combined
+                                yield json.dumps({"type": "text", "content": combined, "done": False})
+                        
+                        if not final_text and not pre_think and len(turn_text_buffer) > 0 and yielded_text_length == 0:
+                            # Fallback IF somehow parse returns empty but we have data
+                            if stream_formatter is None:
+                                current_sources = await build_sources_from_steps(stream_steps, candidate_files)
+                                stream_formatter = CitationStreamFormatter(current_sources)
+                                
+                            formatted = stream_formatter.process_chunk(turn_text_buffer)
+                            formatted_flush = stream_formatter.flush()
+                            combined = formatted + formatted_flush
+                            if combined:
+                                final_answer_accumulated += combined
+                                yield json.dumps({"type": "text", "content": combined, "done": False})
+                    else:
+                        # Turn didn't transition to answer block (e.g. no tags or intermediate turn), flush reasoning
+                        new_reasoning = turn_text_buffer[yielded_reasoning_length:]
+                        if new_reasoning:
+                            yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
+                            yielded_reasoning_length += len(new_reasoning)
 
             # History fragmentation fix: combine text parts into one
             clean_parts = []
@@ -524,12 +568,12 @@ class ChatService:
                 try:
                     tool_func = tool_map.get(call.name)
                     result = await tool_func(**call.args) if tool_func else f"Error: Tool {call.name} not found."
-                    yield json.dumps({"type": "tool_output", "name": call.name, "output": str(result), "done": False})
+                    # tool_output not streamed — raw page content is too large and not useful to FE
                     tool_response_parts.append(
                         types.Part.from_function_response(name=call.name, response={"result": result})
                     )
                 except Exception as e:
-                    logger.error(f"Error executing tool {call.name}: {e}")
+                    logger.error(f"[Chat-Stream] Tool '{call.name}' failed at turn {turn_idx + 1}: {e}", exc_info=True)
                     tool_response_parts.append(
                         types.Part.from_function_response(name=call.name, response={"error": str(e)})
                     )
@@ -538,6 +582,9 @@ class ChatService:
 
         if current_sources is None:
             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
+
+        if turn_idx == settings.AGENT_MAX_TURNS - 1 and tool_calls_in_turn:
+            logger.warning(f"[Chat-Stream] Agent reached max_turns ({settings.AGENT_MAX_TURNS}) and was cut off — possible infinite loop.")
             
         final_answer_accumulated = sanitize_latex_in_markdown(final_answer_accumulated)
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -554,11 +601,15 @@ class ChatService:
             processing_time_ms=processing_time_ms,
         ))
             
+        # Only persist structural steps — discard tool_output (contains raw page content)
+        PERSIST_STEP_TYPES = {"query_analysis", "faq_check", "retrieval", "call"}
+        filtered_stream_steps = [s for s in stream_steps if s.get("type") in PERSIST_STEP_TYPES]
+
         yield json.dumps({
             "done": True,
             "source": "llm",
             "sources": current_sources,
-            "steps": pipeline_steps + stream_steps,
+            "steps": pipeline_steps + filtered_stream_steps,
             "tokenUsage": {
                 "promptTokens": total_prompt_tokens,
                 "completionTokens": total_candidates_tokens,

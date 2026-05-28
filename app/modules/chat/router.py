@@ -232,7 +232,7 @@ async def chat_stream(
         async def event_generator():
             """Generator for SSE events."""
             assistant_chunks: list[str] = []
-            thought_chunks: list[str] = []
+            is_first_chunk = True
             try:
                 chat_svc = get_chat_service()
                 async for chunk_json in chat_svc.stream_chat_response(
@@ -243,8 +243,11 @@ async def chat_stream(
                     citation_link_type=request.citation_link_type,
                 ):
                     payload = json.loads(chunk_json)
-                    if payload.get("type") == "thought" and payload.get("content"):
-                        thought_chunks.append(payload["content"])
+                    
+                    if is_first_chunk:
+                        payload["session_id"] = session_id
+                        is_first_chunk = False
+                    
                     if payload.get("type") == "text" and payload.get("content"):
                         assistant_chunks.append(payload["content"])
 
@@ -258,16 +261,8 @@ async def chat_stream(
                                 or ""
                             )
 
-                        thought_content = "\n".join(thought_chunks).strip()
-                        if thought_content:
-                            await chat_history_repo.append_message(
-                                session_id=session_id,
-                                user_id=user_context.user_id,
-                                role="assistant",
-                                content=thought_content,
-                                message_type="thinking",
-                            )
-
+                        # reasoning content is streamed to FE but NOT saved to MongoDB
+                        # (too large, no audit value beyond the structural steps[])
                         await chat_history_repo.append_message(
                             session_id=session_id,
                             user_id=user_context.user_id,
@@ -279,14 +274,16 @@ async def chat_stream(
                             processing_time_ms=payload.get("processing_time_ms"),
                             message_type="text",
                         )
-                        payload["session_id"] = session_id
-                        chunk_json = json.dumps(payload, ensure_ascii=False)
+                    
+                    chunk_json = json.dumps(payload, ensure_ascii=False)
                     # SSE format: data: {json}\n\n
                     yield f"data: {chunk_json}\n\n"
             except ValueError as e:
+                logger.error(f"[Chat-Stream] ValueError during stream: {e}", exc_info=True)
                 error_data = json.dumps({
                     "error": str(e),
-                    "done": True
+                    "done": True,
+                    "session_id": session_id
                 })
                 yield f"data: {error_data}\n\n"
             except APIError as e:
@@ -294,32 +291,40 @@ async def chat_stream(
                 if not isinstance(ai_code, int) or ai_code < 400:
                     ai_code = 500
                 if ai_code == 429:
+                    logger.warning(f"[Chat-Stream] Rate limit exceeded (429) for user {user_context.user_id}")
                     error_data = json.dumps({
                         "error": "rate_limit_exceeded",
                         "message": "Quá tải hệ thống AI. Vui lòng thử lại sau.",
                         "status_code": 429,
-                        "done": True
+                        "done": True,
+                        "session_id": session_id
                     })
                 elif ai_code == 500 and ("500 INTERNAL" in str(e) or "Internal error encountered" in str(e)):
+                    logger.error(f"[Chat-Stream] Google internal server error (500): {e}")
                     error_data = json.dumps({
                         "error": "ai_service_error",
                         "message": "Google internal server error",
                         "status_code": 500,
-                        "done": True
+                        "done": True,
+                        "session_id": session_id
                     })
                 else:
+                    logger.error(f"[Chat-Stream] Gemini APIError ({ai_code}): {e}")
                     error_data = json.dumps({
                         "error": "ai_service_error",
                         "message": str(e),
                         "status_code": ai_code,
-                        "done": True
+                        "done": True,
+                        "session_id": session_id
                     })
                 yield f"data: {error_data}\n\n"
             except Exception as e:
+                logger.error(f"[Chat-Stream] Unexpected error for user {user_context.user_id}: {e}", exc_info=True)
                 error_data = json.dumps({
                     "error": "internal_error",
                     "message": f"Failed to stream chat response: {str(e)}",
-                    "done": True
+                    "done": True,
+                    "session_id": session_id
                 })
                 yield f"data: {error_data}\n\n"
 

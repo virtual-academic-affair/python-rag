@@ -25,7 +25,7 @@ class ChatQueryRequest(BaseSchema):
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
     session_id: str = Field(..., description="Chat session ID")
-    source: str = Field(default="llm", description="Source of the answer: 'llm', 'faq', or 'bypass'")
+    source: str = Field(default="llm", description="Source of the answer: 'llm' | 'faq'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
     token_usage: Optional[dict] = Field(default=None, description="Token consumption statistics")
@@ -91,7 +91,7 @@ class ChatMessageItem(BaseSchema):
     message_type: str = Field(default="text", description="Message type: text or thinking")
     token_usage: Optional[Dict[str, Any]] = None
     sources: Optional[List[Dict[str, Any]]] = Field(default=None)
-    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps: query_analysis, faq_check, retrieval, thought, call, tool_output")
+    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps persisted to DB: query_analysis, faq_check, retrieval, call")
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
 
