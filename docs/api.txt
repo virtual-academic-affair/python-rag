@@ -353,32 +353,35 @@ MỤC LỤC
 │      ]                                                                       │
 │    }                                                                         │
 │                                                                              │
-│ 4. THOUGHT — Nội dung suy luận nội bộ của LLM (chỉ có trong /stream)        │
-│    Lưu ý: type=thought không được lưu vào steps[], chỉ stream cho FE        │
-│    {"type": "thought", "content": "Tôi cần tìm trong tài liệu...", "done": false}│
-│                                                                              │
-│ 5. CALL — Agent gọi một công cụ (tool call)                                  │
+│ 4. CALL — Agent gọi một công cụ (tool call)                                  │
 │    {                                                                         │
 │      "type": "call",                                                         │
 │      "name": "get_page_content",   ← tên hàm tool được gọi                 │
-│      "args": {"ref_id": 1, "page_num": 0}  ← tham số của tool call         │
+│      "args": {"file_id": "1", "pages": "449-464"}  ← tham số của tool call │
 │    }                                                                         │
 │                                                                              │
-│ 6. TOOL_OUTPUT — Kết quả trả về từ tool (chỉ stream cho FE, không lưu DB)   │
-│    {"type": "tool_output", "name": "get_page_content", "output": "...", "done": false}│
+│ 5. TOOL_OUTPUT — Kết quả trả về thô của tool (Không lưu, không stream)      │
+│    Lưu ý: Bị loại bỏ hoàn toàn khỏi cả stream lẫn DB để tiết kiệm băng thông │
 │                                                                              │
-│ 7. REASONING — Văn bản phân tích trung gian trước <answer> (chỉ stream)     │
-│    {"type": "reasoning", "content": "Dựa trên tài liệu...", "done": false}  │
+│ 6. REASONING — Suy luận tổng hợp của Agent (chỉ stream, không lưu DB)       │
+│    Nguồn: (a) part.thought nội bộ từ Gemini API, hoặc                        │
+│           (b) Status text từ service.py khi gọi tool (tiếng Việt thân thiện) │
+│           (c) Văn bản Agent tự viết trước thẻ <answer> theo system prompt    │
+│    Ví dụ: {"type": "reasoning",                                              │
+│            "content": "Đang tra cứu mục lục của 'Quy chế đào tạo ĐH 2021'...",│
+│            "done": false}                                                    │
 │                                                                              │
-│ 8. TEXT — Nội dung câu trả lời cuối cùng (chỉ trong /stream)                │
+│ 7. TEXT — Nội dung câu trả lời cuối cùng (chỉ trong /stream)                │
 │    {"type": "text", "content": "Học phí CLC năm 2025 là...", "done": false} │
 │                                                                              │
-│ THỨ TỰ ĐIỂN HÌNH CỦA STEPS TRONG MỘT REQUEST:                               │
-│   query_analysis → faq_check → retrieval → call(s) → [text trong stream]    │
+│ THỨ TỰ ĐIỂN HÌNH CỦA CÁC EVENT TRONG MỘT /stream REQUEST:                  │
+│   query_analysis → faq_check → retrieval                                     │
+│   → reasoning(status) + call (lặp lại cho mỗi tool)                         │
+│   → reasoning(kết luận) → text(s) → done                                    │
 │                                                                              │
 │ LƯU VÀO MONGODB:                                                             │
 │   Chỉ các bước pipeline cấp cao được lưu: query_analysis, faq_check,        │
-│   retrieval, call. Không lưu thought, tool_output, reasoning, text.          │
+│   retrieval, call. Không lưu tool_output, reasoning, text.                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -395,47 +398,61 @@ MỤC LỤC
 │ RESPONSE (Event Stream - Server-Sent Events):                                │
 │   Mỗi event có dạng: data: {json}\n\n                                       │
 │                                                                              │
-│   [1] data: {"type":"query_analysis","originalQuestion":"...",              │
-│              "effectiveQuestion":"...","needsRag":true,                      │
-│              "metadataFilter":{...}, "done":false}                           │
+│   [1] data: {"type":"query_analysis","original_question":"...",              │
+│              "effective_question":"...","needs_rag":true,                      │
+│              "metadata_filter":{...}, "done":false}                           │
 │                                                                              │
 │   [2] data: {"type":"faq_check","hit":false,"done":false}                    │
-│       hoặc: {"type":"faq_check","hit":true,"faqQuestion":"...","done":false} │
+│       hoặc: {"type":"faq_check","hit":true,"faq_question":"...","done":false} │
 │                                                                              │
-│   [3] data: {"type":"retrieval","candidateFiles":[...],"done":false}          │
+│   [3] data: {"type":"retrieval","candidate_files":[...],"done":false}         │
 │                                                                              │
-│   [4] data: {"type":"thought","content":"...","done":false}                  │
-│        ← Suy luận nội bộ LLM, FE có thể ẩn hoặc hiện dạng collapsible      │
+│   [4] data: {"type":"reasoning",                                             │
+│              "content":"Đang tra cứu mục lục của 'Quy chế đào tạo ĐH 2021'...",│
+│              "done":false}                                                   │
+│        ← Status tra cứu thân thiện, tự động sinh khi Agent gọi tool         │
 │                                                                              │
-│   [5] data: {"type":"call","name":"get_page_content",                        │
-│              "args":{"ref_id":1,"page_num":0},"done":false}                  │
-│        ← Agent đang gọi tool để đọc nội dung tài liệu                      │
+│   [5] data: {"type":"call","name":"get_document_structure",                  │
+│              "args":{"file_id":"1"},"done":false}                             │
+│        ← Thông báo Agent đang gọi tool nào với tham số gì                   │
 │                                                                              │
-│   [6] data: {"type":"tool_output","name":"get_page_content",                 │
-│              "output":"...","done":false}                                    │
-│        ← Kết quả trả về từ tool                                             │
+│   [6] data: {"type":"reasoning",                                             │
+│              "content":"Đang đọc nội dung (dòng 449-464) từ 'Quy chế...'...",│
+│              "done":false}                                                   │
+│        ← reasoning + call lặp lại cho mỗi tool được gọi                     │
 │                                                                              │
-│   [7] data: {"type":"reasoning","content":"...","done":false}                │
-│        ← Văn bản phân tích trước <answer> block                             │
+│   [7] data: {"type":"call","name":"get_page_content",                        │
+│              "args":{"file_id":"1","pages":"449-464"},"done":false}           │
 │                                                                              │
-│   [8] data: {"type":"text","content":"Học phí CLC là...","done":false}       │
+│   [8] data: {"type":"reasoning","content":"Dựa vào thông tin tìm thấy...",  │
+│              "done":false}                                                   │
+│        ← Kết luận suy luận của Agent trước khi đưa ra câu trả lời           │
+│          (bao gồm cả part.thought nội bộ từ Gemini nếu có)                  │
+│                                                                              │
+│   [9] data: {"type":"text","content":"Phòng Giáo vụ xin thông báo...",      │
+│              "done":false}                                                   │
 │        ← Nội dung câu trả lời cuối cùng, stream theo từng chunk             │
 │                                                                              │
-│   [DONE] data: {"done":true, "source":"llm", "sessionId":"...",              │
-│                 "sources":[...], "steps":[...], "processingTimeMs":1234}     │
+│   [DONE] data: {"done":true, "source":"llm",                                 │
+│                 "sources":[{"citationId":1,"fileName":"...","title":"..."}], │
+│                 "steps":[{"type":"query_analysis",...},{"type":"call",...}],  │
+│                 "tokenUsage":{"promptTokens":N,"completionTokens":N,         │
+│                               "totalTokens":N},                              │
+│                 "processing_time_ms":1234}                                   │
 │        ← Event cuối: steps[] chứa query_analysis, faq_check, retrieval, call│
 │                                                                              │
 │ GHI CHÚ:                                                                     │
-│   - `sessionId` được trả ở event cuối (`done=true`).                         │
-│   - steps[] trong event done được lưu vào MongoDB và truy xuất qua GET msgs │
-│   - thought/tool_output/reasoning/text chỉ stream, không lưu vào steps[]    │
+│   - steps[] trong event DONE được lưu vào MongoDB, truy xuất qua GET msgs.  │
+│   - reasoning/text chỉ stream, KHÔNG lưu vào steps[].                        │
+│   - Không còn type "thought" — Gemini internal thought được emit dưới dạng  │
+│     type "reasoning" cùng kênh với Agent planning text.                      │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id` và trích xuất `enrollment_year` tự động.  │
 │   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
-│   3. Phát lần lượt các bước phân tích (query_analysis, faq_check, retrieval) │
-│      dưới dạng các event SSE đầu tiên để giao diện hiển thị trạng thái xử lý.│
-│   4. Stream từng token/thought từ LLM Agent loop.                            │
-│   5. Gom lưu kết quả vào MongoDB (chat_messages) khi kết thúc stream.        │
+│   3. Phát lần lượt: query_analysis → faq_check → retrieval dưới dạng SSE.   │
+│   4. Với mỗi tool call: stream reasoning(status) → call → thực thi tool.    │
+│   5. Khi Agent chuẩn bị trả lời: stream reasoning(kết luận) → text chunks.  │
+│   6. Lưu structural steps vào MongoDB (chat_messages) khi stream kết thúc.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
