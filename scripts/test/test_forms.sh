@@ -147,4 +147,60 @@ else
     echo "❌ Failed CSV forms bulk import (Expected 1, found $IMPORT_COUNT)"
 fi
 
-echo -e "\n🎉 All Forms tests completed!"
+# 6. Test Create Form
+echo -e "\n6. Test Create Form"
+BODY_JSON="{\"documentType\": \"Biểu mẫu xin nghỉ phép ($TS)\", \"contentLink\": \"https://example.com\", \"notes\": \"Ghi chú\"}"
+response=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/forms" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$BODY_JSON")
+
+HTTP_CODE=$(echo "$response" | tail -n1)
+BODY=$(echo "$response" | sed '$d')
+
+echo "Status: $HTTP_CODE"
+FORM_ID=$(echo "$BODY" | jq -r '.id // empty')
+if [ -n "$FORM_ID" ] && [ "$FORM_ID" != "null" ]; then
+    echo "✅ Create Form successful (ID: $FORM_ID)"
+else
+    echo "❌ Failed to create form"
+    exit 1
+fi
+
+# 7. Test Get Form
+echo -e "\n7. Test Get Form"
+response=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/api/forms/${FORM_ID}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}")
+HTTP_CODE=$(echo "$response" | tail -n1)
+if [ "$HTTP_CODE" -eq 200 ]; then
+    echo "✅ Get Form successful"
+else
+    echo "❌ Failed to get form"
+fi
+
+# 8. Test Update Form
+echo -e "\n8. Test Update Form"
+UPDATE_JSON="{\"documentType\": \"Biểu mẫu xin nghỉ phép (Updated)\", \"contentLink\": \"https://example.com/updated\"}"
+response=$(curl -s -w "\n%{http_code}" -X PUT "${BASE_URL}/api/forms/${FORM_ID}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATE_JSON")
+HTTP_CODE=$(echo "$response" | tail -n1)
+if [ "$HTTP_CODE" -eq 200 ]; then
+    echo "✅ Update Form successful"
+else
+    echo "❌ Failed to update form"
+fi
+
+# 9. Test Delete Form
+echo -e "\n9. Test Delete Form"
+response=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/api/forms/${FORM_ID}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}")
+HTTP_CODE=$(echo "$response" | tail -n1)
+if [ "$HTTP_CODE" -eq 204 ] || [ "$HTTP_CODE" -eq 200 ]; then
+    echo "✅ Delete Form successful"
+else
+    echo "❌ Failed to delete form"
+fi
+echo -e "
+🎉 All Forms tests completed!"

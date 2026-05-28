@@ -32,13 +32,13 @@ MỤC LỤC
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
  4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (9 endpoints) [🔒 auth]
- 6. FAQ MODULE APIs            (11 endpoints) [🔒 admin / 🔒 auth]
- 7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
+ 6. FAQ MODULE APIs            (12 endpoints) [🔒 admin / 🔒 auth]
+ 7. FORMS MODULE APIs          (8 endpoints)  [🔒 admin / 🔒 auth]
  8. Debug & Preview APIs       (2 endpoints) [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 42 ENDPOINTS
+ TỔNG: 44 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -208,7 +208,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/files/{fileId}        [🔒 ADMIN]                                  │
+│ PATCH /api/files/{file_id}        [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Cập nhật thông tin tệp tin (Tên hiển thị, Metadata).                  │
 │                                                                              │
@@ -242,7 +242,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/toc-tree/{fileId}       [🔒 AUTH]                                   │
+│ GET /api/toc-tree/{file_id}       [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy cấu trúc mục lục (TOC Tree) chi tiết theo PageIndex Schema.        │
 │ RESPONSE: { "docName": "...", "structure": [...], "markdownStoragePath": "..." } │
@@ -250,7 +250,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/files/{fileId}          [🔒 AUTH]                                   │
+│ GET /api/files/{file_id}          [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy thông tin chi tiết một tệp tin.                                   │
 │ RESPONSE: FileDetailResponse kèm Download URLs, tableOfContents và summary.  │
@@ -258,7 +258,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/files/{fileId}/download [🔒 AUTH]                                   │
+│ GET /api/files/{file_id}/download [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Tải xuống trực tiếp tệp tin binary từ kho lưu trữ R2.                 │
 │ RESPONSE: Binary file stream.                                                │
@@ -266,7 +266,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/files/{fileId}       [🔒 ADMIN]                                  │
+│ DELETE /api/files/{file_id}       [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
 │ RESPONSE 204: No Content.                                                    │
@@ -292,9 +292,7 @@ MỤC LỤC
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
-│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
-│     "chatHistory": [],                                                       │
-│     "metadataFilter": {"academicYear": {"fromYear": 2025, "toYear": 2025}},  │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
 │     "resolveCitations": false,                                               │
 │     "citationLinkType": "markdown",                                          │
 │     "toRichText": false                                                      │
@@ -303,21 +301,26 @@ MỤC LỤC
 │ RESPONSE 200 OK:                                                             │
 │   {                                                                          │
 │     "answer": "Theo quyết định số...",                                       │
-│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
 │     "source": "llm",                                                         │
 │     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
+│     "steps": [                                                               │
+│       {"type": "query_analysis", "original_question": "...", ...},           │
+│       {"type": "faq_check", "hit": false},                                    │
+│       {"type": "retrieval", "candidate_files": [...]}                        │
+│     ],                                                                       │
 │     "processingTimeMs": 2500                                                 │
 │   }                                                                          │
 │                                                                              │
 │ GHI CHÚ: Nếu không truyền `sessionId`, hệ thống sẽ tự tạo session mới.       │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id` từ claim `sub`.                           │
-│   2. Resolve `sessionId` (dùng giá trị client truyền hoặc tự sinh UUID).     │
-│   3. Ensure session trong Mongo (`chat_sessions`).                            │
-│   4. Lưu message user vào `chat_messages`.                                    │
-│   5. Chạy luồng RAG đồng bộ để tạo câu trả lời.                               │
-│   6. Lưu message assistant (answer, sources, token usage, processing time).   │
-│   7. Trả response chứa `sessionId` để FE tiếp tục hội thoại cùng session.     │
+│   1. Xác thực JWT -> lấy `user_id` từ claim `sub`, trích xuất tự động         │
+│      `enrollment_year` từ JWT (cohort/enrollmentyear) làm bộ lọc mặc định.   │
+│   2. Tự động load lịch sử trò chuyện (6 tin nhắn gần nhất) từ MongoDB.       │
+│   3. QueryAnalyzer phân tích câu hỏi + history để tạo câu hỏi tối ưu         │
+│      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
+│   4. Chạy luồng RAG đồng bộ (kiểm tra FAQ trước, sau đó retrieve văn bản).   │
+│   5. Trả response chứa `sessionId` và danh sách steps xử lý chi tiết.         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -326,13 +329,15 @@ MỤC LỤC
 │ REQUEST BODY (JSON):                                                         │
 │   {                                                                          │
 │     "question": "...",                                                       │
-│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                    │
-│     "chatHistory": [],                                                       │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
 │     "resolveCitations": false,                                               │
 │     "citationLinkType": "markdown"                                           │
 │   }                                                                          │
 │                                                                              │
-│ RESPONSE (Event Stream):                                                     │
+│ RESPONSE (Event Stream - Server-Sent Events):                                │
+│   - Step 1:  data: {"type": "query_analysis", "original_question": "...", ...}│
+│   - Step 2:  data: {"type": "faq_check", "hit": false, ...}                  │
+│   - Step 3:  data: {"type": "retrieval", "candidate_files": [...], ...}      │
 │   - Thought: data: {"type": "thought", "content": "thinking...", "done": false}  │
 │   - Text:    data: {"type": "text", "content": "Hello", "done": false}           │
 │   - Call:    data: {"type": "call", "name": "get_doc", "args": {...}, "done": false} │
@@ -340,38 +345,37 @@ MỤC LỤC
 │                                                                              │
 │ GHI CHÚ: `sessionId` được trả ở event cuối (`done=true`).                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Resolve `sessionId` như `/query` và ensure session.                      │
-│   3. Lưu message user trước khi stream.                                       │
-│   4. Stream từng event SSE từ ChatService.                                    │
-│   5. Gom text assistant từ event `type=text` và gom thinking từ `type=thought`.│
-│   6. Khi `done=true`: lưu thinking (`message_type=thinking`), lưu answer text  │
-│      (`message_type=text`), rồi inject `sessionId` vào event cuối.            │
+│   1. Xác thực JWT -> lấy `user_id` và trích xuất `enrollment_year` tự động.  │
+│   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
+│   3. Phát lần lượt các bước phân tích (query_analysis, faq_check, retrieval) │
+│      dưới dạng các event SSE đầu tiên để giao diện hiển thị trạng thái xử lý.│
+│   4. Stream từng token/thought từ LLM Agent loop.                            │
+│   5. Gom lưu kết quả vào MongoDB (chat_messages) khi kết thúc stream.        │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/chat/sessions           [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy danh sách chat sessions của user hiện tại (phân trang).           │
-│ QUERY: ?page=1&page_size=20&status_filter=archived                           │
+│ QUERY: ?page=1&pageSize=20&statusFilter=archived                           │
 │ GHI CHÚ:                                                                      │
-│   - Mặc định (không truyền `status_filter`): chỉ trả session `active`.        │
-│   - Có truyền `status_filter`: chỉ nhận `active` | `archived`.                │
+│   - Mặc định (không truyền `statusFilter`): chỉ trả session `active`.        │
+│   - Có truyền `statusFilter`: chỉ nhận `active` | `archived`.                │
 │ RESPONSE 200:                                                                 │
 │   { "page": 1, "pageSize": 20, "total": 2, "items": [ ... ] }          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Chuẩn hóa phân trang (`page>=1`, `1<=page_size<=100`).                  │
-│   3. Resolve `status_filter`: mặc định `active`, nếu có thì validate giá trị. │
+│   2. Chuẩn hóa phân trang (`page>=1`, `1<=pageSize<=100`).                  │
+│   3. Resolve `statusFilter`: mặc định `active`, nếu có thì validate giá trị. │
 │   4. Query `chat_sessions` theo `user_id + status`, sort `last_message_at` ↓. │
 │   5. Trả về danh sách session + tổng số bản ghi.                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/chat/sessions/{sessionId}/messages [🔒 AUTH]                        │
+│ GET /api/chat/sessions/{session_id}/messages [🔒 AUTH]                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy lịch sử message của một session thuộc user hiện tại.              │
-│ QUERY: ?page=1&page_size=50                                                  │
+│ QUERY: ?page=1&pageSize=50                                                  │
 │ RESPONSE 200:                                                                 │
 │   { "sessionId": "...", "page": 1, "pageSize": 50, "total": 2,        │
 │     "items": [                                                                 │
@@ -388,7 +392,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/chat/sessions/{sessionId} [🔒 AUTH]                               │
+│ PATCH /api/chat/sessions/{session_id} [🔒 AUTH]                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Đổi tên session chat.                                                  │
 │ REQUEST: { "title": "Tư vấn học phí" }                                     │
@@ -400,7 +404,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/chat/sessions/{sessionId}/archive [🔒 AUTH]                        │
+│ POST /api/chat/sessions/{session_id}/archive [🔒 AUTH]                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Archive (lưu trữ mềm) một session chat.                                │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
@@ -414,7 +418,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/chat/sessions/{sessionId}/unarchive [🔒 AUTH]                      │
+│ POST /api/chat/sessions/{session_id}/unarchive [🔒 AUTH]                      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Bỏ archive, chuyển session về trạng thái active.                      │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
@@ -427,7 +431,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/chat/sessions/{sessionId} [🔒 AUTH]                              │
+│ DELETE /api/chat/sessions/{session_id} [🔒 AUTH]                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa session chat và toàn bộ messages thuộc session đó.                │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
@@ -472,8 +476,8 @@ MỤC LỤC
 │ MÔ TẢ: Lấy danh sách các FAQ đang hoạt động có hỗ trợ filter và phân trang.  │
 │        Sử dụng Native MongoDB Full-Text Search (FTS) khi có tham số `search`.│
 │                                                                              │
-│ REQUEST QUERY: ?is_active=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
-│   - is_active: bool (optional)                                               │
+│ REQUEST QUERY: ?isActive=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
+│   - isActive: bool (optional)                                               │
 │   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}, "type": ["ctdt"]} │
 │   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
@@ -490,7 +494,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/faqs/{id}               [🔒 AUTH]                                   │
+│ GET /api/faqs/{faq_id}               [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy chi tiết một câu hỏi FAQ theo ID.                                 │
 │ RESPONSE 200 OK: FaqResponse object.                                         │
@@ -519,7 +523,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PATCH /api/faqs/{id}              [🔒 ADMIN]                                 │
+│ PATCH /api/faqs/{faq_id}              [🔒 ADMIN]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Cập nhật nội dung câu hỏi, câu trả lời hoặc metadata của FAQ.        │
 │ REQUEST BODY:                                                                │
@@ -537,7 +541,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/faqs/{id}             [🔒 ADMIN]                                 │
+│ DELETE /api/faqs/{faq_id}             [🔒 ADMIN]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa hoàn toàn một FAQ khỏi MongoDB và Qdrant collection.              │
 │ RESPONSE 204: No Content.                                                    │
@@ -606,7 +610,15 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/faqs/candidates/{candidateId}/review [🔒 ADMIN]                    │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/faqs/candidates/{candidate_id} [🔒 ADMIN]                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy chi tiết một ứng viên FAQ.                                        │
+│ RESPONSE 200 OK: FaqCandidate object.                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/candidates/{candidate_id}/review [🔒 ADMIN]                    │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Phê duyệt (Approve) hoặc Từ chối (Reject) một FAQ Candidate. Nếu      │
 │        Approve, hệ thống sẽ tự động tạo thành FAQ chính thức.                │
@@ -735,7 +747,15 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ PUT /api/forms/{id}              [🔒 ADMIN]                                  │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/forms/{form_id}              [🔒 AUTH]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy chi tiết một biểu mẫu.                                            │
+│ RESPONSE 200 OK: FormResponse object.                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PUT /api/forms/{form_id}              [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Cập nhật thông tin biểu mẫu.                                          │
 │ REQUEST BODY: Tương tự POST /api/forms.                                      │
@@ -743,7 +763,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DELETE /api/forms/{id}           [🔒 ADMIN]                                  │
+│ DELETE /api/forms/{form_id}           [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Xóa một biểu mẫu khỏi hệ thống.                                       │
 │ RESPONSE 204: No Content.                                                    │

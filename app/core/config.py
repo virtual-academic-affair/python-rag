@@ -41,14 +41,11 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.1
     LLM_THINKING_LEVEL: str = "none"
     GENAI_REQUEST_TIMEOUT: int = 60
-    GENAI_MAX_OUTPUT_TOKENS_CLASSIFICATION: int = 100
-    GENAI_MAX_OUTPUT_TOKENS_EXTRACTION: int = 1200
 
     # RAG settings (from rag-service)
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     GEMINI_TEMPERATURE: float = 0.7
-    GEMINI_MAX_OUTPUT_TOKENS: int = 2048
     GEMINI_TOP_P: float = 0.95
     GEMINI_TOP_K: int = 40
     GEMINI_TIMEOUT_SECONDS: int = 60
@@ -66,6 +63,7 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "file_overviews"
     QDRANT_TOP_K: int = 6
     QDRANT_MIN_SCORE: float = 0.2
+    RETRIEVAL_MIN_DOC_SCORE: float = 1.0
     QDRANT_VECTOR_SIZE: int = 3072
     
     # PageIndex configuration

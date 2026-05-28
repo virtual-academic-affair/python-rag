@@ -79,3 +79,55 @@ else
     log_error "Chat Stream — Khong nhan duoc du lieu hop le"
     log_info "Raw stream sample: ${RESPONSE_STREAM:0:200}..."
 fi
+
+# 5. List Chat Sessions
+log_info "GET /api/chat/sessions — Active"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_URL}/chat/sessions" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "List Chat Sessions (Active)"
+
+BODY=$(echo "$RESPONSE" | sed '$d')
+SESSION_ID=$(echo "$BODY" | jq -r '.items[0].id // empty')
+
+if [ -n "$SESSION_ID" ] && [ "$SESSION_ID" != "null" ]; then
+    log_success "  -> Found session: $SESSION_ID"
+
+    # 6. List Chat Messages
+    log_info "GET /api/chat/sessions/${SESSION_ID}/messages"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_URL}/chat/sessions/${SESSION_ID}/messages" \
+        -H "Content-Type: application/json" \
+        -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "List Chat Messages"
+
+    # 7. Archive Session
+    log_info "POST /api/chat/sessions/${SESSION_ID}/archive"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/sessions/${SESSION_ID}/archive" \
+        -H "Content-Type: application/json" \
+        -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Archive Chat Session"
+
+    # 8. Unarchive Session
+    log_info "POST /api/chat/sessions/${SESSION_ID}/unarchive"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/sessions/${SESSION_ID}/unarchive" \
+        -H "Content-Type: application/json" \
+        -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+    check_response "$RESPONSE" "200" "Unarchive Chat Session"
+
+else
+    log_warning "  -> No active chat sessions found to test archive/unarchive (this is fine on empty db)"
+fi
+
+# 9. List Chat Sessions - with status_filter=active
+log_info "GET /api/chat/sessions?status_filter=active"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_URL}/chat/sessions?status_filter=active" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "List Chat Sessions (Status Filter = Active)"
+
+# 10. List Chat Sessions - with status_filter=archived
+log_info "GET /api/chat/sessions?status_filter=archived"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_URL}/chat/sessions?status_filter=archived" \
+    -H "Content-Type: application/json" \
+    -H "${STUDENT_AUTH_HEADER}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "List Chat Sessions (Status Filter = Archived)"

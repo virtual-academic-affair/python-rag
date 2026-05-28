@@ -22,7 +22,7 @@ from app.modules.rag.retrieval.agent import (
 )
 from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.service import get_faq_service
-from app.modules.metadata.extraction import extract_metadata_from_text
+from app.modules.chat.analyzer import get_query_analyzer
 from app.utils.format_utils import markdown_to_rich_text, sanitize_latex_in_markdown
 import asyncio
 
@@ -49,11 +49,11 @@ class ChatService:
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[FaqMetadataSchema] = None,
+        metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
         """Retrieve candidate files and build conversation history for the agent."""
         logger.info(f"[Chat] Nhận request chuẩn bị bối cảnh cho user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
-        meta_dict = metadata_filter.model_dump() if metadata_filter else {}
+        meta_dict = metadata_filter or {}
         candidate_files = await self._retrieval.retrieve_candidate_files(
             query=question,
             metadata_filter=meta_dict,
@@ -82,76 +82,11 @@ class ChatService:
 
         return {"candidate_files": candidate_files, "history": history}
 
-    async def _evaluate_rag_needs(self, question: str, chat_history: list[ChatHistoryItem]) -> tuple[bool, str, dict]:
-        """
-        Dùng LLM nhẹ (e.g. Gemini Flash fallback) để quyết định xem câu hỏi có thực sự cần tìm tài liệu quy chế không.
-        Trả về (needs_rag, direct_answer, token_usage).
-        """
-        token_usage = {"prompt_tokens": 0, "candidates_tokens": 0, "total_tokens": 0}
-        try:
-            logger.info(f"[Chat] Evaluating RAG needs for question: '{question}'")
-            
-            history_text = "\n".join([f"{'User' if h.role == 'user' else 'Bot'}: {h.content}" for h in chat_history[-3:]])
-            
-            prompt = types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(
-                        text=f"""Bạn là trợ lý phân loại ý định người dùng.
-Lịch sử chat gần đây:
-{history_text}
-
-Câu hỏi hiện tại: "{question}"
-
-Nhiệm vụ: Câu hỏi này có yêu cầu tra cứu tài liệu quy chế, thủ tục, thông báo từ Phòng Giáo vụ không? hay chỉ là giao tiếp thông thường (như "Hi", "Cảm ơn", "Tạm biệt", hoặc câu hỏi ngoài luồng)?
-Nếu CÓ cần tra cứu: Trả về duy nhất chữ "YES".
-Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản hồi lịch sự, ngắn gọn và giữ vai trò là "Phòng Giáo vụ" (Ví dụ: "NO|Phòng Giáo vụ xin chào. Bạn cần hỗ trợ thông tin gì về quy chế, thủ tục hay học vụ?").
-
-Định dạng trả lời BẮT BUỘC: YES hoặc NO|<câu phản hồi>
-""")
-                ]
-            )
-
-            resp = await gemini_client.client.aio.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.0
-                )
-            )
-
-            # Extract token usage
-            if resp.usage_metadata:
-                token_usage = {
-                    "prompt_tokens": resp.usage_metadata.prompt_token_count or 0,
-                    "candidates_tokens": resp.usage_metadata.candidates_token_count or 0,
-                    "total_tokens": (resp.usage_metadata.prompt_token_count or 0) + (resp.usage_metadata.candidates_token_count or 0)
-                }
-            
-            if resp.candidates and resp.candidates[0].content.parts:
-                answer = ""
-                for part in resp.candidates[0].content.parts:
-                    if not getattr(part, "thought", False):
-                        answer = (part.text or "").strip()
-                        if answer:
-                            break
-                            
-                if answer.startswith("NO|"):
-                    return False, answer.split("NO|", 1)[1].strip(), token_usage
-                elif "NO" in answer.upper() and "|" not in answer:
-                   return False, "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?", token_usage
-
-            return True, "", token_usage
-        except Exception as e:
-            logger.error(f"[Chat] RAG Gate Error: {e}")
-            return True, "", token_usage # Fail-safe: always use RAG if gate fails
-
     async def generate_chat_response(
         self,
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[dict[str, Any]] = None,
         resolve_citations: bool = False,
         citation_link_type: str = "markdown",
         to_rich_text: bool = False,
@@ -161,22 +96,61 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         Delegates fully to shared run_agent_loop; returns answer, steps, and sources.
         """
         start_time = time.time()
+        pipeline_steps = []
         
-        # [0] Embed question once
-        question_vector = await self._embed(question)
+        # [1] Analyze query (rewrite + gate + metadata) — 1 LLM call
+        analyzer = get_query_analyzer()
+        analysis = await analyzer.analyze_query(question, chat_history)
+        effective_question = analysis["effective_question"]
+        needs_rag = analysis["needs_rag"]
+        metadata_filter = analysis.get("metadata_filter") or {}
         
-        # [0.1] Auto-extract metadata if not provided explicitly
-        if not metadata_filter:
-            metadata_filter = await extract_metadata_from_text(question)
-            if metadata_filter:
-                logger.info(f"[Chat] Auto-extracted metadata from question: {metadata_filter}")
-        
-        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
+        # Merge user context enrollment_year as fallback if not extracted from query
+        if not metadata_filter.get("enrollment_year") and user_context.enrollment_year:
+            metadata_filter["enrollment_year"] = {
+                "from_year": user_context.enrollment_year,
+                "to_year": user_context.enrollment_year
+            }
 
-        # [1] FAQ Pre-check
+        pipeline_steps.append({
+            "type": "query_analysis",
+            "original_question": question,
+            "effective_question": effective_question,
+            "needs_rag": needs_rag,
+            "metadata_filter": metadata_filter,
+        })
+
+        # [2] Gate = NO: generate direct reply
+        if not needs_rag:
+            logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
+            direct_answer = await analyzer.generate_reply(effective_question, chat_history)
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
+            answer_markdown = direct_answer
+            final_answer = answer_markdown
+            if to_rich_text:
+                final_answer = markdown_to_rich_text(answer_markdown)
+
+            return {
+                "answer": final_answer,
+                "sources": [],
+                "steps": pipeline_steps,
+                "token_usage": None,
+                "processing_time_ms": processing_time_ms,
+            }
+
+        # [3] Embed rewritten question
+        question_vector = await self._embed(effective_question)
+
+        # [4] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
-        faq = await faq_svc.find_best_match(question_vector, meta_dict)
+        faq = await faq_svc.find_best_match(question_vector, metadata_filter)
         if faq:
+            pipeline_steps.append({
+                "type": "faq_check",
+                "hit": True,
+                "faq_question": faq.get("question", ""),
+            })
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat] FAQ hit: '{faq['question']}' ({processing_time_ms}ms)")
             answer_markdown = faq["answer_markdown"]
@@ -188,36 +162,33 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "answer": final_answer,
                 "source": "faq",
                 "sources": [],
-                "steps": [],
+                "steps": pipeline_steps,
                 "token_usage": None,
                 "processing_time_ms": processing_time_ms,
             }
 
-        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
-        # We run them in parallel because most queries require RAG.
-        gate_task = self._evaluate_rag_needs(question, chat_history)
-        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
-        
-        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
-        
-        if not needs_rag:
-            logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
-            answer_markdown = direct_answer
-            final_answer = answer_markdown
-            if to_rich_text:
-                final_answer = markdown_to_rich_text(answer_markdown)
+        pipeline_steps.append({
+            "type": "faq_check",
+            "hit": False,
+        })
 
-            return {
-                "answer": final_answer,
-                "sources": [],
-                "steps": [],
-                "token_usage": gate_usage,
-                "processing_time_ms": processing_time_ms,
-            }
-
+        # [5] Prepare Chat State using effective_question
+        state = await self._prepare_chat_state(effective_question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
+
+        # Log retrieval step
+        retrieval_files_step = [
+            {
+                "file_id": f.get("file_id"),
+                "file_name": f.get("file_name"),
+                "doc_score": f.get("doc_score"),
+            }
+            for f in candidate_files
+        ]
+        pipeline_steps.append({
+            "type": "retrieval",
+            "candidate_files": retrieval_files_step,
+        })
 
         if not candidate_files:
             answer_text = "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn."
@@ -226,7 +197,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             return {
                 "answer": answer_text,
                 "sources": [],
-                "steps": [],
+                "steps": pipeline_steps,
                 "processing_time_ms": int((time.time() - start_time) * 1000),
             }
 
@@ -243,10 +214,10 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         # Log async interaction
         faq_svc = await self._get_faq_svc()
         asyncio.create_task(faq_svc.log_interaction(
-            question=question,
+            question=effective_question,
             question_vector=question_vector,
             answer_markdown=result["final_answer"],
-            metadata_filter=meta_dict,
+            metadata_filter=metadata_filter,
             source_type="chat",
             processing_time_ms=processing_time_ms,
         ))
@@ -260,7 +231,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             "answer": final_answer,
             "source": "llm",
             "sources": result["sources"],
-            "steps": result["steps"],
+            "steps": pipeline_steps + result["steps"],
             "token_usage": result.get("tokenUsage"),
             "processing_time_ms": processing_time_ms,
         }
@@ -270,7 +241,6 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[dict[str, Any]] = None,
         resolve_citations: bool = False,
         citation_link_type: str = "markdown",
     ) -> AsyncGenerator[str, None]:
@@ -289,22 +259,63 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
           - {done: true, sources: [...], processing_time_ms: ...}
         """
         start_time = time.time()
+        pipeline_steps = []
         
-        # [0] Embed question once
-        question_vector = await self._embed(question)
+        # [1] Analyze query (rewrite + gate + metadata) — 1 LLM call
+        analyzer = get_query_analyzer()
+        analysis = await analyzer.analyze_query(question, chat_history)
+        effective_question = analysis["effective_question"]
+        needs_rag = analysis["needs_rag"]
+        metadata_filter = analysis.get("metadata_filter") or {}
         
-        # [0.1] Auto-extract metadata if not provided explicitly
-        if not metadata_filter:
-            metadata_filter = await extract_metadata_from_text(question)
-            if metadata_filter:
-                logger.info(f"[Chat-Stream] Auto-extracted metadata from question: {metadata_filter}")
-        
-        meta_dict = metadata_filter.model_dump() if hasattr(metadata_filter, "model_dump") else (metadata_filter or {})
+        # Merge user context enrollment_year as fallback if not extracted from query
+        if not metadata_filter.get("enrollment_year") and user_context.enrollment_year:
+            metadata_filter["enrollment_year"] = {
+                "from_year": user_context.enrollment_year,
+                "to_year": user_context.enrollment_year
+            }
 
-        # [1] FAQ Pre-check
+        query_analysis_step = {
+            "type": "query_analysis",
+            "original_question": question,
+            "effective_question": effective_question,
+            "needs_rag": needs_rag,
+            "metadata_filter": metadata_filter,
+        }
+        pipeline_steps.append(query_analysis_step)
+        yield json.dumps({**query_analysis_step, "done": False})
+
+        # [2] Gate = NO: generate direct reply
+        if not needs_rag:
+            logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
+            direct_answer = await analyzer.generate_reply(effective_question, chat_history)
+            yield json.dumps({"type": "text", "content": direct_answer, "done": False})
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[Chat-Stream] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
+            yield json.dumps({
+                "done": True, 
+                "sources": [], 
+                "steps": pipeline_steps,
+                "token_usage": None,
+                "processing_time_ms": processing_time_ms
+            })
+            return
+
+        # [3] Embed rewritten question
+        question_vector = await self._embed(effective_question)
+
+        # [4] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
-        faq = await faq_svc.find_best_match(question_vector, meta_dict)
+        faq = await faq_svc.find_best_match(question_vector, metadata_filter)
         if faq:
+            faq_check_step = {
+                "type": "faq_check",
+                "hit": True,
+                "faq_question": faq.get("question", ""),
+            }
+            pipeline_steps.append(faq_check_step)
+            yield json.dumps({**faq_check_step, "done": False})
+
             logger.info("[Chat-Stream] FAQ hit. Sending direct answer.")
             yield json.dumps({"type": "text", "content": faq["answer_markdown"], "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -313,36 +324,42 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
                 "done": True, 
                 "source": "faq",
                 "sources": [], 
+                "steps": pipeline_steps,
                 "tokenUsage": None,
                 "processing_time_ms": processing_time_ms
             })
             return
 
-        # [2] Run RAG Gate and State Preparation (Retrieval) in parallel
-        gate_task = self._evaluate_rag_needs(question, chat_history)
-        state_task = self._prepare_chat_state(question, user_context, chat_history, metadata_filter)
-        
-        (needs_rag, direct_answer, gate_usage), state = await asyncio.gather(gate_task, state_task)
-        
-        if not needs_rag:
-            logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
-            yield json.dumps({"type": "text", "content": direct_answer, "done": False})
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat-Stream] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
-            yield json.dumps({
-                "done": True, 
-                "sources": [], 
-                "token_usage": gate_usage,
-                "processing_time_ms": processing_time_ms
-            })
-            return
+        faq_check_step = {
+            "type": "faq_check",
+            "hit": False,
+        }
+        pipeline_steps.append(faq_check_step)
+        yield json.dumps({**faq_check_step, "done": False})
 
+        # [5] Prepare Chat State using effective_question
+        state = await self._prepare_chat_state(effective_question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
         history = state["history"]
 
+        retrieval_files_step = [
+            {
+                "file_id": f.get("file_id"),
+                "file_name": f.get("file_name"),
+                "doc_score": f.get("doc_score"),
+            }
+            for f in candidate_files
+        ]
+        retrieval_step = {
+            "type": "retrieval",
+            "candidate_files": retrieval_files_step,
+        }
+        pipeline_steps.append(retrieval_step)
+        yield json.dumps({**retrieval_step, "done": False})
+
         if not candidate_files:
             yield json.dumps({"type": "text", "content": "Không tìm thấy tài liệu phù hợp.", "done": False})
-            yield json.dumps({"done": True, "sources": [], "processing_time_ms": int((time.time() - start_time) * 1000)})
+            yield json.dumps({"done": True, "sources": [], "steps": pipeline_steps, "processing_time_ms": int((time.time() - start_time) * 1000)})
             return
 
         tools, tool_map, config = get_agent_config(candidate_files)
@@ -529,10 +546,10 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
         # Log async interaction
         faq_svc = await self._get_faq_svc()
         asyncio.create_task(faq_svc.log_interaction(
-            question=question,
+            question=effective_question,
             question_vector=question_vector,
             answer_markdown=final_answer_accumulated,
-            metadata_filter=meta_dict,
+            metadata_filter=metadata_filter,
             source_type="chat",
             processing_time_ms=processing_time_ms,
         ))
@@ -541,6 +558,7 @@ Nếu KHÔNG cần tra cứu: Trả về chữ "NO" kèm theo một câu phản 
             "done": True,
             "source": "llm",
             "sources": current_sources,
+            "steps": pipeline_steps + stream_steps,
             "tokenUsage": {
                 "promptTokens": total_prompt_tokens,
                 "completionTokens": total_candidates_tokens,

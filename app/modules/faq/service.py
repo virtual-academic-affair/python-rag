@@ -103,7 +103,7 @@ class FaqService:
     ) -> Dict[str, Any]:
         """
         Create multiple FAQs with parallel embedding generation.
-        items: List of {question, answer, metadata_filter}
+        items: List of {question, answer_rich_text (or answer), metadata_filter}
         """
         total = len(items)
         created_count = 0
@@ -111,14 +111,35 @@ class FaqService:
         failed_count = 0
         errors = []
 
-        # 1. Filter out duplicates if requested
+        # 1. Filter out duplicates & validate keys
         to_process = []
+        processed_unaccented_questions = set()
         for i, item in enumerate(items):
+            question = item.get("question")
+            if not question or not str(question).strip():
+                failed_count += 1
+                errors.append({
+                    "row_index": i + 1,
+                    "question": "",
+                    "error": "Field 'question' is missing or empty."
+                })
+                continue
+
+            unaccented = remove_accents(str(question))
+            
+            # Check duplicate within the same uploaded batch
+            if unaccented in processed_unaccented_questions:
+                skipped_count += 1
+                continue
+
+            # Check duplicate against existing DB items
             if skip_duplicates:
-                existing = await self.check_duplicate_question(item["question"])
+                existing = await self.check_duplicate_question(question)
                 if existing:
                     skipped_count += 1
                     continue
+            
+            processed_unaccented_questions.add(unaccented)
             to_process.append((i, item))
 
         if not to_process:
@@ -126,39 +147,41 @@ class FaqService:
                 "total": total,
                 "created": 0,
                 "skipped": skipped_count,
-                "failed": 0,
-                "errors": []
+                "failed": failed_count,
+                "errors": errors
             }
 
-        # 2. Generate embeddings in parallel
+        # 2. Generate embeddings in parallel with limited concurrency to prevent API rate limits (429)
         questions = [item["question"] for _, item in to_process]
+        sem = asyncio.Semaphore(15)
+        
+        async def sem_embed(q: str):
+            async with sem:
+                return await self.embed(q)
+
         try:
-            embeddings = await asyncio.gather(*[self.embed(q) for q in questions])
+            embeddings = await asyncio.gather(*[sem_embed(q) for q in questions])
         except Exception as e:
             logger.error(f"Failed to generate embeddings for bulk create: {e}")
             return {
                 "total": total,
                 "created": 0,
                 "skipped": skipped_count,
-                "failed": len(to_process),
-                "errors": [{"question": "ALL", "error": f"Embedding failure: {str(e)}"}]
+                "failed": failed_count + len(to_process),
+                "errors": errors + [{"question": "ALL", "error": f"Embedding failure: {str(e)}"}]
             }
 
-        # 3. Create FAQs
-        # Note: We could use MongoDB insert_many, but create_faq handles Qdrant too.
-        # To keep it simple and reliable, we call create_faq (which is already tested).
-        # Optimization: We can't easily parallelize Qdrant/Mongo without risk of race/connection limits,
-        # but we already parallelized the slowest part (LLM embedding).
-        
+        # 3. Create FAQs — we pass the pre-computed embedding so create_faq skips re-embedding
         for idx, (original_idx, item) in enumerate(to_process):
             try:
-                # We already have the embedding, but create_faq will re-generate it.
-                # To truly optimize, we'd refactor create_faq to accept an optional pre-computed vector.
-                # For now, let's just call create_faq for safety/consistency.
-                
+                # Support both 'answer_rich_text' and legacy 'answer' key
+                answer_rich_text = item.get("answer_rich_text") or item.get("answer")
+                if not answer_rich_text:
+                    raise ValueError(f"Item at row {original_idx + 1} is missing 'answer_rich_text' or 'answer' field.")
+
                 await self.create_faq(
                     question=item["question"],
-                    answer_rich_text=item["answer_rich_text"],
+                    answer_rich_text=answer_rich_text,
                     metadata_filter=item.get("metadata_filter", {}),
                     source="bulk_import",
                     question_vector=embeddings[idx]

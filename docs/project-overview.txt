@@ -620,6 +620,11 @@ PHÂN HỆ CHAT:
 - POST /api/chat/query          : Chat QA đồng bộ.
 - POST /api/chat/stream         : Chat QA streaming (SSE).
 
+- GET /api/chat/sessions            : Danh sách Chat Sessions (status: active/archived).
+- POST /api/chat/sessions/{session_id}/archive  : Archive chat session.
+- POST /api/chat/sessions/{session_id}/unarchive  : Unarchive chat session.
+- GET /api/chat/sessions/{session_id}/messages : Lịch sử (bao gồm thought/thinking và text).
+
 PHÂN HỆ METADATA (Hardened):
 - GET /api/metadata/schema      : Lấy định nghĩa Schema metadata hiện tại của hệ thống.
 

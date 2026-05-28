@@ -101,7 +101,7 @@ class FileService(FileUploadMixin):
         If user_role is provided, validates access permissions.
 
         Returns:
-            tuple: (file_object, filename, mime_type)
+             tuple: (file_object, filename, mime_type)
         """
         # Reuse get_file_by_id for database fetching and permission check
         file_doc = await self.get_file_by_id(file_id, user_role=user_role)
@@ -180,7 +180,7 @@ class FileService(FileUploadMixin):
     ) -> Optional[FileDocument]:
         """
         Update file details (display name and/or metadata).
-        Syncs metadata to Qdrant if provided.
+        Syncs metadata and filename to Qdrant.
         """
         file_doc_dict = await self.file_repo.find_by_id(file_id)
         if not file_doc_dict:
@@ -192,11 +192,53 @@ class FileService(FileUploadMixin):
             update_data["display_name_unaccented"] = remove_accents(display_name)
 
         if custom_metadata is not None:
-            # Validate metadata before updating using the stateless validator
+            # Validate input against update schema (all fields optional, no defaults)
             validator = get_metadata_service()
-            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(custom_metadata)
+            is_valid, errors, update_schema = validator.validate_and_parse_file_metadata_update(custom_metadata)
             if not is_valid:
                 raise ValidationException(f"Invalid custom metadata: {', '.join(errors)}")
+
+            # Get existing metadata from DB
+            existing_meta = file_doc_dict.get("custom_metadata") or {}
+            if hasattr(existing_meta, "model_dump"):
+                existing_meta = existing_meta.model_dump()
+            elif not isinstance(existing_meta, dict):
+                existing_meta = dict(existing_meta) if existing_meta else {}
+
+            # Deep merge incoming into existing metadata to support partial updates (PATCH behavior)
+            merged_meta = {
+                "enrollment_year": dict(existing_meta.get("enrollment_year") or {}),
+                "academic_year": dict(existing_meta.get("academic_year") or {}),
+                "type": existing_meta.get("type", "cong_van")
+            }
+
+            # Dump specified update fields (exclude unset fields so we don't overwrite defaults)
+            # We pass by_alias=False to get standard snake_case keys (python field names) for the merge logic.
+            update_dict = update_schema.model_dump(exclude_unset=True, by_alias=False) if update_schema else {}
+
+            if "type" in update_dict:
+                merged_meta["type"] = update_dict["type"]
+                
+            if "enrollment_year" in update_dict:
+                inc_ey = update_dict["enrollment_year"] or {}
+                exist_ey = merged_meta.get("enrollment_year") or {}
+                merged_meta["enrollment_year"] = {
+                    "from_year": inc_ey.get("from_year", exist_ey.get("from_year", 0)),
+                    "to_year": inc_ey.get("to_year", exist_ey.get("to_year", 9999)),
+                }
+                
+            if "academic_year" in update_dict:
+                inc_ay = update_dict["academic_year"] or {}
+                exist_ay = merged_meta.get("academic_year") or {}
+                merged_meta["academic_year"] = {
+                    "from_year": inc_ay.get("from_year", exist_ay.get("from_year", 0)),
+                    "to_year": inc_ay.get("to_year", exist_ay.get("to_year", 9999)),
+                }
+
+            # Validate the fully merged metadata state against main FileMetadataSchema
+            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(merged_meta)
+            if not is_valid:
+                raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
             update_data["custom_metadata"] = meta_model.model_dump(mode="json") if meta_model else None
 
         if not update_data:
@@ -205,14 +247,21 @@ class FileService(FileUploadMixin):
         update_success = await self.file_repo.update_by_id(file_id, update_data)
 
         if update_success:
-            # Sync to Qdrant if metadata changed
-            if custom_metadata is not None:
+            # Sync to Qdrant if display_name or custom_metadata changed
+            if display_name is not None or custom_metadata is not None:
                 try:
                     indexer = get_qdrant_indexer()
-                    await indexer.update_payload_by_file_id(file_id, update_data["custom_metadata"] or {})
-                    logger.info(f"[FileService] Synced metadata to Qdrant for file {file_id}")
+                    qdrant_metadata = update_data.get("custom_metadata") if custom_metadata is not None else None
+                    qdrant_filename = update_data.get("display_name") if display_name is not None else None
+                    
+                    await indexer.update_payload_by_file_id(
+                        file_id=file_id,
+                        new_metadata=qdrant_metadata,
+                        file_name=qdrant_filename
+                    )
+                    logger.info(f"[FileService] Synced update to Qdrant for file {file_id} (name: {display_name is not None}, metadata: {custom_metadata is not None})")
                 except Exception as e:
-                    logger.warning(f"[FileService] Failed to sync metadata to Qdrant for file {file_id}: {e}")
+                    logger.warning(f"[FileService] Failed to sync update to Qdrant for file {file_id}: {e}")
 
             # Merge for response
             file_doc_dict.update(update_data)

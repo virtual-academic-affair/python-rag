@@ -11,6 +11,7 @@ from app.modules.email.utils import extract_structured_data
 from app.modules.faq.service import get_faq_service
 from app.utils.format_utils import markdown_to_rich_text
 import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class InquiryService:
             temperature=0.0
         )
         
-        # Unified prompt for extracting both intent and types in one call
+        # Unified prompt for extracting intent, types, and metadata filters in one call
         self.extraction_prompt = ChatPromptTemplate.from_messages([
             ("system", (
                 "Bạn là chuyên gia phân tích email giáo vụ. Hãy phân tích email dưới đây để trích xuất dữ liệu sau:\n"
@@ -32,8 +33,25 @@ class InquiryService:
                 "   - 'graduation': Các vấn đề liên quan đến tốt nghiệp, xét tốt nghiệp, chứng nhận, bằng cấp.\n"
                 "   - 'training': Các vấn đề về đào tạo, học phần, đăng ký học tập, thời khóa biểu, điểm số, học vụ.\n"
                 "   - Nếu không rõ ràng hoặc thuộc loại khác, mặc định chọn ['training'].\n"
-                "\nTrả về DUY NHẤT một đối tượng JSON theo schema: "
-                "{{\"question\": string, \"inquiry_types\": [string]}}"
+                "3. 'metadata_filter': Trích xuất bộ lọc năm học (academic_year) và khóa tuyển sinh (enrollment_year) dưới dạng:\n"
+                "   - 'enrollment_year': Tìm thông tin khóa tuyển sinh của sinh viên (ví dụ: K22, Khóa 22, K20 -> enrollment_year = 2022, 2020. Thiết lập: {{\"from_year\": năm, \"to_year\": năm}}).\n"
+                "   - 'academic_year': Tìm thông tin năm học đang được nhắc tới (ví dụ: năm học 2024-2025, học kỳ 1 năm học 2024-2025 -> academic_year = {{\"from_year\": 2024, \"to_year\": 2025}}).\n"
+                "   - Nếu không đề cập, trả về null.\n"
+                "\nTrả về DUY NHẤT một đối tượng JSON theo schema sau:\n"
+                "{{\n"
+                "  \"question\": string,\n"
+                "  \"inquiry_types\": [string],\n"
+                "  \"metadata_filter\": {{\n"
+                "    \"enrollment_year\": {{\n"
+                "      \"from_year\": integer,\n"
+                "      \"to_year\": integer\n"
+                "    }} | null,\n"
+                "    \"academic_year\": {{\n"
+                "      \"from_year\": integer,\n"
+                "      \"to_year\": integer\n"
+                "    }} | null\n"
+                "  }} | null\n"
+                "}}"
             )),
             ("human", "Tiêu đề: {title}\nNội dung:\n{content}")
         ])
@@ -48,10 +66,10 @@ class InquiryService:
     ) -> Dict[str, Any]:
         """
         Inquiry Workflow:
-        1. Unified Extraction (Intent & Types) via Gemini.
-        2. Filter Extraction from full context.
-        3. Retrieve Answer via RetrievalService (RAG).
+        1. Unified Extraction (Intent, Types, and Filters) via Gemini.
+        2. Retrieve Answer via RetrievalService (RAG).
         """
+        start_time = time.time()
         # 1. Unified Extraction (Call LLM only once)
         extraction_data = await extract_structured_data(
             self._extraction_llm, 
@@ -60,9 +78,14 @@ class InquiryService:
         )
         extracted_question = extraction_data.get("question")
         inquiry_types = extraction_data.get("inquiry_types", ["training"])
+        metadata_filter = extraction_data.get("metadata_filter") or {}
 
-        # 2. Filter Extraction (Rule-based from original email context)
-        metadata_filter = await extract_metadata_from_text(f"{title} {content}")
+        # 2. Filter Extraction Fallback (Rule-based regex if LLM didn't find any metadata filter)
+        if not metadata_filter or (not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year")):
+            regex_filter = await extract_metadata_from_text(f"{title} {content}")
+            if regex_filter:
+                logger.info(f"[Inquiry] Fallback to regex metadata extraction: {regex_filter}")
+                metadata_filter = regex_filter
         
         # 3. RAG Step
         rag_query = extracted_question or f"{title}\n{content}"
@@ -73,7 +96,7 @@ class InquiryService:
         faq = await faq_svc.find_best_match(question_vector, metadata_filter)
         
         if faq:
-            processing_time_ms = 0 # Approximate for now, or track it
+            processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Inquiry] FAQ hit: '{faq['question']}'")
             rag_result = {
                 "answer": faq["answer_markdown"],
@@ -105,10 +128,14 @@ class InquiryService:
                 context_blocks = []
                 if metadata_filter.get("academic_year"):
                     ay = metadata_filter["academic_year"]
-                    context_blocks.append(f"Academic Year: {ay.get('fromYear')}-{ay.get('toYear')}")
+                    f_yr = ay.get("from_year") or ay.get("fromYear")
+                    t_yr = ay.get("to_year") or ay.get("toYear")
+                    context_blocks.append(f"Academic Year: {f_yr}-{t_yr}")
                 if metadata_filter.get("enrollment_year"):
                     ey = metadata_filter["enrollment_year"]
-                    context_blocks.append(f"Enrollment Year: {ey.get('fromYear')}-{ey.get('toYear')}")
+                    f_yr = ey.get("from_year") or ey.get("fromYear")
+                    t_yr = ey.get("to_year") or ey.get("toYear")
+                    context_blocks.append(f"Enrollment Year: {f_yr}-{t_yr}")
                 
                 context_str = f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""
 
@@ -140,12 +167,14 @@ class InquiryService:
         
         # Log async interaction
         if not faq: # Only log if it wasn't already an FAQ hit to avoid duplicate logs if needed, or always log for analytics
+            processing_time_ms = int((time.time() - start_time) * 1000)
             asyncio.create_task(faq_svc.log_interaction(
                 question=rag_query,
                 question_vector=question_vector,
                 answer_markdown=rag_result["answer"],
                 metadata_filter=metadata_filter,
                 source_type="inquiry_email",
+                processing_time_ms=processing_time_ms,
                 email_message_id=message_id,
             ))
 

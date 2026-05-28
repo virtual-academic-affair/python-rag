@@ -55,22 +55,18 @@ class GeminiGenAIChat:
         model: str,
         temperature: float,
         thinking_level: Optional[str] = None,
-        max_output_tokens: Optional[int] = None,
         request_timeout: Optional[int] = None,
     ):
         self._client = genai.Client(api_key=api_key)
         self._model = model
         self._temperature = temperature
         self._thinking_level = thinking_level
-        self._max_output_tokens = max_output_tokens
         self._request_timeout = request_timeout or settings.GENAI_REQUEST_TIMEOUT
 
     def _build_config(self) -> types.GenerateContentConfig:
         kwargs: Dict[str, Any] = {}
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
-        if self._max_output_tokens is not None:
-            kwargs["max_output_tokens"] = self._max_output_tokens
         if self._thinking_level:
             # google-genai uses nested thinking_config with include_thoughts
             kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
@@ -126,15 +122,13 @@ def build_chat_llm(
     model: str,
     temperature: float,
     thinking_level: Optional[str] = None,
-    max_output_tokens: Optional[int] = None,
     request_timeout: Optional[int] = None,
 ) -> GeminiGenAIChat:
     logger.info(
-        "Building google-genai client model=%s temperature=%s thinking=%s max_tokens=%s timeout=%s",
+        "Building google-genai client model=%s temperature=%s thinking=%s timeout=%s",
         model,
         temperature,
         thinking_level,
-        max_output_tokens,
         request_timeout,
     )
     return GeminiGenAIChat(
@@ -142,7 +136,6 @@ def build_chat_llm(
         model=model,
         temperature=temperature,
         thinking_level=thinking_level,
-        max_output_tokens=max_output_tokens,
         request_timeout=request_timeout,
     )
 
@@ -159,7 +152,6 @@ def build_classification_llm(
         model=model,
         temperature=temperature,
         thinking_level=thinking_level,
-        max_output_tokens=settings.GENAI_MAX_OUTPUT_TOKENS_CLASSIFICATION,
         request_timeout=settings.GENAI_REQUEST_TIMEOUT,
     )
 
@@ -176,7 +168,6 @@ def build_extraction_llm(
         model=model,
         temperature=temperature,
         thinking_level=thinking_level,
-        max_output_tokens=settings.GENAI_MAX_OUTPUT_TOKENS_EXTRACTION,
         request_timeout=settings.GENAI_REQUEST_TIMEOUT,
     )
 
