@@ -69,7 +69,7 @@ class InquiryTypesResult(BaseSchema):
 from app.modules.metadata.schemas import YearRangeSchema
 
 class InquiryFilters(BaseSchema):
-    enrollment_year: Optional[YearRangeSchema] = Field(None, description="Enrollment year range derived from email (e.g. K65 -> 2020)")
+    enrollment_year: Optional[YearRangeSchema] = Field(None, description="Enrollment year range derived from email (e.g. K20 -> 2020)")
     academic_year: Optional[YearRangeSchema] = Field(None, description="Academic year range derived from email")
     type: Optional[str] = Field(None, description="Document type")
 

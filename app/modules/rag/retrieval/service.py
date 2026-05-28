@@ -86,10 +86,17 @@ class RetrievalService:
                 "doc_score": doc_score
             })
 
-        # 3. Retrieve top documents
+        # 3. Retrieve top documents based on score threshold (at least 1, at most max_files)
         doc_scores.sort(key=lambda x: x["doc_score"], reverse=True)
-        top_docs = doc_scores[:max_files]
-        logger.info(f"[Retrieval] Lọc ra {len(top_docs)} tài liệu tốt nhất: {[d['file_id'] for d in top_docs]}")
+        
+        threshold = settings.RETRIEVAL_MIN_DOC_SCORE
+        filtered_docs = []
+        for i, d in enumerate(doc_scores):
+            if d["doc_score"] >= threshold or i == 0:
+                filtered_docs.append(d)
+                
+        top_docs = filtered_docs[:max_files]
+        logger.info(f"[Retrieval] Lọc ra {len(top_docs)} tài liệu tốt nhất (Ngưỡng điểm >= {threshold}): {[d['file_id'] for d in top_docs]}")
 
         # 4. Enrich with descriptions and structure (Batch query)
         top_ids = [d["file_id"] for d in top_docs]

@@ -3,11 +3,14 @@ Chat Endpoints - Handle all RAG-based chat operations.
 Includes: query, stream, and retrieval preview (Qdrant).
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi.responses import StreamingResponse
 import json
 from uuid import uuid4
 from google.genai.errors import APIError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 from app.modules.chat.schemas import (
@@ -15,6 +18,7 @@ from app.modules.chat.schemas import (
     ChatQueryResponse,
     ChatStreamRequest,
     UserContext,
+    ChatHistoryItem,
     ChatRetrievePreviewRequest,
     ChatRetrievePreviewResponse,
     ChatRetrievePreviewItem,
@@ -62,11 +66,30 @@ async def chat_query(
         # Extract role from token and override context
         user_role = user.get("role", "student")
 
+        # Extract enrollment_year from JWT if present
+        jwt_enrollment = user.get("enrollmentyear") or user.get("enrollment_year")
+        enrollment_year = None
+        if jwt_enrollment:
+            try:
+                if isinstance(jwt_enrollment, str):
+                    import re
+                    match = re.search(r"\d+", jwt_enrollment)
+                    if match:
+                        val = int(match.group())
+                        enrollment_year = 2000 + val if val < 100 else val
+                    else:
+                        enrollment_year = int(jwt_enrollment)
+                else:
+                    val = int(jwt_enrollment)
+                    enrollment_year = 2000 + val if val < 100 else val
+            except Exception as e:
+                logger.warning(f"Failed to parse enrollmentyear from JWT '{jwt_enrollment}': {e}")
+
         # Build user context from auth token
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=None, # TBD: extract from cohort/class if needed
+            enrollment_year=enrollment_year,
             role=user_role,
         )
 
@@ -74,6 +97,18 @@ async def chat_query(
 
         chat_history_repo = get_chat_history_repository()
         await chat_history_repo.ensure_session(session_id=session_id, user_id=user_context.user_id)
+
+        # Load history from DB
+        raw_history = await chat_history_repo.get_recent_messages(
+            session_id=session_id,
+            user_id=user_context.user_id,
+            limit=6,
+        )
+        chat_history = [
+            ChatHistoryItem(role=m["role"], content=m["content"])
+            for m in raw_history
+        ]
+
         await chat_history_repo.append_message(
             session_id=session_id,
             user_id=user_context.user_id,
@@ -86,8 +121,7 @@ async def chat_query(
         result = await chat_svc.generate_chat_response(
             question=request.question,
             user_context=user_context,
-            chat_history=request.chat_history,
-            metadata_filter=request.metadata_filter,
+            chat_history=chat_history,
             resolve_citations=request.resolve_citations,
             citation_link_type=request.citation_link_type,
             to_rich_text=request.to_rich_text,
@@ -100,6 +134,7 @@ async def chat_query(
             content=result.get("answer", ""),
             token_usage=result.get("token_usage"),
             sources=result.get("sources"),
+            steps=result.get("steps"),
             processing_time_ms=result.get("processing_time_ms"),
         )
 
@@ -145,17 +180,48 @@ async def chat_stream(
         # Extract role from token and override context
         user_role = user.get("role", "student")
 
+        # Extract enrollment_year from JWT if present
+        jwt_enrollment = user.get("enrollmentyear") or user.get("enrollment_year")
+        enrollment_year = None
+        if jwt_enrollment:
+            try:
+                if isinstance(jwt_enrollment, str):
+                    import re
+                    match = re.search(r"\d+", jwt_enrollment)
+                    if match:
+                        val = int(match.group())
+                        enrollment_year = 2000 + val if val < 100 else val
+                    else:
+                        enrollment_year = int(jwt_enrollment)
+                else:
+                    val = int(jwt_enrollment)
+                    enrollment_year = 2000 + val if val < 100 else val
+            except Exception as e:
+                logger.warning(f"Failed to parse enrollmentyear from JWT '{jwt_enrollment}': {e}")
+
         # Build user context from auth token
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=None,
+            enrollment_year=enrollment_year,
             role=user_role,
         )
 
         session_id = request.session_id or str(uuid4())
         chat_history_repo = get_chat_history_repository()
         await chat_history_repo.ensure_session(session_id=session_id, user_id=user_context.user_id)
+
+        # Load history from DB
+        raw_history = await chat_history_repo.get_recent_messages(
+            session_id=session_id,
+            user_id=user_context.user_id,
+            limit=6,
+        )
+        chat_history = [
+            ChatHistoryItem(role=m["role"], content=m["content"])
+            for m in raw_history
+        ]
+
         await chat_history_repo.append_message(
             session_id=session_id,
             user_id=user_context.user_id,
@@ -172,8 +238,7 @@ async def chat_stream(
                 async for chunk_json in chat_svc.stream_chat_response(
                     question=request.question,
                     user_context=user_context,
-                    chat_history=request.chat_history,
-                    metadata_filter=request.metadata_filter,
+                    chat_history=chat_history,
                     resolve_citations=request.resolve_citations,
                     citation_link_type=request.citation_link_type,
                 ):
@@ -210,6 +275,7 @@ async def chat_stream(
                             content=assistant_content,
                             token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
                             sources=payload.get("sources"),
+                            steps=payload.get("steps"),
                             processing_time_ms=payload.get("processing_time_ms"),
                             message_type="text",
                         )
@@ -287,9 +353,9 @@ async def chat_stream(
     summary="List chat sessions by current user",
 )
 async def list_chat_sessions(
-    page: int = 1,
-    page_size: int = 20,
-    status_filter: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
+    status_filter: str | None = Query(None, alias="statusFilter"),
     user: dict = Depends(require_auth),
 ):
     page = max(1, page)
@@ -342,8 +408,8 @@ async def list_chat_sessions(
 )
 async def list_chat_messages(
     session_id: str,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
     user: dict = Depends(require_auth),
 ):
     page = max(1, page)
@@ -367,6 +433,7 @@ async def list_chat_messages(
             message_type=m.get("message_type", "text"),
             token_usage=m.get("token_usage"),
             sources=m.get("sources"),
+            steps=m.get("steps") or None,
             processing_time_ms=m.get("processing_time_ms"),
             created_at=m.get("created_at").isoformat() if m.get("created_at") else None,
         )

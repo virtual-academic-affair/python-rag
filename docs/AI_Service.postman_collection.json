@@ -1,1287 +1,1313 @@
 {
-    "info": {
-        "name": "AI Service API",
-        "description": "Complete API collection for AI Service (python-rag).\n\nIncludes:\n- Health Check\n- Email Classification\n- Store Management\n- Metadata Types\n- File Management\n- Chat (Query + Stream)\n- FAQ Module (Semantic search & Synthesis)\n\nBase URL: http://localhost:8000\nSwagger: http://localhost:8000/docs",
-        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-        "version": "1.0.0"
+  "info": {
+    "name": "AI Service API",
+    "description": "Generated from OpenAPI, keeping request bodies.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Health check endpoint.\nReturns service status, version, and dependency connectivity."
+          },
+          "response": []
+        },
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": []
+            },
+            "description": "Root endpoint."
+          },
+          "response": []
+        }
+      ]
     },
-    "variable": [
+    {
+      "name": "Email Classification",
+      "item": [
         {
-            "key": "base_url",
-            "value": "http://localhost:8000",
-            "type": "string"
+          "name": "Process Request",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/email/process",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "email",
+                "process"
+              ]
+            },
+            "description": "Process email title/content and return one of 4 supported labels.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         },
         {
-            "key": "token",
-            "value": "",
-            "type": "string",
-            "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
-        },
-        {
-            "key": "file_id",
-            "value": "",
-            "type": "string",
-            "description": "MongoDB ObjectId of file (fill after uploading a file)"
-        },
-        {
-            "key": "metadata_key",
-            "value": "department",
-            "type": "string"
+          "name": "Test Classification From Ingested Payload",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/email/test/ingested",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "email",
+                "test",
+                "ingested"
+              ]
+            },
+            "description": "Test endpoint: process one RabbitMQ 'ingested' payload directly.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pattern\": \"ingested\",\n  \"data\": {\n    \"messageId\": 123,\n    \"subject\": \"Xin đăng ký môn học\",\n    \"senderEmail\": \"student@example.com\",\n    \"senderName\": \"Nguyễn Văn A\",\n    \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01.\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         }
-    ],
-    "item": [
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
         {
-            "name": "1. Health Check",
-            "item": [
-                {
-                    "name": "Health Check",
-                    "request": {
-                        "method": "GET",
-                        "header": [],
-                        "url": {
-                            "raw": "{{base_url}}/health",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "health"
-                            ]
-                        },
-                        "description": "Check service health and external connections (Gemini, MongoDB)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Root",
-                    "request": {
-                        "method": "GET",
-                        "header": [],
-                        "url": {
-                            "raw": "{{base_url}}/",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                ""
-                            ]
-                        },
-                        "description": "Root endpoint - verify service is running."
-                    },
-                    "response": []
+          "name": "Generate RAG-based chat response",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/query",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "query"
+              ]
+            },
+            "description": "Process a user question with Qdrant RAG retrieval and return a complete answer.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-            ]
+              }
+            }
+          },
+          "response": []
         },
         {
-            "name": "2. Email Classification",
-            "item": [
-                {
-                    "name": "Classify email",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"title\": \"Xin đăng ký môn học\",\n  \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01. Em là sinh viên năm 2, mã sinh viên SV001, tên Nguyễn Văn A.\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/email/process",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "email",
-                                "process"
-                            ]
-                        },
-                        "description": "Manually classify an email. Returns label + extracted payload.\n\nLabels: classRegistration | task | inquiry | other\n\nTry different content to test each label."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Test inquiry (email draft)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"title\": \"Hỏi về điều kiện tốt nghiệp\",\n  \"content\": \"Em muốn hỏi về điều kiện tốt nghiệp của trường. Cụ thể em cần hoàn thành bao nhiêu tín chỉ và điều kiện GPA tối thiểu là bao nhiêu?\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/email/process",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "email",
-                                "process"
-                            ]
-                        },
-                        "description": "Test inquiry classification. AI sẽ draft email reply sử dụng RAG."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Test RabbitMQ payload",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"pattern\": \"ingested\",\n  \"data\": {\n    \"messageId\": 123,\n    \"subject\": \"Xin đăng ký môn học\",\n    \"senderEmail\": \"student@example.com\",\n    \"senderName\": \"Nguyễn Văn A\",\n    \"content\": \"Em muốn đăng ký môn Toán cao cấp, mã môn MATH101, lớp L01.\"\n  }\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/email/test/ingested",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "email",
-                                "test",
-                                "ingested"
-                            ]
-                        },
-                        "description": "Test endpoint: simulate processing one RabbitMQ 'ingested' message directly without actual queue."
-                    },
-                    "response": []
+          "name": "Stream RAG-based chat response",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/stream",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "stream"
+              ]
+            },
+            "description": "Stream chat response with RAG using Server-Sent Events (SSE).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-            ]
+              }
+            }
+          },
+          "response": []
         },
         {
-            "name": "3. Metadata Schema",
-            "item": [
-                {
-                    "name": "Get Metadata Schema",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/metadata/schema",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "metadata",
-                                "schema"
-                            ]
-                        },
-                        "description": "Lấy định nghĩa cứng của hệ thống metadata (enrollmentYear, academicYear, type)."
-                    },
-                    "response": []
-                }
-            ]
+          "name": "List chat sessions by current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
         },
         {
-            "name": "4. File Management",
-            "item": [
-                {
-                    "name": "Upload file",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": [],
-                                    "description": "File to upload (PDF, DOCX, DOC, TXT, MD, HTML, XLSX, XLS, PPTX, CSV, RTF - max 20MB)"
-                                },
-                                {
-                                    "key": "customMetadata",
-                                    "value": "{\"enrollmentYear\":{\"fromYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}",
-                                    "type": "text",
-                                    "description": "Required: must include enrollmentYear, academicYear, and type"
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/files",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files"
-                            ]
-                        },
-                        "description": "Upload file to R2 + PageIndex processing (asynchronous).\n\nRequired metadata:\n- academicYear OR cohort: at least one required\n\nReturns fileId and message indicating background processing started."
-                    },
-                    "event": [
-                        {
-                            "listen": "test",
-                            "script": {
-                                "type": "text/javascript",
-                                "exec": [
-                                    "if (pm.response.code === 201) {",
-                                    "  var json = pm.response.json();",
-                                    "  if (json.fileId) {",
-                                    "    pm.collectionVariables.set('fileId', json.fileId);",
-                                    "    console.log('fileId updated: ' + json.fileId);",
-                                    "  }",
-                                    "}"
-                                ]
-                            }
-                        }
-                    ],
-                    "response": []
-                },
-                {
-                    "name": "List files",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files?page=1&limit=50",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files"
-                            ],
-                            "query": [
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "50"
-                                },
-                                {
-                                    "key": "fileStatus",
-                                    "value": "active",
-                                    "disabled": true,
-                                    "description": "active|processing|failed"
-                                },
-                                {
-                                    "key": "metadataFilter",
-                                    "value": "{\"academicYear\": {\"fromYear\": 2023}, \"type\": [\"ctdt\", \"cong_van\"]}",
-                                    "disabled": true,
-                                    "description": "JSON filter for metadata. Supports range overlap search."
-                                },
-                                {
-                                    "key": "keywords",
-                                    "value": "quy chế",
-                                    "disabled": true,
-                                    "description": "Search by partial display name."
-                                }
-                            ]
-                        },
-                        "description": "List files with optional filters and pagination."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "List Files (Admin)",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{admin_token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/admin?fileStatus=ready&keywords=quy chế&page=1&limit=50",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files"
-                            ],
-                            "query": [
-                                {
-                                    "key": "fileStatus",
-                                    "value": "ready",
-                                    "disabled": true
-                                },
-                                {
-                                    "key": "keywords",
-                                    "value": "quy chế",
-                                    "disabled": true
-                                },
-                                {
-                                    "key": "metadataFilter",
-                                    "value": "{\"academicYear\": [\"2024-2025\"]}",
-                                    "disabled": true,
-                                    "description": "JSON filter for metadata. Supports OR (array of values) and AND (multiple keys)."
-                                },
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "50"
-                                }
-                            ]
-                        },
-                        "description": "Admin-only file listing. Allows filtering by storeId or listing across all stores. Requires admin role."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Get file details",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/{{fileId}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "{{fileId}}"
-                            ]
-                        },
-                        "description": "Get file details by MongoDB ObjectId. Returned customMetadata is automatically filtered by visibleRoles (Admin bypass)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Get TOC Tree",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/toc-tree/{{fileId}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "toc-tree",
-                                "{{fileId}}"
-                            ]
-                        },
-                        "description": "Get hierarchical Table of Contents (TOC) tree for a file."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Download file",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/{{fileId}}/download",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "{{fileId}}",
-                                "download"
-                            ]
-                        },
-                        "description": "Download the file binary from R2 storage."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Batch upload",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "files",
-                                    "type": "file",
-                                    "src": [],
-                                    "description": "Multiple files (PDF, DOCX, XLSX, etc.)"
-                                },
-                                {
-                                    "key": "displayNames",
-                                    "value": "[\"Tài liệu 1\", null]",
-                                    "type": "text",
-                                    "description": "JSON array - use null for auto name"
-                                },
-                                {
-                                    "key": "metadataList",
-                                    "value": "[{\"enrollmentYear\":{\"fromYear\":2020},\"academicYear\":{\"fromYear\":2024,\"toYear\":2025},\"type\":\"cong_van\"}, {\"type\":[\"ctdt\"]}]",
-                                    "type": "text",
-                                    "description": "JSON array - one object per file."
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/files/batch",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "batch"
-                            ]
-                        },
-                        "description": "Batch upload multiple files. Returns summary of successful and started uploads."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete file",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/files/{{fileId}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "{{fileId}}"
-                            ]
-                        },
-                        "description": "Hard delete file (R2 + Qdrant + PageIndex/MongoDB)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update file details",
-                    "request": {
-                        "method": "PATCH",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"displayName\": \"New name for file.pdf\",\n  \"customMetadata\": {\n    \"academicYear\": {\n      \"fromYear\": 2025,\n      \"toYear\": 2026\n    },\n    \"type\": \"cong_van\"\n  }\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/files/{{fileId}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "files",
-                                "{{fileId}}"
-                            ]
-                        },
-                        "description": "Update file display name and/or custom metadata. Syncs metadata to Qdrant automatically."
-                    },
-                    "response": []
-                }
-            ]
+          "name": "List messages in a chat session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}/messages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions",
+                "{{session_id}}",
+                "messages"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
         },
         {
-            "name": "5. Chat",
-            "item": [
-                {
-                    "name": "Chat query",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    }\n  },\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/query",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "query"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chat streaming (SSE)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            },
-                            {
-                                "key": "Accept",
-                                "value": "text/event-stream"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"chatHistory\": [],\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\"\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/stream",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "stream"
-                            ]
-                        }
-                    },
-                    "response": []
+          "name": "Rename a chat session",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Phiên hội thoại mới\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-            ]
+              }
+            }
+          },
+          "response": []
         },
         {
-            "name": "6. Debug & Preview",
-            "item": [
-                {
-                    "name": "Parse PDF preview",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": []
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/debug/files/parse-preview",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "debug",
-                                "files",
-                                "parse-preview"
-                            ]
-                        },
-                        "description": "Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Chunk PDF preview",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": []
-                                },
-                                {
-                                    "key": "chunkSizeChars",
-                                    "value": "1800",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "chunkOverlapChars",
-                                    "value": "250",
-                                    "type": "text"
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/debug/files/chunk-preview",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "debug",
-                                "files",
-                                "chunk-preview"
-                            ]
-                        },
-                        "description": "Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks)."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Retrieve preview (Qdrant)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Quy trình thôi học?\",\n  \"topK\": 5,\n  \"minScore\": 0.3,\n  \"includeExplain\": true\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/chat/retrieve-preview",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "chat",
-                                "retrieve-preview"
-                            ]
-                        },
-                        "description": "Debug endpoint to inspect retrieved chunks and ranking before generation."
-                    },
-                    "response": []
-                }
-            ]
+          "name": "Delete a chat session and its messages",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
         },
         {
-            "name": "7. FAQ Module",
-            "item": [
-                {
-                    "name": "List FAQs",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs?page=1&limit=20",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs"
-                            ],
-                            "query": [
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "20"
-                                },
-                                {
-                                    "key": "search",
-                                    "value": "giấy chứng nhận",
-                                    "disabled": true,
-                                    "description": "Full-text search (unaccented/accented)"
-                                }
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Create FAQ",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",\n  \"answer\": \"Bạn có thể đăng ký trực tuyến trên cổng thông tin sinh viên hoặc đến trực tiếp Phòng Giáo vụ.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024\n    }\n  }\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Update FAQ",
-                    "request": {
-                        "method": "PATCH",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Updated question?\",\n  \"answer\": \"Updated answer.\"\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/{{faq_id}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "{{faq_id}}"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Delete FAQ",
-                    "request": {
-                        "method": "DELETE",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/{{faq_id}}",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "{{faq_id}}"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Match FAQ (Semantic Search)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"question\": \"Xin giấy xác nhận sinh viên ở đâu?\",\n  \"threshold\": 0.85\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/match",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "match"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Trigger Synthesis",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"dateFrom\": \"2024-04-01\",\n  \"sources\": [\n    \"chat\",\n    \"inquiry_email\"\n  ]\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/synthesis",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "synthesis"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "List Candidates",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/candidates/list?status=pending&page=1&limit=20",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "candidates",
-                                "list"
-                            ],
-                            "query": [
-                                {
-                                    "key": "status",
-                                    "value": "pending"
-                                },
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "20"
-                                },
-                                {
-                                    "key": "search",
-                                    "value": "bảng điểm",
-                                    "disabled": true,
-                                    "description": "Full-text search on candidates"
-                                }
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Review Candidate",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": \"Updated question?\",\n  \"answerRichTextOverride\": \"Updated answer.\",\n  \"metadataFilterOverride\": {\n    \"academicYear\": {\n      \"fromYear\": 2024\n    }\n  },\n  \"note\": \"Review note\"\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "candidates",
-                                "{{candidate_id}}",
-                                "review"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Import FAQ Preview",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": []
-                                },
-                                {
-                                    "key": "questionCol",
-                                    "value": "Câu hỏi",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "answerCol",
-                                    "value": "Trả lời",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "metadataFilterJson",
-                                    "value": "{\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}",
-                                    "type": "text"
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/import/preview",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "import",
-                                "preview"
-                            ]
-                        },
-                        "description": "Xem trước dữ liệu trích xuất từ Excel."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Import FAQ (Excel)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": [],
-                                    "description": "Excel file (.xlsx)"
-                                },
-                                {
-                                    "key": "questionCol",
-                                    "value": "B",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "answerCol",
-                                    "value": "C",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "skip_duplicates",
-                                    "value": "true",
-                                    "type": "text"
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/import",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "import"
-                            ]
-                        },
-                        "description": "Import FAQ hàng loạt từ Excel."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Bulk Create FAQ (JSON)",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Câu hỏi 1?\",\n      \"answerRichText\": \"Câu trả lời 1\",\n      \"metadataFilter\": {\n        \"academicYear\": {\n          \"fromYear\": 2024,\n          \"toYear\": 2025\n        },\n        \"enrollmentYear\": {\n          \"fromYear\": 0,\n          \"toYear\": 9999\n        }\n      }\n    },\n    {\n      \"question\": \"Câu hỏi 2?\",\n      \"answerRichText\": \"Câu trả lời 2\"\n    }\n  ],\n  \"skipDuplicates\": true\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/faqs/bulk",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "faqs",
-                                "bulk"
-                            ]
-                        },
-                        "description": "Tạo FAQ hàng loạt từ JSON."
-                    },
-                    "response": []
+          "name": "Archive a chat session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}/archive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions",
+                "{{session_id}}",
+                "archive"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-            ]
+              }
+            }
+          },
+          "response": []
         },
         {
-            "name": "8. Forms Module",
-            "item": [
-                {
-                    "name": "List Forms",
-                    "request": {
-                        "method": "GET",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "url": {
-                            "raw": "{{base_url}}/api/forms?page=1&limit=20",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "forms"
-                            ],
-                            "query": [
-                                {
-                                    "key": "page",
-                                    "value": "1"
-                                },
-                                {
-                                    "key": "limit",
-                                    "value": "20"
-                                },
-                                {
-                                    "key": "search",
-                                    "value": "Đơn xin",
-                                    "disabled": true
-                                }
-                            ]
-                        },
-                        "description": "Lấy danh sách biểu mẫu."
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Create Form",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            },
-                            {
-                                "key": "Content-Type",
-                                "value": "application/json"
-                            }
-                        ],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n  \"documentType\": \"Đơn xin nghỉ học tạm thời\",\n  \"contentLink\": \"<a href='https://example.com/form.pdf'>Tải về</a>\",\n  \"notes\": \"Dành cho sinh viên bảo lưu kết quả học tập.\"\n}"
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/forms",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "forms"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Import Forms Preview",
-                    "request": {
-                        "method": "POST",
-                        "header": [
-                            {
-                                "key": "Authorization",
-                                "value": "Bearer {{token}}"
-                            }
-                        ],
-                        "body": {
-                            "mode": "formdata",
-                            "formdata": [
-                                {
-                                    "key": "file",
-                                    "type": "file",
-                                    "src": [],
-                                    "description": "Excel file (.xlsx)"
-                                },
-                                {
-                                    "key": "documentTypeCol",
-                                    "value": "A",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "contentLinkCol",
-                                    "value": "B",
-                                    "type": "text"
-                                },
-                                {
-                                    "key": "notesCol",
-                                    "value": "C",
-                                    "type": "text"
-                                }
-                            ]
-                        },
-                        "url": {
-                            "raw": "{{base_url}}/api/forms/import-preview",
-                            "host": [
-                                "{{base_url}}"
-                            ],
-                            "path": [
-                                "api",
-                                "forms",
-                                "import-preview"
-                            ]
-                        }
-                    },
-                    "response": []
+          "name": "Unarchive a chat session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/sessions/{{session_id}}/unarchive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "sessions",
+                "{{session_id}}",
+                "unarchive"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-            ]
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Preview Qdrant retrieval results",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/chat/retrieve-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "chat",
+                "retrieve-preview"
+              ]
+            },
+            "description": "Debug endpoint to inspect retrieved chunks and ranking before generation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp?\",\n  \"topK\": 5,\n  \"minScore\": 0.2,\n  \"includeExplain\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         }
+      ]
+    },
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "Upload file",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files"
+              ]
+            },
+            "description": "Upload a document file to R2.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "value": "",
+                  "type": "file"
+                },
+                {
+                  "key": "displayName",
+                  "value": "Tên hiển thị file",
+                  "type": "text"
+                },
+                {
+                  "key": "customMetadata",
+                  "value": "{\"type\":\"cong_van\",\"academicYear\":{\"fromYear\":2024,\"toYear\":2025}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files"
+              ]
+            },
+            "description": "List files with optional filters and pagination."
+          },
+          "response": []
+        },
+        {
+          "name": "Batch upload files",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/batch",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files",
+                "batch"
+              ]
+            },
+            "description": "Upload multiple files at once, each with its own display name and metadata.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "value": "",
+                  "type": "file"
+                },
+                {
+                  "key": "files",
+                  "value": "",
+                  "type": "file"
+                },
+                {
+                  "key": "displayNames",
+                  "value": "[\"Tài liệu 1\", \"Tài liệu 2\"]",
+                  "type": "text"
+                },
+                {
+                  "key": "metadataList",
+                  "value": "[{\"type\":\"cong_van\"},{\"type\":\"quyet_dinh\"}]",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get file details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files",
+                "{{file_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update file details (display name, metadata)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files",
+                "{{file_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Tên file mới\",\n  \"customMetadata\": {\n    \"type\": \"cong_van\",\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete file",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files",
+                "{{file_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Download file",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "files",
+                "{{file_id}}",
+                "download"
+              ]
+            },
+            "description": "Download the original uploaded file or its markdown version."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Metadata",
+      "item": [
+        {
+          "name": "Get metadata schema",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/metadata/schema",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "metadata",
+                "schema"
+              ]
+            },
+            "description": "Returns the fixed metadata schema definition — document types and sentinel values — so the frontend can render the file-upload / FAQ-import forms correctly."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Debug Files",
+      "item": [
+        {
+          "name": "Parse PDF to markdown preview",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/files/parse-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "files",
+                "parse-preview"
+              ]
+            },
+            "description": "Parse an uploaded PDF using LlamaParse and return normalized markdown pages.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Parse + chunk PDF preview",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/files/chunk-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "files",
+                "chunk-preview"
+              ]
+            },
+            "description": "Parse uploaded PDF with LlamaParse and preview section-aware chunks.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "chunkSizeChars",
+                  "value": "1800",
+                  "type": "text"
+                },
+                {
+                  "key": "chunkOverlapChars",
+                  "value": "250",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "TOC Tree",
+      "item": [
+        {
+          "name": "Get Table of Contents for a file",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/toc-tree/{{file_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "toc-tree",
+                "{{file_id}}"
+              ]
+            },
+            "description": "Retrieve the hierarchical Table of Contents (TOC) structure for a given file_id."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "FAQ",
+      "item": [
+        {
+          "name": "List Faqs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs"
+              ]
+            },
+            "description": "List FAQs with optional filtering."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Faq",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs"
+              ]
+            },
+            "description": "Create a new FAQ manually.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ và GPA >= 2.0.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"type\": \"cong_van\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Debug Match Faq",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/match",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "match"
+              ]
+            },
+            "description": "Debug endpoint to test semantic matching.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Xin giấy xác nhận sinh viên ở đâu?\",\n  \"threshold\": 0.85\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Candidates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/candidates/list",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "candidates",
+                "list"
+              ]
+            },
+            "description": "List FAQ candidates from synthesis."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Candidate",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "candidates",
+                "{{candidate_id}}"
+              ]
+            },
+            "description": "Get a specific FAQ candidate by ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Review Candidate",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "candidates",
+                "{{candidate_id}}",
+                "review"
+              ]
+            },
+            "description": "Approve or reject an FAQ candidate.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": null,\n  \"answerRichTextOverride\": null,\n  \"metadataFilterOverride\": null,\n  \"note\": \"Câu trả lời chính xác\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Synthesis",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/synthesis",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "synthesis"
+              ]
+            },
+            "description": "Manually trigger FAQ synthesis background job.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateFrom\": null,\n  \"sources\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Faq",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/{{faq_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "{{faq_id}}"
+              ]
+            },
+            "description": "Update an existing FAQ.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì? (cập nhật)\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ, GPA >= 2.0, và hoàn thành học phần GDQP.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Faq",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/{{faq_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "{{faq_id}}"
+              ]
+            },
+            "description": "Delete an FAQ."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Faq",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/{{faq_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "{{faq_id}}"
+              ]
+            },
+            "description": "Get a specific FAQ by ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Preview Faq Import",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/import/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "import",
+                "preview"
+              ]
+            },
+            "description": "Upload Excel and preview extracted FAQ rows.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "questionCol",
+                  "value": "Câu hỏi",
+                  "type": "text"
+                },
+                {
+                  "key": "answerCol",
+                  "value": "Trả lời",
+                  "type": "text"
+                },
+                {
+                  "key": "metadataFilterJson",
+                  "value": "{\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Import Faqs From Excel",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "import"
+              ]
+            },
+            "description": "Upload Excel and create FAQs in bulk.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Excel file (.xlsx)"
+                },
+                {
+                  "key": "questionCol",
+                  "value": "B",
+                  "type": "text"
+                },
+                {
+                  "key": "answerCol",
+                  "value": "C",
+                  "type": "text"
+                },
+                {
+                  "key": "skip_duplicates",
+                  "value": "true",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk Create Faqs Json",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/bulk",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "faqs",
+                "bulk"
+              ]
+            },
+            "description": "Bulk create FAQs from JSON data.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Học phí CLC là bao nhiêu?\",\n      \"answer\": \"25 triệu đồng/năm học.\",\n      \"metadataFilter\": {\n        \"type\": \"cong_van\"\n      }\n    }\n  ],\n  \"skipDuplicates\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms",
+      "item": [
+        {
+          "name": "List Forms",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create Form",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"Đơn xin nghỉ học tạm thời\",\n  \"contentLink\": \"<a href='https://example.com/form.pdf'>Tải về</a>\",\n  \"notes\": \"Dành cho sinh viên bảo lưu kết quả học tập.\"\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Form",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms/{{form_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms",
+                "{{form_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update Form",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms/{{form_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms",
+                "{{form_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentType\": \"Đơn xin nghỉ học tạm thời (Cập nhật)\",\n  \"contentLink\": \"<a href='https://example.com/form-updated.pdf'>Tải về</a>\",\n  \"notes\": \"Ghi chú cập nhật\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Form",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms/{{form_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms",
+                "{{form_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Import Preview",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms/import-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms",
+                "import-preview"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Excel file (.xlsx)"
+                },
+                {
+                  "key": "documentTypeCol",
+                  "value": "A",
+                  "type": "text"
+                },
+                {
+                  "key": "contentLinkCol",
+                  "value": "B",
+                  "type": "text"
+                },
+                {
+                  "key": "notesCol",
+                  "value": "C",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Import Forms",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/forms/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "forms",
+                "import"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "value": "",
+                  "type": "file"
+                },
+                {
+                  "key": "documentTypeCol",
+                  "value": "documentType",
+                  "type": "text"
+                },
+                {
+                  "key": "contentLinkCol",
+                  "value": "contentLink",
+                  "type": "text"
+                },
+                {
+                  "key": "notesCol",
+                  "value": "notes",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string",
+      "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
+    },
+    {
+      "key": "file_id",
+      "value": "",
+      "type": "string",
+      "description": "MongoDB ObjectId of file (fill after uploading a file)"
+    },
+    {
+      "key": "metadata_key",
+      "value": "department",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "faq_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "candidate_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "form_id",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
     ]
+  }
 }

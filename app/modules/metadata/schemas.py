@@ -82,6 +82,22 @@ class FileMetadataSchema(BaseSchema):
         )
 
 
+class FileMetadataUpdateSchema(BaseSchema):
+    """Request body for customMetadata when updating a file (all fields optional, no default factories)."""
+    enrollment_year: Optional[YearRangeSchema] = Field(
+        None,
+        description="Enrollment year range the document applies to.",
+    )
+    academic_year: Optional[YearRangeSchema] = Field(
+        None,
+        description="Academic year range the document is valid for.",
+    )
+    type: Optional[DocumentType] = Field(
+        None, 
+        description="Document type (ctdt | cong_van | quyet_dinh)."
+    )
+
+
 class FileMetadataResponse(BaseSchema):
     """Response shape for customMetadata in file list / detail responses."""
     enrollment_year: YearRangeResponse

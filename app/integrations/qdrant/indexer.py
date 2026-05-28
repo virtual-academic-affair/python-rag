@@ -122,24 +122,35 @@ class QdrantIndexer:
             )
         )
 
-    async def update_payload_by_file_id(self, file_id: str, new_metadata: dict) -> None:
+    async def update_payload_by_file_id(
+        self,
+        file_id: str,
+        new_metadata: Optional[dict] = None,
+        file_name: Optional[str] = None
+    ) -> None:
         """
-        Update the metadata payload for all chunks associated with a file_id.
+        Update the payload (metadata and/or file_name) for all chunks associated with a file_id.
         """
         await self.ensure_collection()
         
-        # We need to use `set_payload` or `overwrite_payload`
-        # Because we're only updating part of the payload ('metadata' field), we use `set_payload`.
-        try:
-            flat_meta = FileMetadata(**new_metadata).to_qdrant_payload()
-        except Exception as e:
-            logger.warning(f"Failed to parse metadata for Qdrant update: {e}. Skipping metadata update.")
-            return  # Skip update if metadata cannot be safely serialized
+        payload_to_update = {}
+        if file_name is not None:
+            payload_to_update["file_name"] = file_name
+            
+        if new_metadata is not None:
+            try:
+                flat_meta = FileMetadata(**new_metadata).to_qdrant_payload()
+                payload_to_update["metadata"] = flat_meta
+            except Exception as e:
+                logger.warning(f"Failed to parse metadata for Qdrant update: {e}. Skipping metadata update.")
+                
+        if not payload_to_update:
+            return
 
         await asyncio.to_thread(
             self._qdrant_client.set_payload,
             collection_name=settings.QDRANT_COLLECTION_NAME,
-            payload={"metadata": flat_meta},
+            payload=payload_to_update,
             points=qm.FilterSelector(
                 filter=qm.Filter(
                     must=[

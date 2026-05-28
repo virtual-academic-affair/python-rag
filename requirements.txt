@@ -77,7 +77,7 @@ langchain-text-splitters==1.1.1
 llama-parse==0.5.19
 
 # Qdrant client
-qdrant-client==1.15.1
+qdrant-client==1.17.1
 
 # LiteLLM (PageIndex / Agent Reasoning)
 litellm==1.83.4

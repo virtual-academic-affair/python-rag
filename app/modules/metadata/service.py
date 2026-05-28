@@ -15,7 +15,7 @@ from app.modules.metadata.models import (
     YEAR_MIN,
     YEAR_MAX,
 )
-from app.modules.metadata.schemas import FileMetadataSchema, FaqMetadataSchema, UnifiedFilterSchema
+from app.modules.metadata.schemas import FileMetadataSchema, FileMetadataUpdateSchema, FaqMetadataSchema, UnifiedFilterSchema
 
 import logging
 from pydantic import ValidationError
@@ -56,6 +56,23 @@ class MetadataValidator:
             return True, [], model
         except Exception as exc:
             logger.debug(f"FileMetadata validation error: {exc}")
+            errors = self._flatten_pydantic_errors(exc)
+            return False, errors, None
+
+    def validate_and_parse_file_metadata_update(
+        self, raw: Dict[str, Any]
+    ) -> Tuple[bool, List[str], Optional[FileMetadataUpdateSchema]]:
+        """Validate raw dict (from API JSON) for a file update and return a FileMetadataUpdateSchema model."""
+        errors: List[str] = []
+
+        if not raw:
+            return True, [], FileMetadataUpdateSchema()
+
+        try:
+            schema = FileMetadataUpdateSchema.model_validate(raw)
+            return True, [], schema
+        except Exception as exc:
+            logger.debug(f"FileMetadata update validation error: {exc}")
             errors = self._flatten_pydantic_errors(exc)
             return False, errors, None
 

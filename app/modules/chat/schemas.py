@@ -18,8 +18,6 @@ class ChatHistoryItem(BaseSchema):
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     session_id: Optional[str] = Field(default=None, description="Chat session ID")
-    chat_history: List[ChatHistoryItem] = Field(default_factory=list, description="Recent chat history (max 10)")
-    metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
     citation_link_type: Optional[str] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
     to_rich_text: Optional[bool] = Field(default=False, description="Convert final markdown answer to HTML rich text")
@@ -36,8 +34,6 @@ class ChatQueryResponse(BaseSchema):
 class ChatStreamRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000)
     session_id: Optional[str] = Field(default=None, description="Chat session ID")
-    chat_history: List[ChatHistoryItem] = Field(default_factory=list)
-    metadata_filter: Optional[UnifiedFilterSchema] = Field(None, description="Metadata filter using fixed schema")
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
     citation_link_type: Optional[str] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
 
@@ -95,6 +91,7 @@ class ChatMessageItem(BaseSchema):
     message_type: str = Field(default="text", description="Message type: text or thinking")
     token_usage: Optional[Dict[str, Any]] = None
     sources: Optional[List[Dict[str, Any]]] = Field(default=None)
+    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps: query_analysis, faq_check, retrieval, thought, call, tool_output")
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
 

@@ -50,6 +50,7 @@ class ChatHistoryRepository:
         content: str,
         token_usage: Optional[dict[str, Any]] = None,
         sources: Optional[list[dict[str, Any]]] = None,
+        steps: Optional[list[dict[str, Any]]] = None,
         processing_time_ms: Optional[int] = None,
         message_type: str = "text",
     ) -> dict[str, Any]:
@@ -99,6 +100,7 @@ class ChatHistoryRepository:
             "message_type": message_type,
             "token_usage": token_usage,
             "sources": sources or [],
+            "steps": steps or [],
             "processing_time_ms": processing_time_ms,
             "sequence": sequence,
             "created_at": now,
@@ -106,6 +108,31 @@ class ChatHistoryRepository:
         result = await self._messages.insert_one(message_doc)
         message_doc["_id"] = str(result.inserted_id)
         return message_doc
+
+    async def get_recent_messages(
+        self,
+        session_id: str,
+        user_id: str,
+        limit: int = 6,
+        message_type: str = "text",
+    ) -> list[dict[str, Any]]:
+        """
+        Lấy (limit) tin nhắn cuối cùng của session, chỉ lấy message_type='text'.
+        Trả về danh sách dict theo thứ tự tăng dần (cũ -> mới).
+        """
+        query = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "message_type": message_type,
+        }
+        cursor = (
+            self._messages.find(query)
+            .sort("sequence", DESCENDING)
+            .limit(limit)
+        )
+        messages = await cursor.to_list(length=limit)
+        return list(reversed(messages))  # Đảo lại để cũ -> mới
+
 
     async def list_sessions_by_user(
         self,

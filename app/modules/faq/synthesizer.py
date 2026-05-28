@@ -230,24 +230,44 @@ class FaqSynthesisService:
         # 3. Cluster within groups
         for group_key, group_logs in groups.items():
             if len(group_logs) < settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE:
+                logger.info(
+                    f"Skipping bucket '{group_key}': contains {len(group_logs)} logs, "
+                    f"which is less than FAQ_SYNTHESIS_MIN_CLUSTER_SIZE ({settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE})."
+                )
                 continue
                 
+            logger.info(f"Clustering bucket '{group_key}' with {len(group_logs)} logs...")
             clusters = await asyncio.to_thread(
                 self._greedy_clustering, group_logs, settings.FAQ_SYNTHESIS_CLUSTERING_THRESHOLD
             )
-            total_clusters += len(clusters)
+            logger.info(f"Bucket '{group_key}': found {len(clusters)} clusters.")
             
             # 4. Filter and Synthesize
-            for cluster in clusters:
+            for c_idx, cluster in enumerate(clusters):
                 if len(cluster) >= settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE:
+                    total_clusters += 1
+                    logger.info(
+                        f"Synthesizing cluster {c_idx+1} of bucket '{group_key}' "
+                        f"with {len(cluster)} similar logs..."
+                    )
                     candidate_doc = await self._synthesize_cluster(cluster, batch_id, recent_faqs)
                     if candidate_doc:
                         await self._candidate_repo.create(candidate_doc)
                         candidates_created += 1
+                        logger.info(f"Successfully created FAQ Candidate: '{candidate_doc['question']}'")
                     else:
                         failed_clusters += 1
+                        logger.warning(f"Failed to synthesize cluster {c_idx+1} of bucket '{group_key}'.")
+                else:
+                    logger.info(
+                        f"Skipping cluster {c_idx+1} of bucket '{group_key}': "
+                        f"size {len(cluster)} is less than FAQ_SYNTHESIS_MIN_CLUSTER_SIZE ({settings.FAQ_SYNTHESIS_MIN_CLUSTER_SIZE})."
+                    )
 
-        logger.info(f"Synthesis {batch_id} complete. Created {candidates_created} candidates from {total_clusters} clusters. Failed: {failed_clusters}")
+        logger.info(
+            f"Synthesis {batch_id} complete. Created {candidates_created} candidates "
+            f"from {total_clusters} valid clusters. Failed: {failed_clusters}"
+        )
         
         return {
             "batch_id": batch_id,

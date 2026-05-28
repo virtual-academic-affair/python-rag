@@ -37,7 +37,7 @@ router = APIRouter(prefix="/faqs", tags=["FAQ"])
 # ==========================================
 @router.get("", response_model=FaqListResponse)
 async def list_faqs(
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    is_active: Optional[bool] = Query(None, alias="isActive", description="Filter by active status"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="Filter by metadata (JSON string), e.g. {'academic_year': ['2024-2025']}"),

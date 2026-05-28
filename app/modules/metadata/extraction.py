@@ -23,7 +23,7 @@ async def extract_metadata_from_text(text: str) -> Dict[str, Any]:
 
     # 1. Extract Cohort / Enrollment Year (e.g. K22 -> 2022, Khóa 65 -> 2020)
     # Match "Khóa 22", "K22", "K.22"
-    # Note: Logic for cohort to year: K65 is roughly 2020. 
+    # Note: Logic for cohort to year: K20 is roughly 2020. 
     # Current project pattern from email/utils.py: year = 2000 + val if val < 100 else val
     cohort_pattern = r"(?:khoa\s*|k\s*\.?\s*)(\d{2,4})\b"
     cohort_matches = re.finditer(cohort_pattern, text_no_accents, re.IGNORECASE)

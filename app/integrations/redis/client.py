@@ -24,6 +24,8 @@ class RedisClient:
                     settings.REDIS_URL,
                     decode_responses=True,
                     socket_timeout=settings.REDIS_TIMEOUT,
+                    socket_keepalive=True,
+                    health_check_interval=60,
                     ssl_cert_reqs=None,
                 )
                 # Test connection
