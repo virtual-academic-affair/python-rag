@@ -206,37 +206,41 @@ class FileService(FileUploadMixin):
                 existing_meta = dict(existing_meta) if existing_meta else {}
 
             # Deep merge incoming into existing metadata to support partial updates (PATCH behavior)
-            merged_meta = {
-                "enrollment_year": dict(existing_meta.get("enrollment_year") or {}),
-                "academic_year": dict(existing_meta.get("academic_year") or {}),
-                "type": existing_meta.get("type", "cong_van")
-            }
+            # Chỉ lấy các key từ existing nếu thực sự có giá trị (không inject default)
+            merged_meta = {}
+            if existing_meta.get("enrollment_year"):
+                merged_meta["enrollment_year"] = dict(existing_meta["enrollment_year"])
+            if existing_meta.get("academic_year"):
+                merged_meta["academic_year"] = dict(existing_meta["academic_year"])
+            if existing_meta.get("type"):
+                merged_meta["type"] = existing_meta["type"]
 
-            # Dump specified update fields (exclude unset fields so we don't overwrite defaults)
-            # We pass by_alias=False to get standard snake_case keys (python field names) for the merge logic.
+            # Dump specified update fields (exclude unset fields so we don't overwrite with defaults)
             update_dict = update_schema.model_dump(exclude_unset=True, by_alias=False) if update_schema else {}
 
             if "type" in update_dict:
                 merged_meta["type"] = update_dict["type"]
-                
+
             if "enrollment_year" in update_dict:
                 inc_ey = update_dict["enrollment_year"] or {}
                 exist_ey = merged_meta.get("enrollment_year") or {}
                 merged_meta["enrollment_year"] = {
-                    "from_year": inc_ey.get("from_year", exist_ey.get("from_year", 0)),
-                    "to_year": inc_ey.get("to_year", exist_ey.get("to_year", 9999)),
+                    "from_year": inc_ey.get("from_year") if inc_ey.get("from_year") is not None else exist_ey.get("from_year", 0),
+                    "to_year": inc_ey.get("to_year") if inc_ey.get("to_year") is not None else exist_ey.get("to_year", 9999),
                 }
-                
+
             if "academic_year" in update_dict:
                 inc_ay = update_dict["academic_year"] or {}
                 exist_ay = merged_meta.get("academic_year") or {}
                 merged_meta["academic_year"] = {
-                    "from_year": inc_ay.get("from_year", exist_ay.get("from_year", 0)),
-                    "to_year": inc_ay.get("to_year", exist_ay.get("to_year", 9999)),
+                    "from_year": inc_ay.get("from_year") if inc_ay.get("from_year") is not None else exist_ay.get("from_year", 0),
+                    "to_year": inc_ay.get("to_year") if inc_ay.get("to_year") is not None else exist_ay.get("to_year", 9999),
                 }
 
             # Validate the fully merged metadata state against main FileMetadataSchema
-            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(merged_meta)
+            # Strip None/empty values để tránh FileMetadataSchema inject defaults
+            clean_merged = {k: v for k, v in merged_meta.items() if v is not None and v != {}}
+            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(clean_merged)
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
             update_data["custom_metadata"] = meta_model.model_dump(mode="json") if meta_model else None

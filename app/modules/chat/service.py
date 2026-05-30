@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
 from app.modules.chat.history_repository import PERSISTED_STEP_TYPES
 from app.modules.metadata.schemas import FaqMetadataSchema
+from app.modules.chat.step_formatter import simplify_step
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.rag.retrieval.agent import (
     AGENT_SYSTEM_PROMPT,
@@ -53,7 +54,6 @@ class ChatService:
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
         """Retrieve candidate files and build conversation history for the agent."""
-        logger.info(f"[Chat] Nhận request chuẩn bị bối cảnh cho user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
         meta_dict = metadata_filter or {}
         candidate_files = await self._retrieval.retrieve_candidate_files(
             query=question,
@@ -135,7 +135,7 @@ class ChatService:
             return {
                 "answer": final_answer,
                 "sources": [],
-                "steps": pipeline_steps,
+                "steps": [simplify_step(s) for s in pipeline_steps],
                 "token_usage": None,
                 "processing_time_ms": processing_time_ms,
             }
@@ -145,7 +145,9 @@ class ChatService:
 
         # [4] FAQ Pre-check
         faq_svc = await self._get_faq_svc()
-        faq = await faq_svc.find_best_match(question_vector, metadata_filter)
+        # Omit 'type' filter from FAQ search query filter
+        faq_metadata_filter = {k: v for k, v in metadata_filter.items() if k != "type"} if metadata_filter else {}
+        faq = await faq_svc.find_best_match(question_vector, faq_metadata_filter)
         if faq:
             pipeline_steps.append({
                 "type": "faq_check",
@@ -163,7 +165,7 @@ class ChatService:
                 "answer": final_answer,
                 "source": "faq",
                 "sources": [],
-                "steps": pipeline_steps,
+                "steps": [simplify_step(s) for s in pipeline_steps],
                 "token_usage": None,
                 "processing_time_ms": processing_time_ms,
             }
@@ -198,7 +200,7 @@ class ChatService:
             return {
                 "answer": answer_text,
                 "sources": [],
-                "steps": pipeline_steps,
+                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
                 "processing_time_ms": int((time.time() - start_time) * 1000),
             }
 
@@ -237,7 +239,7 @@ class ChatService:
             "answer": final_answer,
             "source": "llm",
             "sources": result["sources"],
-            "steps": pipeline_steps + agent_call_steps,
+            "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + agent_call_steps)],
             "token_usage": result.get("tokenUsage"),
             "processing_time_ms": processing_time_ms,
         }
@@ -265,10 +267,15 @@ class ChatService:
         """
         start_time = time.time()
         pipeline_steps = []
+        logger.info(f"[Chat-Stream] Nhận request từ user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
         
         # [1] Analyze query (rewrite + gate + metadata) — 1 LLM call
+        yield json.dumps({"type": "query_analysis", "content": "Phân tích câu hỏi của người dùng...", "done": False})
+        start_analysis = time.perf_counter()
         analyzer = get_query_analyzer()
         analysis = await analyzer.analyze_query(question, chat_history)
+        dur_analysis = time.perf_counter() - start_analysis
+        
         effective_question = analysis["effective_question"]
         needs_rag = analysis["needs_rag"]
         metadata_filter = analysis.get("metadata_filter") or {}
@@ -280,6 +287,8 @@ class ChatService:
                 "to_year": user_context.enrollment_year
             }
 
+        logger.info(f"[Chat-Stream] QueryAnalysis done in {dur_analysis:.2f}s")
+
         query_analysis_step = {
             "type": "query_analysis",
             "original_question": question,
@@ -288,30 +297,42 @@ class ChatService:
             "metadata_filter": metadata_filter,
         }
         pipeline_steps.append(query_analysis_step)
-        yield json.dumps({**query_analysis_step, "done": False})
+        yield json.dumps({**simplify_step(query_analysis_step), "done": False})
 
         # [2] Gate = NO: generate direct reply
         if not needs_rag:
             logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
+            start_reply = time.perf_counter()
             direct_answer = await analyzer.generate_reply(effective_question, chat_history)
+            dur_reply = time.perf_counter() - start_reply
             yield json.dumps({"type": "text", "content": direct_answer, "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat-Stream] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
+            logger.info(f"[Chat-Stream] Direct reply: {dur_reply:.2f}s. Final answer: '{direct_answer[:150]}...' (Total time: {processing_time_ms / 1000:.2f}s)")
             yield json.dumps({
                 "done": True, 
                 "sources": [], 
-                "steps": pipeline_steps,
+                "steps": [simplify_step(s) for s in pipeline_steps],
                 "token_usage": None,
                 "processing_time_ms": processing_time_ms
             })
             return
 
-        # [3] Embed rewritten question
+        # [3] Embed rewritten question (emit faq_check pending trước để không có khoảng im lặng)
+        yield json.dumps({"type": "faq_check", "content": "Tìm kiếm câu hỏi tương tự trong bộ câu hỏi FAQ...", "done": False})
+        start_embed = time.perf_counter()
         question_vector = await self._embed(effective_question)
+        dur_embed = time.perf_counter() - start_embed
+        logger.info(f"[Chat-Stream] Embed done in {dur_embed:.2f}s")
 
         # [4] FAQ Pre-check
+        start_faq = time.perf_counter()
         faq_svc = await self._get_faq_svc()
-        faq = await faq_svc.find_best_match(question_vector, metadata_filter)
+        # Omit 'type' filter from FAQ search query filter
+        faq_metadata_filter = {k: v for k, v in metadata_filter.items() if k != "type"} if metadata_filter else {}
+        faq = await faq_svc.find_best_match(question_vector, faq_metadata_filter)
+        dur_faq = time.perf_counter() - start_faq
+        logger.info(f"[Chat-Stream] FAQ Check done in {dur_faq:.2f}s | hit={faq is not None}")
+
         if faq:
             faq_check_step = {
                 "type": "faq_check",
@@ -319,17 +340,17 @@ class ChatService:
                 "faq_question": faq.get("question", ""),
             }
             pipeline_steps.append(faq_check_step)
-            yield json.dumps({**faq_check_step, "done": False})
+            yield json.dumps({**simplify_step(faq_check_step), "done": False})
 
             logger.info("[Chat-Stream] FAQ hit. Sending direct answer.")
             yield json.dumps({"type": "text", "content": faq["answer_markdown"], "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq['question']}' (Completed in {processing_time_ms}ms)")
+            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq['question']}' (Completed in {processing_time_ms / 1000:.2f}s)")
             yield json.dumps({
                 "done": True, 
                 "source": "faq",
                 "sources": [], 
-                "steps": pipeline_steps,
+                "steps": [simplify_step(s) for s in pipeline_steps],
                 "tokenUsage": None,
                 "processing_time_ms": processing_time_ms
             })
@@ -340,12 +361,16 @@ class ChatService:
             "hit": False,
         }
         pipeline_steps.append(faq_check_step)
-        yield json.dumps({**faq_check_step, "done": False})
+        yield json.dumps({**simplify_step(faq_check_step), "done": False})
 
         # [5] Prepare Chat State using effective_question
+        yield json.dumps({"type": "retrieval", "content": "Tìm kiếm tài liệu học vụ liên quan...", "done": False})
+        start_retrieval = time.perf_counter()
         state = await self._prepare_chat_state(effective_question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
         history = state["history"]
+        dur_retrieval = time.perf_counter() - start_retrieval
+        logger.info(f"[Chat-Stream] Retrieval done in {dur_retrieval:.2f}s | found={len(candidate_files)} files")
 
         retrieval_files_step = [
             {
@@ -360,11 +385,16 @@ class ChatService:
             "candidate_files": retrieval_files_step,
         }
         pipeline_steps.append(retrieval_step)
-        yield json.dumps({**retrieval_step, "done": False})
+        yield json.dumps({**simplify_step(retrieval_step, candidate_files), "done": False})
 
         if not candidate_files:
             yield json.dumps({"type": "text", "content": "Không tìm thấy tài liệu phù hợp.", "done": False})
-            yield json.dumps({"done": True, "sources": [], "steps": pipeline_steps, "processing_time_ms": int((time.time() - start_time) * 1000)})
+            yield json.dumps({
+                "done": True, 
+                "sources": [], 
+                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps], 
+                "processing_time_ms": int((time.time() - start_time) * 1000)
+            })
             return
 
         tools, tool_map, config = get_agent_config(candidate_files)
@@ -377,11 +407,12 @@ class ChatService:
         total_prompt_tokens = 0
         total_candidates_tokens = 0
         final_answer_accumulated = ""
+        start_agent = time.perf_counter()
         
-        logger.info(f"[Chat] Bắt đầu stream response về cho người dùng (Khởi động Agent Stream)")
+        logger.info(f"[Chat-Stream] Agent started")
 
         for turn_idx in range(settings.AGENT_MAX_TURNS):
-            logger.info(f"[Chat-Stream] === Turn {turn_idx + 1}/{settings.AGENT_MAX_TURNS} ===")
+            start_turn = time.perf_counter()
             tool_calls_in_turn = []
             model_response_parts = []
 
@@ -409,52 +440,35 @@ class ChatService:
                 for part in chunk.candidates[0].content.parts:
                     model_response_parts.append(part)
 
-                    if hasattr(part, "thought") and part.thought:
-                        thought_content = str(part.thought)
-                        if thought_content != "True":
-                            # Emit as reasoning — same channel as planning text, simpler for FE
-                            yield json.dumps({"type": "reasoning", "content": thought_content, "done": False})
+                    # [A] Handle thought part (Gemini Thinking Budget)
+                    is_thought_part = hasattr(part, "thought") and part.thought
+                    if is_thought_part:
+                        if part.text:
+                            yield json.dumps({"type": "reasoning", "content": part.text, "done": False})
+                        continue
 
+                    # [B] Handle tool/function calls
                     if part.function_call:
                         call = part.function_call
                         tool_calls_in_turn.append(call)
                         stream_steps.append({"type": "call", "name": call.name, "args": dict(call.args)})
-                        logger.info(f"[Chat-Stream] Chuẩn bị gọi tool: {call.name} (args: {call.args})")
 
-                        # Map file_id to friendly file_name
-                        raw_fid = str(call.args.get("file_id", ""))
-                        fid = raw_fid.strip().strip("[]")
-                        file_name = "tài liệu quy chế"
-                        for c in candidate_files:
-                            c_fid = str(c.get("file_id", "")).strip()
-                            if c_fid == fid:
-                                file_name = c.get("file_name", "tài liệu")
-                                break
-                        else:
-                            # Try matching as numerical index
-                            if fid.isdigit():
-                                idx = int(fid) - 1
-                                if 0 <= idx < len(candidate_files):
-                                    file_name = candidate_files[idx].get("file_name", "tài liệu")
+                        # Flush any pending reasoning text accumulated before this tool call
+                        new_reasoning = turn_text_buffer[yielded_reasoning_length:]
+                        if new_reasoning:
+                            yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
+                            yielded_reasoning_length += len(new_reasoning)
 
-                        # Yield a descriptive reasoning event
-                        if call.name == "get_document_structure":
-                            reasoning_status = f"Đang tra cứu cấu trúc mục lục của '{file_name}'...\n"
-                        elif call.name == "get_page_content":
-                            pages = call.args.get("pages", "")
-                            reasoning_status = f"Đang đọc nội dung chi tiết (phần/dòng {pages}) từ '{file_name}'...\n"
-                        else:
-                            reasoning_status = f"Đang thực hiện tra cứu bổ sung qua công cụ {call.name}...\n"
+                        # Yield simplified call event
+                        call_step = {"type": "call", "name": call.name, "args": dict(call.args)}
+                        yield json.dumps({**simplify_step(call_step, candidate_files), "done": False})
 
-                        yield json.dumps({"type": "reasoning", "content": reasoning_status, "done": False})
-                        yield json.dumps({"type": "call", "name": call.name, "args": dict(call.args), "done": False})
-
+                    # [C] Handle non-thought planning/answer text
                     if part.text:
                         turn_text_buffer += part.text
                         if not in_answer_block:
                             match = re.search(r'<answer>', turn_text_buffer, flags=re.IGNORECASE)
                             if match:
-                                logger.info("[Chat-Stream] Agent bắt đầu stream nội dung <answer> cuối cùng!")
                                 pre_think = turn_text_buffer[:match.start()]
                                 new_reasoning = pre_think[yielded_reasoning_length:]
                                 if new_reasoning:
@@ -560,6 +574,8 @@ class ChatService:
             history.append(types.Content(role="model", parts=clean_parts))
             total_prompt_tokens += turn_prompt_tokens
             total_candidates_tokens += turn_candidates_tokens
+            dur_turn = time.perf_counter() - start_turn
+            logger.info(f"[Chat-Stream] Turn {turn_idx + 1} done in {dur_turn:.2f}s | tool_calls={len(tool_calls_in_turn)} | tokens({turn_prompt_tokens}/{turn_candidates_tokens})")
 
             if not tool_calls_in_turn:
                 break
@@ -584,12 +600,14 @@ class ChatService:
         if current_sources is None:
             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
 
+        dur_agent = time.perf_counter() - start_agent
         if turn_idx == settings.AGENT_MAX_TURNS - 1 and tool_calls_in_turn:
             logger.warning(f"[Chat-Stream] Agent reached max_turns ({settings.AGENT_MAX_TURNS}) and was cut off — possible infinite loop.")
             
         final_answer_accumulated = sanitize_latex_in_markdown(final_answer_accumulated)
         processing_time_ms = int((time.time() - start_time) * 1000)
-        logger.info(f"[Chat-Stream] Kết thúc stream thành công. Final answer: '{final_answer_accumulated[:200]}...' (Completed in {processing_time_ms}ms). Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
+        logger.info(f"[Chat-Stream] Agent Loop done in {dur_agent:.2f}s | turns={turn_idx + 1} | Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
+        logger.info(f"[Chat-Stream] Done. Total time: {processing_time_ms / 1000:.2f}s. Final answer: '{final_answer_accumulated[:200]}...'")
         
         # Log async interaction
         faq_svc = await self._get_faq_svc()
@@ -610,7 +628,7 @@ class ChatService:
             "done": True,
             "source": "llm",
             "sources": current_sources,
-            "steps": pipeline_steps + filtered_stream_steps,
+            "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + filtered_stream_steps)],
             "tokenUsage": {
                 "promptTokens": total_prompt_tokens,
                 "completionTokens": total_candidates_tokens,

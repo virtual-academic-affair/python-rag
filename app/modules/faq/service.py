@@ -15,6 +15,7 @@ from app.utils.text_utils import remove_accents
 from app.utils.format_utils import markdown_to_rich_text, rich_text_to_markdown
 from app.modules.metadata.service import get_metadata_service
 from app.modules.metadata.utils.filter_builder import get_filter_builder
+from app.modules.metadata.schemas import FaqMetadataSchema
 from app.core.exceptions import ValidationException
 from bson import ObjectId
 
@@ -228,9 +229,52 @@ class FaqService:
             update_data["answer_unaccented"] = remove_accents(data["answer_markdown"])
             
         if "metadata_filter" in data:
-            is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(data["metadata_filter"])
-            if not is_valid:
+            incoming_meta = data["metadata_filter"] or {}
+            
+            # 1. Validate partial input against schema (all fields optional, no defaults)
+            try:
+                # Clean incoming of None values first to avoid validation issues
+                clean_incoming = {k: v for k, v in incoming_meta.items() if v is not None}
+                update_schema = FaqMetadataSchema.model_validate(clean_incoming)
+            except Exception as exc:
+                errors = get_metadata_service()._flatten_pydantic_errors(exc)
                 raise ValidationException(f"Invalid FAQ metadata: {', '.join(errors)}")
+                
+            update_dict = update_schema.model_dump(exclude_unset=True) if update_schema else {}
+            
+            # 2. Get existing metadata from DB
+            existing_meta = existing.get("metadata_filter") or {}
+            if hasattr(existing_meta, "model_dump"):
+                existing_meta = existing_meta.model_dump()
+            elif not isinstance(existing_meta, dict):
+                existing_meta = dict(existing_meta) if existing_meta else {}
+                
+            # 3. Deep merge incoming into existing
+            merged_meta = {
+                "enrollment_year": dict(existing_meta.get("enrollment_year") or {}),
+                "academic_year": dict(existing_meta.get("academic_year") or {}),
+            }
+            
+            if "enrollment_year" in update_dict:
+                inc_ey = update_dict["enrollment_year"] or {}
+                exist_ey = merged_meta.get("enrollment_year") or {}
+                merged_meta["enrollment_year"] = {
+                    "from_year": inc_ey.get("from_year") if inc_ey.get("from_year") is not None else exist_ey.get("from_year", 0),
+                    "to_year": inc_ey.get("to_year") if inc_ey.get("to_year") is not None else exist_ey.get("to_year", 9999),
+                }
+                
+            if "academic_year" in update_dict:
+                inc_ay = update_dict["academic_year"] or {}
+                exist_ay = merged_meta.get("academic_year") or {}
+                merged_meta["academic_year"] = {
+                    "from_year": inc_ay.get("from_year") if inc_ay.get("from_year") is not None else exist_ay.get("from_year", 0),
+                    "to_year": inc_ay.get("to_year") if inc_ay.get("to_year") is not None else exist_ay.get("to_year", 9999),
+                }
+                
+            # 4. Validate the fully merged metadata state against main FaqMetadataSchema
+            is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(merged_meta)
+            if not is_valid:
+                raise ValidationException(f"Invalid merged FAQ metadata: {', '.join(errors)}")
                 
             update_data["metadata_filter"] = meta_model.model_dump() if meta_model else {}
             need_qdrant_update = True

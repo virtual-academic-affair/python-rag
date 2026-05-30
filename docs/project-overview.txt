@@ -441,10 +441,15 @@ B5. Final Answer Construction:
     - Hệ thống dùng `r2_storage.generate_presigned_url` tạo link tải file "nóng" (expire sau 3600s) cho sv.
     - Với Inquiry Email: Tự động chuyển đổi `(^...)` thành `(Xem thêm tại [Tên mục lục](url_file_gốc))`.
 
-15.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
+17.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
 - Content-Type: `text/event-stream`.
-- Format: `data: {"type": "text/thought/call", "content": "...", "done": false}`.
-- Final: `data: {"done": true, "sources": [...], "processingTimeMs": 1234}`.
+- Format: `data: {"type": "text|reasoning|call|query_analysis|faq_check|retrieval", "content": "...", "done": false}`.
+- Final: `data: {"done": true, "sources": [...], "steps": [...], "tokenUsage": {...}, "processingTimeMs": N}`.
+- Luồng sự kiện: query_analysis → faq_check → retrieval → [reasoning → call] x N → reasoning → text → done.
+  (Mỗi lần gọi tool, Agent tự viết câu lập luận tiếng Việt trước khi phát event call)
+- AGENT_SYSTEM_PROMPT: Được rút gọn tối ưu (condensed) với cấu trúc QUY TẮC BẮT BUỘC rõ ràng.
+  Quy tắc #1 bắt buộc Agent viết suy nghĩ tiếng Việt trước mỗi tool call — không cần temperature
+  cao hay thinking budget. Đây là cơ chế kích hoạt reasoning nội tại của mô hình.
 - [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
 
 

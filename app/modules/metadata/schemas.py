@@ -123,8 +123,8 @@ class FaqMetadataSchema(BaseSchema):
 
     def to_model(self) -> FaqMetadata:
         return FaqMetadata(
-            enrollment_year=self.enrollment_year.to_model() if self.enrollment_year else None,
-            academic_year=self.academic_year.to_model() if self.academic_year else None,
+            enrollment_year=self.enrollment_year.to_model() if self.enrollment_year else YearRange(),
+            academic_year=self.academic_year.to_model() if self.academic_year else YearRange(),
         )
 
 
