@@ -8,6 +8,12 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from app.core.database import Database
 
 
+# Single source of truth for which pipeline step types are persisted to MongoDB.
+# Verbose LLM internals (tool_output = raw page content, reasoning = chain-of-thought,
+# text = the answer itself, stored separately as message content) are discarded.
+PERSISTED_STEP_TYPES = frozenset({"query_analysis", "faq_check", "retrieval", "call"})
+
+
 class ChatHistoryRepository:
     """MongoDB repository for chat sessions and messages."""
 
@@ -92,6 +98,14 @@ class ChatHistoryRepository:
                 },
             )
 
+        # Enforce the persistence whitelist at the storage boundary: only structural
+        # pipeline steps are kept regardless of what the caller passes.
+        persisted_steps = [
+            s
+            for s in (steps or [])
+            if isinstance(s, dict) and s.get("type") in PERSISTED_STEP_TYPES
+        ]
+
         message_doc = {
             "session_id": session_id,
             "user_id": user_id,
@@ -100,7 +114,7 @@ class ChatHistoryRepository:
             "message_type": message_type,
             "token_usage": token_usage,
             "sources": sources or [],
-            "steps": steps or [],
+            "steps": persisted_steps,
             "processing_time_ms": processing_time_ms,
             "sequence": sequence,
             "created_at": now,

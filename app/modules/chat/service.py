@@ -9,6 +9,7 @@ from google.genai import types
 
 from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
+from app.modules.chat.history_repository import PERSISTED_STEP_TYPES
 from app.modules.metadata.schemas import FaqMetadataSchema
 from app.modules.rag.retrieval.service import get_retrieval_service
 from app.modules.rag.retrieval.agent import (
@@ -228,9 +229,9 @@ class ChatService:
             final_answer = markdown_to_rich_text(answer_markdown)
 
         # Only persist structural pipeline steps — filter out verbose LLM internals
-        # (thought, tool_output, reasoning are too large and not useful for history)
-        PERSIST_STEP_TYPES = {"query_analysis", "faq_check", "retrieval", "call"}
-        agent_call_steps = [s for s in result["steps"] if s.get("type") in PERSIST_STEP_TYPES]
+        # (thought, tool_output, reasoning are too large and not useful for history).
+        # Whitelist is enforced again at the storage boundary (see ChatHistoryRepository).
+        agent_call_steps = [s for s in result["steps"] if s.get("type") in PERSISTED_STEP_TYPES]
 
         return {
             "answer": final_answer,
@@ -601,9 +602,9 @@ class ChatService:
             processing_time_ms=processing_time_ms,
         ))
             
-        # Only persist structural steps — discard tool_output (contains raw page content)
-        PERSIST_STEP_TYPES = {"query_analysis", "faq_check", "retrieval", "call"}
-        filtered_stream_steps = [s for s in stream_steps if s.get("type") in PERSIST_STEP_TYPES]
+        # Only persist structural steps — discard tool_output (contains raw page content).
+        # Whitelist is enforced again at the storage boundary (see ChatHistoryRepository).
+        filtered_stream_steps = [s for s in stream_steps if s.get("type") in PERSISTED_STEP_TYPES]
 
         yield json.dumps({
             "done": True,
