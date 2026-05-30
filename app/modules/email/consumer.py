@@ -159,7 +159,7 @@ def start_email_ingest_consumer(
             logger.info(
                 "Email ingested processed: messageId=%s label=%s",
                 message_id,
-                getattr(result, "label", None),
+                getattr(result, "label", None) or getattr(result, "labels", None),
             )
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:

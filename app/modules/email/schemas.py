@@ -85,7 +85,14 @@ class InquiryResponse(BaseLabelResponse):
     label: SystemLabel = Field(default=SystemLabel.Inquiry)
     inquiry: InquiryPayload
 
-ResponseModel = Union[LabelClassificationResponse, ClassRegistrationExtractResponse, InquiryResponse]
+class MixedIntentResponse(BaseSchema):
+    """Returned when an email matches BOTH labels; carries each label's result."""
+    message_id: Optional[int] = Field(default=None)
+    labels: List[SystemLabel] = Field(..., description="All labels detected (ordered: classRegistration, inquiry)")
+    extracted: ClassRegistrationPayload = Field(..., description="Extracted payload from the class-registration part")
+    inquiry: InquiryPayload = Field(..., description="Inquiry reply built from the inquiry part")
+
+ResponseModel = Union[LabelClassificationResponse, ClassRegistrationExtractResponse, InquiryResponse, MixedIntentResponse]
 
 class ProcessResponse(BaseSchema):
     success: bool

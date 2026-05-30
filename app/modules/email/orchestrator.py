@@ -11,9 +11,11 @@ from app.modules.email.workflows.class_registration_service import (
 from app.modules.email.workflows.inquiry_service import InquiryService
 from app.modules.email.schemas import (
     ClassRegistrationExtractResponse,
+    ClassRegistrationPayload,
     InquiryResponse,
     InquiryPayload,
     LabelClassificationResponse,
+    MixedIntentResponse,
     ResponseModel,
     SystemLabel,
 )
@@ -24,28 +26,83 @@ logger = logging.getLogger(__name__)
 class EmailWorkflowOrchestrator:
     """Coordinate label classification and workflow execution."""
 
-    _INQUIRY_HINT_KEYWORDS = (
-        "hỏi",
-        "cho em hỏi",
-        "xin hỏi",
-        "thắc mắc",
-        "thac mac",
-        "question",
-        "inquiry",
-    )
-
     def __init__(self):
         self.grpc_client = get_grpc_client()
         self.label_classifier = LabelClassifierService()
         self.class_registration_service = ClassRegistrationService()
         self.inquiry_service = InquiryService()
 
-    @classmethod
-    def _has_inquiry_intent(cls, title: str, content: str) -> bool:
-        combined = f"{title}\n{content}".lower()
-        if "?" in combined:
-            return True
-        return any(keyword in combined for keyword in cls._INQUIRY_HINT_KEYWORDS)
+    @staticmethod
+    def _build_inquiry_payload(draft_result: dict, message_id: int | None) -> InquiryPayload:
+        return InquiryPayload(
+            answer=draft_result["answer"],
+            question=draft_result.get("question"),
+            types=draft_result.get("types", []),
+            filters=draft_result.get("filters"),
+            sources=draft_result["sources"],
+            message_id=message_id,
+        )
+
+    async def _run_class_registration(
+        self,
+        title: str,
+        content: str,
+        message_id: int | None,
+    ) -> ClassRegistrationPayload:
+        """Extract the class-registration payload and push it to NestJS via gRPC."""
+        extracted = await self.class_registration_service.process(
+            title=title,
+            content=content,
+            message_id=message_id,
+        )
+        logger.info(
+            "classRegistration extracted payload: %s",
+            extracted.model_dump_json(by_alias=True, exclude_none=False),
+        )
+        if self.grpc_client is not None:
+            try:
+                grpc_ok = await async_retry(
+                    self.grpc_client.create_class_registration,
+                    payload=extracted,
+                )
+                if not grpc_ok:
+                    logger.warning(
+                        "gRPC class registration create failed/rejected for message_id=%s",
+                        extracted.message_id,
+                    )
+            except Exception as grpc_err:
+                logger.warning("gRPC create_class_registration raised exception: %s", grpc_err)
+        return extracted
+
+    async def _run_inquiry(
+        self,
+        title: str,
+        content: str,
+        message_id: int | None,
+    ) -> dict:
+        """Generate the inquiry reply (RAG) and push it to NestJS via gRPC."""
+        draft_result = await self.inquiry_service.process(
+            title=title,
+            content=content,
+            message_id=message_id,
+        )
+        if self.grpc_client is not None and message_id is not None:
+            try:
+                grpc_ok = await async_retry(
+                    self.grpc_client.create_inquiry,
+                    message_id=message_id,
+                    answer=draft_result["answer"],
+                    extracted_question=draft_result.get("question"),
+                    inquiry_types=draft_result.get("types", []),
+                )
+                if not grpc_ok:
+                    logger.warning(
+                        "gRPC inquiry create failed/rejected for message_id=%s",
+                        message_id,
+                    )
+            except Exception as grpc_err:
+                logger.warning("gRPC create_inquiry raised exception: %s", grpc_err)
+        return draft_result
 
     async def process_request(
         self,
@@ -55,112 +112,73 @@ class EmailWorkflowOrchestrator:
         sender_email: str = "",
         sender_name: str = "",
     ) -> ResponseModel:
-        label = await self.label_classifier.classify(
+        labels = await self.label_classifier.classify_labels(
             title=title,
             content=content,
         )
-        logger.info("Classification result: %s", label.value)
+        logger.info("Classification result: %s", [l.value for l in labels])
 
-        if label == SystemLabel.ClassRegistration:
-            class_reg_content = content
-            inquiry_content = content
-            if self._has_inquiry_intent(title=title, content=content):
-                inquiry_content, class_reg_content = await self.label_classifier.split_mixed_intent_content(
-                    title=title,
-                    content=content,
-                )
+        has_class_reg = SystemLabel.ClassRegistration in labels
+        has_inquiry = SystemLabel.Inquiry in labels
 
-            extracted = await self.class_registration_service.process(
+        # When BOTH labels apply, split the email so each workflow only sees its part.
+        # Single-label emails go to their workflow with the full content (no split).
+        class_reg_content = content
+        inquiry_content = content
+        if has_class_reg and has_inquiry:
+            inquiry_content, class_reg_content = await self.label_classifier.split_mixed_intent_content(
                 title=title,
-                content=class_reg_content,
-                message_id=message_id,
+                content=content,
             )
             logger.info(
-                "classRegistration extracted payload: %s",
-                extracted.model_dump_json(by_alias=True, exclude_none=False),
+                "Mixed intent detected for message_id=%s. Split lengths: inquiry=%d, classRegistration=%d",
+                message_id,
+                len(inquiry_content),
+                len(class_reg_content),
             )
-            if self.grpc_client is not None:
-                try:
-                    grpc_ok = await async_retry(
-                        self.grpc_client.create_class_registration,
-                        payload=extracted,
-                    )
-                    if not grpc_ok:
-                        logger.warning(
-                            "gRPC class registration create failed/rejected for message_id=%s",
-                            extracted.message_id,
-                        )
-                except Exception as grpc_err:
-                    logger.warning("gRPC create_class_registration raised exception: %s", grpc_err)
 
-            if self._has_inquiry_intent(title=title, content=content):
-                logger.info(
-                    "Detected mixed intent (classRegistration + inquiry). Creating inquiry record as well for message_id=%s",
+        extracted: ClassRegistrationPayload | None = None
+        inquiry_draft: dict | None = None
+
+        # An empty split segment means that label has no real content -> skip its workflow.
+        if has_class_reg:
+            if class_reg_content.strip():
+                extracted = await self._run_class_registration(title, class_reg_content, message_id)
+            else:
+                logger.warning(
+                    "classRegistration label present but split content is empty for message_id=%s; skipping",
                     message_id,
                 )
-                draft_result = await self.inquiry_service.process(
-                    title=title,
-                    content=inquiry_content,
-                    message_id=message_id,
+        if has_inquiry:
+            if inquiry_content.strip():
+                inquiry_draft = await self._run_inquiry(title, inquiry_content, message_id)
+            else:
+                logger.warning(
+                    "inquiry label present but split content is empty for message_id=%s; skipping",
+                    message_id,
                 )
-                if self.grpc_client is not None and message_id is not None:
-                    try:
-                        grpc_ok = await async_retry(
-                            self.grpc_client.create_inquiry,
-                            message_id=message_id,
-                            answer=draft_result["answer"],
-                            extracted_question=draft_result.get("question"),
-                            inquiry_types=draft_result.get("types", []),
-                        )
-                        if not grpc_ok:
-                            logger.warning(
-                                "gRPC inquiry create failed/rejected for mixed-intent message_id=%s",
-                                message_id,
-                            )
-                    except Exception as grpc_err:
-                        logger.warning("gRPC create_inquiry (mixed-intent) raised exception: %s", grpc_err)
 
+        # Build the response from whatever workflows actually produced output.
+        if extracted is not None and inquiry_draft is not None:
+            return MixedIntentResponse(
+                message_id=message_id,
+                labels=[SystemLabel.ClassRegistration, SystemLabel.Inquiry],
+                extracted=extracted,
+                inquiry=self._build_inquiry_payload(inquiry_draft, message_id),
+            )
+        if extracted is not None:
             return ClassRegistrationExtractResponse(
                 message_id=message_id,
                 label=SystemLabel.ClassRegistration,
                 extracted=extracted,
             )
-
-        if label == SystemLabel.Inquiry:
-            draft_result = await self.inquiry_service.process(
-                title=title,
-                content=content,
-                message_id=message_id,
-            )
-            if self.grpc_client is not None and message_id is not None:
-                try:
-                    grpc_ok = await async_retry(
-                        self.grpc_client.create_inquiry,
-                        message_id=message_id,
-                        answer=draft_result["answer"],
-                        extracted_question=draft_result.get("question"),
-                        inquiry_types=draft_result.get("types", []),
-                    )
-                    if not grpc_ok:
-                        logger.warning(
-                            "gRPC inquiry create failed/rejected for message_id=%s",
-                            message_id,
-                        )
-                except Exception as grpc_err:
-                    logger.warning("gRPC create_inquiry raised exception: %s", grpc_err)
-
+        if inquiry_draft is not None:
             return InquiryResponse(
                 message_id=message_id,
                 label=SystemLabel.Inquiry,
-                inquiry=InquiryPayload(
-                    answer=draft_result["answer"],
-                    question=draft_result.get("question"),
-                    types=draft_result.get("types", []),
-                    filters=draft_result.get("filters"),
-                    sources=draft_result["sources"],
-                    message_id=message_id,
-                ),
+                inquiry=self._build_inquiry_payload(inquiry_draft, message_id),
             )
 
-        return LabelClassificationResponse(label=label, message_id=message_id)
-
+        # Nothing was processed (e.g. both segments empty) — return the primary label only.
+        primary_label = labels[0] if labels else SystemLabel.Inquiry
+        return LabelClassificationResponse(label=primary_label, message_id=message_id)

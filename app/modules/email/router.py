@@ -46,7 +46,8 @@ async def process_request(
             sender_name="",
         )
 
-        logger.info(f"Successfully processed request with label: {result.label}")
+        label_info = getattr(result, "label", None) or getattr(result, "labels", None)
+        logger.info(f"Successfully processed request with label: {label_info}")
         return result
 
     except Exception as e:

@@ -63,7 +63,7 @@ class LabelClassifierService:
                 (
                     "system",
                     """You are a senior email triage assistant for a university academic office.
-Your task: classify each incoming email into EXACTLY ONE label:
+Your task: assign ALL applicable labels to the email. An email may match ONE or BOTH labels:
 - classRegistration
 - inquiry
 
@@ -78,22 +78,25 @@ Label definitions:
 - Mostly Q&A, consultation, status checking; no explicit execution request like register/cancel/open class.
 - Examples: "học cải thiện là gì?", "điều kiện học lại như thế nào?", "khi nào mở đăng ký?".
 
-Decision priority (very important):
-- If there is any actionable request to perform registration operation now -> classRegistration.
-- If content is only asking policy/information without requesting execution -> inquiry.
+Multi-label rule (very important):
+- If the email contains BOTH an actionable registration request AND an information/clarification question -> return BOTH labels.
+- If only one applies, return only that one.
 - Do not be biased by the presence of student profile lines (name, MSSV, class).
 
 Few-shot guidance:
 Input: "Em muốn học cải thiện môn Nhập môn lập trình 22C01"
-Output: classRegistration
+Output: ["classRegistration"]
 
 Input: "Cho em hỏi quy định học cải thiện môn Nhập môn lập trình"
-Output: inquiry
+Output: ["inquiry"]
+
+Input: "Em muốn đăng ký lớp 22C01. Ngoài ra cho em hỏi điều kiện học cải thiện là gì ạ?"
+Output: ["classRegistration","inquiry"]
 
 Output constraints:
-- Return ONLY one raw label token: classRegistration OR inquiry.
-- No explanation, no punctuation, no markdown, no extra words.
-- If uncertain, return inquiry.
+- Return ONLY a JSON array of label tokens, e.g. ["inquiry"] or ["classRegistration","inquiry"].
+- No explanation, no markdown, no code fence, no extra words.
+- If uncertain, return ["inquiry"].
 """,
                 ),
                 (
@@ -114,13 +117,15 @@ Output constraints:
             [
                 (
                     "system",
-                    """You split a student email into 2 focused parts for downstream workflows.
+                    """You split a student email into 2 mutually exclusive parts for downstream workflows.
 Return STRICT JSON ONLY with this schema:
-{"inquiry_content":"...","class_registration_content":"..."}
+{{"inquiry_content":"...","class_registration_content":"..."}}
 Rules:
 - inquiry_content: only question/consultation/policy clarification intent.
 - class_registration_content: only actionable registration intent (register/cancel/open/switch class, course code/class code, constraints).
-- If a sentence belongs to both, keep it in both.
+- Each piece of the email goes to EXACTLY ONE part. NEVER put the same text in both parts.
+- If a single sentence mixes both intents, split it into clauses and assign each clause to the matching part. If it cannot be split cleanly, assign the whole sentence to its dominant intent only.
+- Together the two parts should cover the meaningful content without duplication.
 - Preserve original language.
 - No markdown, no explanation.
 """,
@@ -137,34 +142,84 @@ Rules:
             ]
         )
 
-    @classmethod
-    def _normalize_label(cls, raw_label: str) -> str:
-        text = (raw_label or "").strip()
-        if not text:
-            return SystemLabel.Inquiry.value
+    # Canonical ordering used everywhere a label list is emitted.
+    _LABEL_ORDER = (
+        SystemLabel.ClassRegistration.value,
+        SystemLabel.Inquiry.value,
+    )
 
-        # Clean markdown backticks and single quotes that Gemini sometimes adds
+    @classmethod
+    def _match_label(cls, token: str) -> str | None:
+        """Map a single raw token to a valid label value, or None if it matches nothing."""
+        text = (token or "").strip()
+        if not text:
+            return None
+
+        # Clean markdown backticks and quotes that Gemini sometimes adds
         # E.g. "'classRegistration'", "`inquiry`"
         clean_text = re.sub(r"['\"`]", "", text)
-        
+
         # Exact match (case insensitive)
-        for token in cls._VALID_LABELS:
-            if clean_text.lower() == token.lower():
-                return token
+        for valid in cls._VALID_LABELS:
+            if clean_text.lower() == valid.lower():
+                return valid
 
         text_lower = text.lower()
-        
+
         # Check aliases
         compact = re.sub(r"[^a-zA-Z_-]", "", text_lower)
         if compact in cls._ALIASES:
             return cls._ALIASES[compact]
 
         # Fallback: substring match on original cleaned text
-        for token in cls._VALID_LABELS:
-            if token.lower() in text_lower:
-                return token
+        for valid in cls._VALID_LABELS:
+            if valid.lower() in text_lower:
+                return valid
 
-        return SystemLabel.Inquiry.value
+        return None
+
+    @classmethod
+    def _normalize_label(cls, raw_label: str) -> str:
+        """Single-label normalization; unknown/empty defaults to inquiry."""
+        return cls._match_label(raw_label) or SystemLabel.Inquiry.value
+
+    @classmethod
+    def _normalize_labels(cls, raw_label: str) -> list[str]:
+        """
+        Parse the classifier output (JSON array preferred) into an ordered, unique
+        list of valid label values. Empty/unknown output defaults to [inquiry].
+        """
+        text = (raw_label or "").strip()
+        candidates: list[str] = []
+
+        if text:
+            # Strip code fences / leading "json" the model may add, then try JSON.
+            cleaned = re.sub(r"```(?:json)?", "", text).strip().strip("`").strip()
+            cleaned = re.sub(r"^json\s*", "", cleaned, flags=re.IGNORECASE).strip()
+            parsed = None
+            try:
+                parsed = json.loads(cleaned)
+            except Exception:
+                parsed = None
+
+            if isinstance(parsed, list):
+                candidates = [str(t) for t in parsed]
+            elif isinstance(parsed, str):
+                candidates = [parsed]
+            else:
+                # Not valid JSON — split on common separators and let _match_label decide.
+                candidates = re.split(r"[,\n\[\]\"']+", text)
+
+        matched: list[str] = []
+        for c in candidates:
+            lbl = cls._match_label(c)
+            if lbl and lbl not in matched:
+                matched.append(lbl)
+
+        if not matched:
+            matched = [SystemLabel.Inquiry.value]
+
+        return [l for l in cls._LABEL_ORDER if l in matched]
 
     async def split_mixed_intent_content(
         self,
@@ -182,21 +237,24 @@ Rules:
             inquiry_content = str(data.get("inquiry_content") or "").strip()
             class_registration_content = str(data.get("class_registration_content") or "").strip()
 
-            if not inquiry_content:
-                inquiry_content = content
-            if not class_registration_content:
-                class_registration_content = content
-
+            # NOTE: an empty segment means that label has no content in this email.
+            # We intentionally do NOT fall back to the full content here — the caller
+            # decides to skip the corresponding workflow. (Hard parse/LLM failure
+            # below is different: there we fall back to full content for both.)
             return inquiry_content, class_registration_content
         except Exception as e:
             logger.warning("LLM mixed-intent split failed, fallback to original content: %s", e)
             return content, content
 
-    async def classify(
+    async def classify_labels(
         self,
         title: str,
         content: str,
-    ) -> SystemLabel:
+    ) -> list[SystemLabel]:
+        """
+        Multi-label classification: returns 1 or 2 labels, ordered
+        [classRegistration, inquiry]. Defaults to [inquiry] on failure.
+        """
         try:
             rendered_messages = self.classification_prompt.format_messages(
                 title=title,
@@ -216,20 +274,23 @@ Rules:
             raw_label = (result.content or "").strip()
             logger.info("[CLASSIFY RESULT] raw_label=%r", raw_label)
 
-            label = self._normalize_label(raw_label)
+            labels = self._normalize_labels(raw_label)
 
+            # Additive keyword override: explicit registration keywords ADD the
+            # classRegistration label (never replace inquiry).
             combined_text = f"{title}\n{content}".lower()
             if any(kw in combined_text for kw in self._CLASS_REG_KEYWORDS):
-                if label != SystemLabel.ClassRegistration.value:
+                if SystemLabel.ClassRegistration.value not in labels:
                     logger.warning(
-                        "[CLASSIFY HEURISTIC] Override %s -> classRegistration due to explicit registration keywords",
-                        label,
+                        "[CLASSIFY HEURISTIC] Adding classRegistration due to explicit registration keywords (LLM=%s)",
+                        labels,
                     )
-                label = SystemLabel.ClassRegistration.value
+                    labels.append(SystemLabel.ClassRegistration.value)
+                    labels = [l for l in self._LABEL_ORDER if l in labels]
 
-            logger.info("[CLASSIFY RESULT] normalized_label=%s", label)
-            return SystemLabel(label)
+            logger.info("[CLASSIFY RESULT] normalized_labels=%s", labels)
+            return [SystemLabel(l) for l in labels]
         except Exception as e:
             logger.error("Label classification failed: %s", str(e), exc_info=True)
-            return SystemLabel.Inquiry
+            return [SystemLabel.Inquiry]
 
