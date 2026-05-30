@@ -141,16 +141,16 @@ class QdrantFaqService:
         """Convert an InquiryFilters/FaqMetadata dict to Qdrant Filter."""
         if not metadata_filter_dict:
             return None
-            
-        # Fast-path: Nếu tất cả các giá trị đều là None/rỗng, bỏ qua luôn không cần validate
-        if all(v is None for v in metadata_filter_dict.values()):
+
+        # Strip None values trước — tránh Pydantic V2 từ chối khi field là non-optional YearRange
+        clean_dict = {k: v for k, v in metadata_filter_dict.items() if v is not None}
+        if not clean_dict:
             return None
 
         from app.modules.metadata.schemas import FaqMetadataSchema
         from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
         try:
-            # Chỉ validate khi thực sự có dữ liệu
-            schema = FaqMetadataSchema.model_validate(metadata_filter_dict)
+            schema = FaqMetadataSchema.model_validate(clean_dict)
             model = schema.to_model()
         except Exception as e:
             logger.warning(f"Invalid FAQ metadata filter: {e}")

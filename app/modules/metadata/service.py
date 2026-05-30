@@ -91,7 +91,9 @@ class MetadataValidator:
             return True, [], FaqMetadata()
 
         try:
-            schema = FaqMetadataSchema.model_validate(raw)
+            # Clean raw dict of any None values
+            clean_raw = {k: v for k, v in raw.items() if v is not None}
+            schema = FaqMetadataSchema.model_validate(clean_raw)
             model = schema.to_model()
             return True, [], model
         except Exception as exc:

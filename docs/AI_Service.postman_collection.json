@@ -720,7 +720,7 @@
             "description": "Create a new FAQ manually.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ và GPA >= 2.0.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"type\": \"cong_van\"\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ và GPA >= 2.0.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 2022,\n      \"toYear\": 2022\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
