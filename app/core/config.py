@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     GRPC_TIMEOUT_SECONDS: float = 3.0
 
     # ====================================
+    # JWT Configuration
+    # ====================================
+    JWT_SECRET: str = "CHANGE_ME_SUPER_SECRET"
+    JWT_TOKEN_AUDIENCE: str = "vaa"
+    JWT_TOKEN_ISSUER: str = "vaa-api"
+
+    # ====================================
     # RabbitMQ Configuration
     # ====================================
     RABBITMQ_ENABLED: bool = True

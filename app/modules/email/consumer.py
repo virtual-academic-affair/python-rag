@@ -141,6 +141,8 @@ def start_email_ingest_consumer(
                 content=content,
                 sender_email=msg.data.sender_email,
                 sender_name=msg.data.sender_name,
+                student_code=msg.data.student_code,
+                enrollment_year=msg.data.enrollment_year,
             )
             await _emit_status_event(
                 event_name="email_processing_done",

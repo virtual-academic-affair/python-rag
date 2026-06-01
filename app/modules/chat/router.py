@@ -63,34 +63,12 @@ async def chat_query(
     - RAG Service does NOT manage sessions. Chat history must be sent from NestJS.
     """
     try:
-        # Extract role from token and override context
-        user_role = user.get("role", "student")
-
-        # Extract enrollment_year from JWT if present
-        jwt_enrollment = user.get("enrollmentyear") or user.get("enrollment_year")
-        enrollment_year = None
-        if jwt_enrollment:
-            try:
-                if isinstance(jwt_enrollment, str):
-                    import re
-                    match = re.search(r"\d+", jwt_enrollment)
-                    if match:
-                        val = int(match.group())
-                        enrollment_year = 2000 + val if val < 100 else val
-                    else:
-                        enrollment_year = int(jwt_enrollment)
-                else:
-                    val = int(jwt_enrollment)
-                    enrollment_year = 2000 + val if val < 100 else val
-            except Exception as e:
-                logger.warning(f"Failed to parse enrollmentyear from JWT '{jwt_enrollment}': {e}")
-
-        # Build user context from auth token
+        # Build user context from normalized JWT payload (enrollment_year is already int|None via JWTPayload)
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=enrollment_year,
-            role=user_role,
+            enrollment_year=user.get("enrollment_year"),
+            role=user.get("role", "student"),
         )
 
         session_id = request.session_id or str(uuid4())
@@ -177,34 +155,12 @@ async def chat_stream(
     - NestJS can forward this stream to WebSocket clients.
     """
     try:
-        # Extract role from token and override context
-        user_role = user.get("role", "student")
-
-        # Extract enrollment_year from JWT if present
-        jwt_enrollment = user.get("enrollmentyear") or user.get("enrollment_year")
-        enrollment_year = None
-        if jwt_enrollment:
-            try:
-                if isinstance(jwt_enrollment, str):
-                    import re
-                    match = re.search(r"\d+", jwt_enrollment)
-                    if match:
-                        val = int(match.group())
-                        enrollment_year = 2000 + val if val < 100 else val
-                    else:
-                        enrollment_year = int(jwt_enrollment)
-                else:
-                    val = int(jwt_enrollment)
-                    enrollment_year = 2000 + val if val < 100 else val
-            except Exception as e:
-                logger.warning(f"Failed to parse enrollmentyear from JWT '{jwt_enrollment}': {e}")
-
-        # Build user context from auth token
+        # Build user context from normalized JWT payload (enrollment_year is already int|None via JWTPayload)
         user_context = UserContext(
             user_id=str(user.get("sub", "")),
             name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=enrollment_year,
-            role=user_role,
+            enrollment_year=user.get("enrollment_year"),
+            role=user.get("role", "student"),
         )
 
         session_id = request.session_id or str(uuid4())

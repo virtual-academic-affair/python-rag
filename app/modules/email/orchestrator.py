@@ -79,12 +79,16 @@ class EmailWorkflowOrchestrator:
         title: str,
         content: str,
         message_id: int | None,
+        student_code: str | None = None,
+        enrollment_year: int | None = None,
     ) -> dict:
         """Generate the inquiry reply (RAG) and push it to NestJS via gRPC."""
         draft_result = await self.inquiry_service.process(
             title=title,
             content=content,
             message_id=message_id,
+            student_code=student_code,
+            enrollment_year=enrollment_year,
         )
         if self.grpc_client is not None and message_id is not None:
             try:
@@ -111,6 +115,8 @@ class EmailWorkflowOrchestrator:
         content: str,
         sender_email: str = "",
         sender_name: str = "",
+        student_code: str | None = None,
+        enrollment_year: int | None = None,
     ) -> ResponseModel:
         labels = await self.label_classifier.classify_labels(
             title=title,
@@ -151,7 +157,13 @@ class EmailWorkflowOrchestrator:
                 )
         if has_inquiry:
             if inquiry_content.strip():
-                inquiry_draft = await self._run_inquiry(title, inquiry_content, message_id)
+                inquiry_draft = await self._run_inquiry(
+                    title=title,
+                    content=inquiry_content,
+                    message_id=message_id,
+                    student_code=student_code,
+                    enrollment_year=enrollment_year,
+                )
             else:
                 logger.warning(
                     "inquiry label present but split content is empty for message_id=%s; skipping",

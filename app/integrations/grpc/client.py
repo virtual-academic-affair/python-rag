@@ -80,8 +80,7 @@ class GrpcClient:
             service_key="auth",
             path_prefix="auth.auth",
             request_map={
-                "auth_find_one_by_keyword": "FindOneByKeywordRequest",
-                "auth_verify_token": "VerifyTokenRequest"
+                "auth_find_one_by_keyword": "FindOneByKeywordRequest"
             },
             stub_class_name="AuthServiceStub"
         )
@@ -131,10 +130,6 @@ class GrpcClient:
                 logger.error("gRPC call %s timed out after %.1fs", rpc_name, self._config.timeout_seconds)
             else:
                 logger.warning("gRPC call %s failed: %s — %s", rpc_name, exc.code(), exc.details())
-            
-            # Specific handling for verify token which uses these exceptions as expected flow
-            if rpc_name == "VerifyToken":
-                raise exc
             
             # For other RPCs, we still log but now we raise to notify caller
             raise GrpcServerException(f"gRPC call {rpc_name} failed with {exc.code()}: {exc.details()}") from exc
@@ -195,38 +190,6 @@ class GrpcClient:
         logger.info("gRPC class registration success: %s", getattr(response, "message", ""))
         return True
 
-    async def verify_token(self, token: str) -> dict | None:
-        """
-        Verify a JWT token via gRPC AuthService.VerifyToken.
-
-        Returns:
-            dict — decoded JWT payload (e.g. {sub, email, role, ...}) if valid
-            None — if token is invalid/expired or gRPC is unavailable
-        """
-        if not self._config.enabled:
-            logger.debug("gRPC is disabled (GRPC_ENABLED=False). Skipping token verification.")
-            return None
-
-        request_cls = self._requests.get("auth_verify_token")
-        if request_cls is None:
-            logger.warning("Skip gRPC token verify because auth stubs are not ready")
-            return None
-
-        request = request_cls(token=token)
-        try:
-            response = await self._call(
-                service_key="auth",
-                rpc_name="VerifyToken",
-                request=request
-            )
-            if response:
-                payload = dict(response.payload)
-                logger.debug("gRPC token verified, user: %s", payload.get("email", "unknown"))
-                return payload
-            return None
-        except grpc.aio.AioRpcError:
-            # Errors already logged in _call method
-            return None
 
     async def create_inquiry(
         self,

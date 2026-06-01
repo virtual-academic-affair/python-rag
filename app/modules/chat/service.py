@@ -108,10 +108,13 @@ class ChatService:
         
         # Merge user context enrollment_year as fallback if not extracted from query
         if not metadata_filter.get("enrollment_year") and user_context.enrollment_year:
+            logger.info("[Chat] Fallback enrollment_year to user context: %s", user_context.enrollment_year)
             metadata_filter["enrollment_year"] = {
                 "from_year": user_context.enrollment_year,
                 "to_year": user_context.enrollment_year
             }
+
+        logger.info("[Chat] Final metadata_filter applied: %s", metadata_filter or "(none)")
 
         pipeline_steps.append({
             "type": "query_analysis",
@@ -282,11 +285,13 @@ class ChatService:
         
         # Merge user context enrollment_year as fallback if not extracted from query
         if not metadata_filter.get("enrollment_year") and user_context.enrollment_year:
+            logger.info("[Chat-Stream] Fallback enrollment_year to user context: %s", user_context.enrollment_year)
             metadata_filter["enrollment_year"] = {
                 "from_year": user_context.enrollment_year,
                 "to_year": user_context.enrollment_year
             }
 
+        logger.info("[Chat-Stream] Final metadata_filter applied: %s", metadata_filter or "(none)")
         logger.info(f"[Chat-Stream] QueryAnalysis done in {dur_analysis:.2f}s")
 
         query_analysis_step = {
@@ -575,7 +580,7 @@ class ChatService:
             total_prompt_tokens += turn_prompt_tokens
             total_candidates_tokens += turn_candidates_tokens
             dur_turn = time.perf_counter() - start_turn
-            logger.info(f"[Chat-Stream] Turn {turn_idx + 1} done in {dur_turn:.2f}s | tool_calls={len(tool_calls_in_turn)} | tokens({turn_prompt_tokens}/{turn_candidates_tokens})")
+            logger.info(f"[Chat-Stream] === Turn {turn_idx + 1} done in {dur_turn:.2f}s | tool_calls={len(tool_calls_in_turn)} | tokens({turn_prompt_tokens}/{turn_candidates_tokens})")
 
             if not tool_calls_in_turn:
                 break
