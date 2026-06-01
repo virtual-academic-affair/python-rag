@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any
 from fastapi import Depends, Header, HTTPException, status, Request
-from app.integrations.grpc.client import get_grpc_client
+from app.core.auth import verify_token_local
 from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,6 @@ def from_form(model_cls):
                 detail=e.errors()
             )
     return dependency
-
-
-
 
 async def _extract_token(authorization: str = Header(None, alias="Authorization")) -> str:
     if not authorization:
@@ -49,34 +46,8 @@ async def _extract_token(authorization: str = Header(None, alias="Authorization"
 
 
 async def require_auth(token: str = Depends(_extract_token)) -> Dict[str, Any]:
-    client = get_grpc_client()
-
-    # If gRPC is disabled, reject all protected requests
-    if not client._config.enabled:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service is disabled",
-        )
-
-    try:
-        payload = await client.verify_token(token)
-    except Exception as e:
-        logger.error(f"Unexpected error during token verification: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service error",
-        )
-
-    if payload is None:
-        # Distinguish between unavailable server and invalid token via client logs.
-        # verify_token() logs detailed reason internally, return generic 401 to client.
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token is invalid or expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return payload
+    # Thực hiện xác thực JWT cục bộ không phụ thuộc vào gRPC
+    return verify_token_local(token)
 
 
 async def require_admin(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:

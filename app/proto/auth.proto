@@ -19,16 +19,7 @@ message FindOneByKeywordRequest {
   string keyword = 1;
 }
 
-message VerifyTokenRequest {
-  string token = 1;
-}
-
-message VerifyTokenResponse {
-  map<string, string> payload = 1;
-}
-
 service AuthService {
-  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
   rpc FindOneByKeyword(FindOneByKeywordRequest) returns (UserResponse);
 }
 

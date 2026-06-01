@@ -25,6 +25,8 @@ class IngestEmailData(BaseSchema):
     sender_email: str = Field(default="")
     sender_name: str = Field(default="")
     content: str = Field(default="")
+    student_code: Optional[str] = Field(default=None)
+    enrollment_year: Optional[int] = Field(default=None)
 
 class IngestMessage(BaseSchema):
     pattern: Optional[str] = None

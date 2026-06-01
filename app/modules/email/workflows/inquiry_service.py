@@ -63,6 +63,8 @@ class InquiryService:
         message_id: Optional[int] = None,
         user_role: str = "student",
         to_rich_text: bool = True,
+        student_code: str | None = None,
+        enrollment_year: int | None = None,
     ) -> Dict[str, Any]:
         """
         Inquiry Workflow:
@@ -80,12 +82,24 @@ class InquiryService:
         inquiry_types = extraction_data.get("inquiry_types", ["training"])
         metadata_filter = extraction_data.get("metadata_filter") or {}
 
-        # 2. Filter Extraction Fallback (Rule-based regex if LLM didn't find any metadata filter)
-        if not metadata_filter or (not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year")):
+        # 2. Xử lý bộ lọc enrollment_year & academic_year với Regex Fallback và RabbitMQ Fallback
+        if not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year"):
             regex_filter = await extract_metadata_from_text(f"{title} {content}")
             if regex_filter:
-                logger.info(f"[Inquiry] Fallback to regex metadata extraction: {regex_filter}")
-                metadata_filter = regex_filter
+                if regex_filter.get("enrollment_year"):
+                    logger.info(f"[Inquiry] Fallback enrollment_year to Regex: {regex_filter['enrollment_year']}")
+                    metadata_filter["enrollment_year"] = regex_filter["enrollment_year"]
+                if regex_filter.get("academic_year"):
+                    logger.info(f"[Inquiry] Fallback academic_year to Regex: {regex_filter['academic_year']}")
+                    metadata_filter["academic_year"] = regex_filter["academic_year"]
+
+            # Nếu Regex vẫn không tìm thấy enrollment_year, thì fallback về khóa sinh viên gửi từ RabbitMQ
+            if not metadata_filter.get("enrollment_year") and enrollment_year:
+                logger.info(f"[Inquiry] Fallback enrollment_year to RabbitMQ sender cohort: {enrollment_year}")
+                metadata_filter["enrollment_year"] = {
+                    "from_year": enrollment_year,
+                    "to_year": enrollment_year
+                }
         
         # 3. RAG Step
         rag_query = extracted_question or f"{title}\n{content}"
