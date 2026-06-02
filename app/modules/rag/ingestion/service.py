@@ -167,20 +167,44 @@ class IngestionService:
 
         return len(chunks), indexed_count
     
+    # Các tiêu đề header/footer phổ biến của văn bản hành chính VN — không có giá trị tra cứu
+    _BLACKLISTED_TOC_ENTRIES = {
+        "đại học quốc gia tp. hcm",
+        "đại học quốc gia tp.hcm",
+        "đại học quốc gia thành phố hồ chí minh",
+        "cộng hòa xã hội chủ nghĩa việt nam",
+        "trường đại học khoa học tự nhiên",
+        "độc lập tự do hạnh phúc",
+        "độc lập - tự do - hạnh phúc",
+        "trường đh khoa học tự nhiên",
+        "đhqg-hcm",
+        "đhqg tp.hcm",
+        "đhqg tp. hcm",
+    }
+
     def _extract_flat_toc(self, structure: list[dict[str, Any]]) -> list[str]:
-        """Flatten PageIndex tree structure into a simple list of headings."""
-        toc = []
+        """Flatten PageIndex tree structure into a simple list of headings.
         
+        Loại bỏ các tiêu đề header/footer phổ biến của văn bản hành chính VN
+        (tên trường, quốc hiệu, tiêu ngữ...) vì chúng không có giá trị tra cứu.
+        """
+        toc = []
+
+        def _is_blacklisted(title: str) -> bool:
+            normalized = " ".join(title.lower().split())
+            return normalized in self._BLACKLISTED_TOC_ENTRIES
+
         def traverse(nodes):
             for node in nodes:
                 title = node.get("title")
-                if title:
+                if title and not _is_blacklisted(title):
                     toc.append(title)
                 if node.get("nodes"):
                     traverse(node["nodes"])
-        
+
         traverse(structure)
         return toc
+
 
     async def cleanup_local_artifacts(self, file_id: str):
         """Delete local markdown file after ingestion."""

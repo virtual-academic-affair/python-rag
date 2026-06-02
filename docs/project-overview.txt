@@ -244,12 +244,15 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 
 Dịch vụ này không phải là API public, nó là trái tim của Inquiry Workflow.
 
-CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_DRAFT_REPLY_PROMPT):
-- Vai trò: Đại diện phòng giáo vụ.
-- Yêu cầu: Không dùng lời chào/lời kết (vì NestJS sẽ tự thêm Template).
-- Ràng buộc: Câu đầu tiên phải đi thẳng vào nội dung trả lời dựa trên tài liệu.
-- Định dạng: Markdown (Header, Bold) để trình bày đẹp mắt.
-- Nội dung: Tự động tóm tắt các `Sources` (Nguồn trích dẫn) vào cuối nội dung để SV kiểm chứng.
+CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_SYSTEM_PROMPT):
+- Vị trí: Được định nghĩa trực tiếp trong `app/modules/rag/retrieval/agent.py`.
+- Vai trò: Tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
+- Quy tắc bắt buộc:
+  1. Viết suy nghĩ/lập luận bằng tiếng Việt trước mỗi lần gọi công cụ để tự lập kế hoạch điều hướng.
+  2. Dùng công cụ đọc mục lục trước, sau đó mới dùng công cụ lấy nội dung cụ thể.
+  3. Xưng là "Phòng Giáo vụ" hoặc "chúng tôi". Câu trả lời tư vấn bọc trong cặp thẻ `<answer>` và `</answer>`.
+  4. Không chào hỏi thân mật ("Chào bạn", "Xin chào"). Đi thẳng vào nội dung phản hồi.
+  5. Tự động chèn trích dẫn dạng `(^Tên mục lục tương ứng)` để Resolver tự động chuyển đổi thành link tải presigned tài liệu gốc từ R2 cho người gửi.
 
 
 ================================================================================
@@ -447,9 +450,8 @@ B5. Final Answer Construction:
 - Final: `data: {"done": true, "sources": [...], "steps": [...], "tokenUsage": {...}, "processingTimeMs": N}`.
 - Luồng sự kiện: query_analysis → faq_check → retrieval → [reasoning → call] x N → reasoning → text → done.
   (Mỗi lần gọi tool, Agent tự viết câu lập luận tiếng Việt trước khi phát event call)
-- AGENT_SYSTEM_PROMPT: Được rút gọn tối ưu (condensed) với cấu trúc QUY TẮC BẮT BUỘC rõ ràng.
-  Quy tắc #1 bắt buộc Agent viết suy nghĩ tiếng Việt trước mỗi tool call — không cần temperature
-  cao hay thinking budget. Đây là cơ chế kích hoạt reasoning nội tại của mô hình.
+- CHAT_SYSTEM_PROMPT & EMAIL_SYSTEM_PROMPT: Được tách biệt hoàn toàn để tối ưu hóa cách xưng hô và văn phong (Tư vấn viên hỗ trợ sinh viên đối với kênh Chat và Tư vấn viên Phòng Giáo vụ đối với kênh Email).
+  Cả hai đều áp dụng cơ chế bắt buộc Agent ghi ra câu lập luận suy nghĩ bằng tiếng Việt trước khi gọi bất cứ công cụ nào, giúp kích hoạt khả năng suy luận (Chain of Thought) mà không cần tăng temperature hay cấu hình thinking budget.
 - [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
 
 

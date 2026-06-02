@@ -149,7 +149,7 @@ async def chat_stream(
 
     **Response Format:** Server-Sent Events (SSE)
     - Text chunks: `{"chunk": "text", "done": false}`
-    - Final message: `{"done": true, "sources": [...], "token_usage": {...}, "processing_time_ms": 1234}`
+    - Final message: `{"done": true, "sources": [...], "tokenUsage": {...}, "processingTimeMs": 1234}`
 
     **Note:**
     - NestJS can forward this stream to WebSocket clients.

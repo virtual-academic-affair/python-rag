@@ -213,6 +213,7 @@ class ChatService:
             prompt_contents=state["history"],
             resolve_citations=resolve_citations,
             citation_link_type=citation_link_type,
+            system_prompt=CHAT_SYSTEM_PROMPT,
         )
 
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -267,7 +268,7 @@ class ChatService:
           - {type: "reasoning", content, done: false}  ← suy luận nội bộ (thought) + kế hoạch Agent
           - {type: "call", name, args, done: false}
           - {type: "text", content, done: false}
-          - {done: true, sources: [...], processing_time_ms: ...}
+          - {done: true, sources: [...], tokenUsage: {...}, processingTimeMs: ...}
         """
         start_time = time.time()
         pipeline_steps = []
@@ -403,7 +404,7 @@ class ChatService:
             })
             return
 
-        tools, tool_map, config = get_agent_config(candidate_files)
+        tools, tool_map, config = get_agent_config(candidate_files, system_prompt=CHAT_SYSTEM_PROMPT)
 
         # Collect get_page_content calls for source attribution at the end
         stream_steps: list[dict] = []
