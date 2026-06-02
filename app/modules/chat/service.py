@@ -13,8 +13,9 @@ from app.modules.chat.history_repository import PERSISTED_STEP_TYPES
 from app.modules.metadata.schemas import FaqMetadataSchema
 from app.modules.chat.step_formatter import simplify_step
 from app.modules.rag.retrieval.service import get_retrieval_service
+from app.modules.rag.retrieval.schemas import SourceCitation
 from app.modules.rag.retrieval.agent import (
-    AGENT_SYSTEM_PROMPT,
+    CHAT_SYSTEM_PROMPT,
     build_pindex_tools,
     build_sources_from_steps,
     run_agent_loop,
@@ -317,8 +318,8 @@ class ChatService:
                 "done": True, 
                 "sources": [], 
                 "steps": [simplify_step(s) for s in pipeline_steps],
-                "token_usage": None,
-                "processing_time_ms": processing_time_ms
+                "tokenUsage": None,
+                "processingTimeMs": processing_time_ms
             })
             return
 
@@ -357,7 +358,7 @@ class ChatService:
                 "sources": [], 
                 "steps": [simplify_step(s) for s in pipeline_steps],
                 "tokenUsage": None,
-                "processing_time_ms": processing_time_ms
+                "processingTimeMs": processing_time_ms
             })
             return
 
@@ -398,7 +399,7 @@ class ChatService:
                 "done": True, 
                 "sources": [], 
                 "steps": [simplify_step(s, candidate_files) for s in pipeline_steps], 
-                "processing_time_ms": int((time.time() - start_time) * 1000)
+                "processingTimeMs": int((time.time() - start_time) * 1000)
             })
             return
 
@@ -632,14 +633,14 @@ class ChatService:
         yield json.dumps({
             "done": True,
             "source": "llm",
-            "sources": current_sources,
+            "sources": [SourceCitation(**s).model_dump(by_alias=True) for s in current_sources] if current_sources else [],
             "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + filtered_stream_steps)],
             "tokenUsage": {
                 "promptTokens": total_prompt_tokens,
                 "completionTokens": total_candidates_tokens,
                 "totalTokens": total_prompt_tokens + total_candidates_tokens
             },
-            "processing_time_ms": processing_time_ms,
+            "processingTimeMs": processing_time_ms,
         })
 
 
