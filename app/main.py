@@ -333,7 +333,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             error="internal_server_error",
             message=str(exc) if settings.DEBUG else "An internal error occurred",
             details={"path": str(request.url)} if settings.DEBUG else None,
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -347,7 +347,7 @@ async def value_error_handler(request: Request, exc: ValueError):
             error="validation_error",
             message=str(exc),
             details={"path": str(request.url)} if settings.DEBUG else None,
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 
@@ -375,7 +375,7 @@ async def genai_api_error_handler(request: Request, exc: APIError):
             error="rate_limit_exceeded" if status_code == 429 else "ai_service_error",
             message=safe_msg,
             details={"path": str(request.url)} if settings.DEBUG else None,
-        ).model_dump(),
+        ).model_dump(by_alias=True),
     )
 
 

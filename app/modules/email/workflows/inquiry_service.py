@@ -162,13 +162,14 @@ class InquiryService:
                 )
 
                 # Generate Answer using shared Agent logic
-                from app.modules.rag.retrieval.agent import run_agent_loop
+                from app.modules.rag.retrieval.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 
                 agent_result = await run_agent_loop(
                     candidate_files=candidate_files,
                     prompt_contents=prompt_text,
                     resolve_citations=True,
                     citation_link_type="original",
+                    system_prompt=EMAIL_SYSTEM_PROMPT
                 )
 
                 rag_result = {

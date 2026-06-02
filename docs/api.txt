@@ -293,9 +293,10 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
 │     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
-│     "resolveCitations": false,                                               │
-│     "citationLinkType": "markdown",                                          │
-│     "toRichText": false                                                      │
+│     "resolveCitations": false,   ← Chuyển trích dẫn (^Tên mục) → link tải   │
+│     "citationLinkType": "markdown",  ← "markdown": link file .md bóc tách   │
+│                                      "original": link file gốc (PDF/DOCX)   │
+│     "toRichText": false          ← Chuyển Markdown trả về thành HTML         │
 │   }                                                                          │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
@@ -391,9 +392,19 @@ MỤC LỤC
 │   {                                                                          │
 │     "question": "...",                                                       │
 │     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
-│     "resolveCitations": false,                                               │
-│     "citationLinkType": "markdown"                                           │
+│     "resolveCitations": false,   ← Chuyển trích dẫn (^Tên mục) → link tải   │
+│     "citationLinkType": "markdown"   ← "markdown": link file .md bóc tách   │
+│                                         "original": link file gốc (PDF/...) │
 │   }                                                                          │
+│                                                                              │
+│ GHI CHÚ VỀ TRÍCH DẪN:                                                       │
+│   - Agent tự chèn marker `(^Tên mục)` vào câu trả lời (ví dụ:              │
+│     `(^Điều 5: Điều kiện tốt nghiệp)`).                                      │
+│   - resolveCitations=false (mặc định): marker giữ nguyên dạng text.         │
+│   - resolveCitations=true: marker được thay thế bằng link R2,     │
+│     dạng `(Xem thêm tại [Tên mục](https://r2.example.com/file.pdf))`.       │
+│   - citationLinkType quyết định link trỏ tới file bóc tách (.md) hay        │
+│     file gốc (PDF/DOCX). Mặc định "markdown" cho trải nghiệm đọc inline.    │
 │                                                                              │
 │ RESPONSE (Event Stream - Server-Sent Events):                                │
 │   Mỗi event có dạng: data: {json}\n\n                                       │
@@ -438,7 +449,7 @@ MỤC LỤC
 │                          {"type":"call","content":"..."}],                   │
 │                 "tokenUsage":{"promptTokens":N,"completionTokens":N,         │
 │                               "totalTokens":N},                              │
-│                 "processing_time_ms":1234}                                   │
+│                 "processingTimeMs":1234}                                     │
 │        ← Event cuối: steps[] chứa các pipeline steps rút gọn (type + content)│
 │                                                                              │
 │ GHI CHÚ:                                                                     │
@@ -503,14 +514,17 @@ MỤC LỤC
 │         "content": "Học phí CLC là 25 triệu đồng/năm.",                     │
 │         "sequence": 3,                                                        │
 │         "messageType": "text",                                                │
-│         "tokenUsage": {"promptTokenCount": 1200, "candidatesTokenCount": 300},│
+│         "tokenUsage": {                                                       │
+│           "promptTokens": 1200,                                               │
+│           "completionTokens": 300,                                            │
+│           "totalTokens": 1500                                                 │
+│         },                                                                    │
 │         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
 │         "steps": [                                                            │
-│           {"type":"query_analysis","originalQuestion":"...",                 │
-│            "effectiveQuestion":"...","needsRag":true,"metadataFilter":{...}}, │
-│           {"type":"faq_check","hit":false},                                   │
-│           {"type":"retrieval","candidateFiles":[...]},                        │
-│           {"type":"call","name":"get_page_content","args":{"ref_id":1}}       │
+│           {"type": "query_analysis", "content": "Phân tích câu hỏi..."},      │
+│           {"type": "faq_check", "content": "Không tìm thấy trong FAQ..."},    │
+│           {"type": "retrieval", "content": "Tìm thấy 1 tài liệu liên quan..."},│
+│           {"type": "call", "content": "Đang đọc nội dung chi tiết..."}        │
 │         ],                                                                    │
 │         "processingTimeMs": 2450,                                             │
 │         "createdAt": "2025-01-01T08:00:02"                                   │

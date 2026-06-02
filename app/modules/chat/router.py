@@ -149,7 +149,7 @@ async def chat_stream(
 
     **Response Format:** Server-Sent Events (SSE)
     - Text chunks: `{"chunk": "text", "done": false}`
-    - Final message: `{"done": true, "sources": [...], "token_usage": {...}, "processing_time_ms": 1234}`
+    - Final message: `{"done": true, "sources": [...], "tokenUsage": {...}, "processingTimeMs": 1234}`
 
     **Note:**
     - NestJS can forward this stream to WebSocket clients.
@@ -201,7 +201,7 @@ async def chat_stream(
                     payload = json.loads(chunk_json)
                     
                     if is_first_chunk:
-                        payload["session_id"] = session_id
+                        payload["sessionId"] = session_id
                         is_first_chunk = False
                     
                     if payload.get("type") == "text" and payload.get("content"):
@@ -227,7 +227,7 @@ async def chat_stream(
                             token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
                             sources=payload.get("sources"),
                             steps=payload.get("steps"),
-                            processing_time_ms=payload.get("processing_time_ms"),
+                            processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
                             message_type="text",
                         )
                     
@@ -239,7 +239,7 @@ async def chat_stream(
                 error_data = json.dumps({
                     "error": str(e),
                     "done": True,
-                    "session_id": session_id
+                    "sessionId": session_id
                 })
                 yield f"data: {error_data}\n\n"
             except APIError as e:
@@ -251,27 +251,27 @@ async def chat_stream(
                     error_data = json.dumps({
                         "error": "rate_limit_exceeded",
                         "message": "Quá tải hệ thống AI. Vui lòng thử lại sau.",
-                        "status_code": 429,
+                        "statusCode": 429,
                         "done": True,
-                        "session_id": session_id
+                        "sessionId": session_id
                     })
                 elif ai_code == 500 and ("500 INTERNAL" in str(e) or "Internal error encountered" in str(e)):
                     logger.error(f"[Chat-Stream] Google internal server error (500): {e}")
                     error_data = json.dumps({
                         "error": "ai_service_error",
                         "message": "Google internal server error",
-                        "status_code": 500,
+                        "statusCode": 500,
                         "done": True,
-                        "session_id": session_id
+                        "sessionId": session_id
                     })
                 else:
                     logger.error(f"[Chat-Stream] Gemini APIError ({ai_code}): {e}")
                     error_data = json.dumps({
                         "error": "ai_service_error",
                         "message": str(e),
-                        "status_code": ai_code,
+                        "statusCode": ai_code,
                         "done": True,
-                        "session_id": session_id
+                        "sessionId": session_id
                     })
                 yield f"data: {error_data}\n\n"
             except Exception as e:
@@ -280,7 +280,7 @@ async def chat_stream(
                     "error": "internal_error",
                     "message": f"Failed to stream chat response: {str(e)}",
                     "done": True,
-                    "session_id": session_id
+                    "sessionId": session_id
                 })
                 yield f"data: {error_data}\n\n"
 

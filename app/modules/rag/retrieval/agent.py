@@ -16,7 +16,22 @@ from app.utils.format_utils import sanitize_latex_in_markdown
 
 logger = logging.getLogger(__name__)
 
-AGENT_SYSTEM_PROMPT = """
+CHAT_SYSTEM_PROMPT = """
+Bạn là tư vấn viên hỗ trợ sinh viên của trường đại học.
+Bạn được cung cấp danh sách file_id và các công cụ để tìm kiếm, đọc tài liệu quy chế.
+
+# QUY TẮC BẮT BUỘC:
+1. TRƯỚC KHI GỌI CÔNG CỤ: Viết 1-2 câu suy nghĩ/lập luận bằng tiếng Việt mô tả việc bạn sắp làm (Ví dụ: "Tôi sẽ dùng get_document_structure để xem mục lục của Quy chế...").
+2. ĐỌC TÀI LIỆU: Dùng `get_document_structure` xem mục lục trước, sau đó dùng `get_page_content(file_id, pages="start_line-end_line")` để đọc chi tiết nội dung. Ưu tiên dùng số thứ tự [n] thay thế cho file_id.
+3. CÂU TRẢ LỜI CHO SINH VIÊN:
+   - Bắt buộc bọc toàn bộ câu trả lời tư vấn chi tiết trong cặp thẻ `<answer>` và `</answer>`.
+   - Các lập luận nháp, suy nghĩ trung gian phải viết bên ngoài, TRƯỚC thẻ `<answer>`.
+   - Định dạng tư vấn bằng Markdown rõ ràng, đi thẳng vào trọng tâm, không chào hỏi ("Chào bạn", "Xin chào"). Xưng là "chúng tôi".
+   - Chèn trích dẫn dạng `(^Tên mục lục tương ứng)` (Ví dụ: `(^Điều 2: Điều kiện tốt nghiệp)`) ngay sau khi hoàn thành tư vấn một phần nội dung.
+   - Nếu không tìm thấy thông tin phù hợp, trả lời: "Hệ thống không tìm thấy quy định này trong tài liệu hiện có." bên trong `<answer>`.
+"""
+
+EMAIL_SYSTEM_PROMPT = """
 Bạn là tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
 Bạn được cung cấp danh sách file_id và các công cụ để tìm kiếm, đọc tài liệu quy chế.
 
@@ -307,7 +322,7 @@ async def build_sources_from_steps(
     return sources
 
 
-def get_agent_config(candidate_files: list[dict]) -> tuple[list[Callable], dict[str, Callable], Any]:
+def get_agent_config(candidate_files: list[dict], system_prompt: str = CHAT_SYSTEM_PROMPT) -> tuple[list[Callable], dict[str, Callable], Any]:
     """
     Build tools, map, and GenerateContentConfig for the RAG agent.
     """
@@ -315,7 +330,7 @@ def get_agent_config(candidate_files: list[dict]) -> tuple[list[Callable], dict[
     tool_map = {tool.__name__: tool for tool in tools}
 
     config = types.GenerateContentConfig(
-        system_instruction=AGENT_SYSTEM_PROMPT,
+        system_instruction=system_prompt,
         tools=tools,
         temperature=0.0,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -329,13 +344,14 @@ async def run_agent_loop(
     max_turns: int = None,
     resolve_citations: bool = False,
     citation_link_type: str = "original",
+    system_prompt: str = CHAT_SYSTEM_PROMPT,
 ) -> dict:
     """
     Run the manual PageIndex agent loop and return a structured result.
     """
 
     max_turns = max_turns or settings.AGENT_MAX_TURNS
-    tools, tool_map, config = get_agent_config(candidate_files)
+    tools, tool_map, config = get_agent_config(candidate_files, system_prompt=system_prompt)
 
     # Normalise prompt_contents into a list of Content
     if isinstance(prompt_contents, str):
