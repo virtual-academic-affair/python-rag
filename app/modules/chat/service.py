@@ -404,7 +404,7 @@ class ChatService:
             })
             return
 
-        tools, tool_map, config = get_agent_config(candidate_files, system_prompt=CHAT_SYSTEM_PROMPT)
+        tools, tool_map, config = get_agent_config(candidate_files, system_prompt=CHAT_SYSTEM_PROMPT, include_reasoning=True)
 
         # Collect get_page_content calls for source attribution at the end
         stream_steps: list[dict] = []
@@ -442,7 +442,7 @@ class ChatService:
                     turn_prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
                     turn_candidates_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
 
-                if not chunk.candidates or not chunk.candidates[0].content.parts:
+                if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                     continue
                 for part in chunk.candidates[0].content.parts:
                     model_response_parts.append(part)
@@ -458,7 +458,14 @@ class ChatService:
                     if part.function_call:
                         call = part.function_call
                         tool_calls_in_turn.append(call)
-                        stream_steps.append({"type": "call", "name": call.name, "args": dict(call.args)})
+                        
+                        args = dict(call.args)
+                        reason_val = args.pop("reasoning", None)
+                        if reason_val:
+                            yield json.dumps({"type": "reasoning", "content": f"{reason_val}\n", "done": False})
+                            stream_steps.append({"type": "reasoning", "content": reason_val})
+                        
+                        stream_steps.append({"type": "call", "name": call.name, "args": args})
 
                         # Flush any pending reasoning text accumulated before this tool call
                         new_reasoning = turn_text_buffer[yielded_reasoning_length:]
@@ -467,7 +474,7 @@ class ChatService:
                             yielded_reasoning_length += len(new_reasoning)
 
                         # Yield simplified call event
-                        call_step = {"type": "call", "name": call.name, "args": dict(call.args)}
+                        call_step = {"type": "call", "name": call.name, "args": args}
                         yield json.dumps({**simplify_step(call_step, candidate_files), "done": False})
 
                     # [C] Handle non-thought planning/answer text
@@ -476,18 +483,14 @@ class ChatService:
                         if not in_answer_block:
                             match = re.search(r'<answer>', turn_text_buffer, flags=re.IGNORECASE)
                             if match:
-                                pre_think = turn_text_buffer[:match.start()]
-                                new_reasoning = pre_think[yielded_reasoning_length:]
-                                if new_reasoning:
-                                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
-                                    yielded_reasoning_length += len(new_reasoning)
+                                pre_think = turn_text_buffer[:match.start()].strip()
+                                if pre_think:
+                                    logger.info(f"[Chat-Stream] Conclude/Pre-answer reasoning: {pre_think[:100]}...")
+                                    stream_steps.append({"type": "conclude", "content": pre_think})
                                 in_answer_block = True
                             else:
-                                # Progressive stream of reasoning before the answer tag is hit
-                                new_reasoning = turn_text_buffer[yielded_reasoning_length:]
-                                if new_reasoning:
-                                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
-                                    yielded_reasoning_length += len(new_reasoning)
+                                # Do NOT stream or yield anything yet! We just wait for <answer>
+                                pass
 
                         if in_answer_block:
                             if stream_formatter is None:
@@ -569,15 +572,19 @@ class ChatService:
                             yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
                             yielded_reasoning_length += len(new_reasoning)
 
-            # History fragmentation fix: combine text parts into one
+            # History fragmentation fix: combine consecutive text parts into one, preserving original relative order
             clean_parts = []
-            if turn_text_buffer:
-                clean_parts.append(types.Part.from_text(text=turn_text_buffer))
+            current_text_segments = []
             for p in model_response_parts:
-                if p.function_call:
+                if p.text:
+                    current_text_segments.append(p.text)
+                else:
+                    if current_text_segments:
+                        clean_parts.append(types.Part.from_text(text="".join(current_text_segments)))
+                        current_text_segments = []
                     clean_parts.append(p)
-                if hasattr(p, "thought") and p.thought:
-                    clean_parts.append(p)
+            if current_text_segments:
+                clean_parts.append(types.Part.from_text(text="".join(current_text_segments)))
             history.append(types.Content(role="model", parts=clean_parts))
             total_prompt_tokens += turn_prompt_tokens
             total_candidates_tokens += turn_candidates_tokens

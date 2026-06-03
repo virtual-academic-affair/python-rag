@@ -8,10 +8,56 @@
 API_URL=${AI_SERVICE_URL:-"http://localhost:8000/api"}
 BASE_URL=${AI_BASE_URL:-"http://localhost:8000"}
 
-# Admin JWT token
-ADMIN_TOKEN=""
-# Student token 
-STUDENT_TOKEN=""
+# Load JWT config dynamically from .env to avoid hardcoding credentials
+DIR_OF_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$DIR_OF_COMMON/../../.env"
+
+if [ -f "$ENV_FILE" ]; then
+    if [ -z "$JWT_SECRET" ]; then
+        JWT_SECRET=$(grep -E "^JWT_SECRET=" "$ENV_FILE" | cut -d'=' -f2-)
+    fi
+    if [ -z "$JWT_AUDIENCE" ]; then
+        JWT_AUDIENCE=$(grep -E "^JWT_TOKEN_AUDIENCE=" "$ENV_FILE" | cut -d'=' -f2-)
+    fi
+    if [ -z "$JWT_ISSUER" ]; then
+        JWT_ISSUER=$(grep -E "^JWT_TOKEN_ISSUER=" "$ENV_FILE" | cut -d'=' -f2-)
+    fi
+fi
+
+# Clean quotes from variables
+JWT_SECRET=$(echo "$JWT_SECRET" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
+JWT_AUDIENCE=$(echo "$JWT_AUDIENCE" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
+JWT_ISSUER=$(echo "$JWT_ISSUER" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
+
+ADMIN_TOKEN=$(python3 -c "
+import jwt, time
+payload = {
+    'sub': 'admin-sub',
+    'email': 'admin@hcmus.edu.vn',
+    'role': 'admin',
+    'studentCode': None,
+    'enrollmentYear': None,
+    'aud': '$JWT_AUDIENCE',
+    'iss': '$JWT_ISSUER',
+    'exp': int(time.time()) + 3600
+}
+print(jwt.encode(payload, '$JWT_SECRET', algorithm='HS256'))
+" 2>/dev/null)
+
+STUDENT_TOKEN=$(python3 -c "
+import jwt, time
+payload = {
+    'sub': '57',
+    'email': 'student@student.hcmus.edu.vn',
+    'role': 'student',
+    'studentCode': 'SV220001',
+    'enrollmentYear': 2022,
+    'aud': '$JWT_AUDIENCE',
+    'iss': '$JWT_ISSUER',
+    'exp': int(time.time()) + 3600
+}
+print(jwt.encode(payload, '$JWT_SECRET', algorithm='HS256'))
+" 2>/dev/null)
 
 AUTH_HEADER="Authorization: Bearer ${ADMIN_TOKEN}"
 STUDENT_AUTH_HEADER="Authorization: Bearer ${STUDENT_TOKEN}"

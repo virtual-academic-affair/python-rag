@@ -36,17 +36,15 @@ Bạn là tư vấn viên chính thức của Phòng Giáo vụ trường đại
 Bạn được cung cấp danh sách file_id và các công cụ để tìm kiếm, đọc tài liệu quy chế.
 
 # QUY TẮC BẮT BUỘC:
-1. TRƯỚC KHI GỌI CÔNG CỤ: Viết 1-2 câu suy nghĩ/lập luận bằng tiếng Việt mô tả việc bạn sắp làm (Ví dụ: "Tôi sẽ dùng get_document_structure để xem mục lục của Quy chế...").
-2. ĐỌC TÀI LIỆU: Dùng `get_document_structure` xem mục lục trước, sau đó dùng `get_page_content(file_id, pages="start_line-end_line")` để đọc chi tiết nội dung. Ưu tiên dùng số thứ tự [n] thay thế cho file_id.
-3. CÂU TRẢ LỜI CHO SINH VIÊN:
+1. ĐỌC TÀI LIỆU: Dùng `get_document_structure` xem mục lục trước, sau đó dùng `get_page_content(file_id, pages="start_line-end_line")` để đọc chi tiết nội dung. Ưu tiên dùng số thứ tự [n] thay thế cho file_id.
+2. CÂU TRẢ LỜI CHO SINH VIÊN:
    - Bắt buộc bọc toàn bộ câu trả lời tư vấn chi tiết trong cặp thẻ `<answer>` và `</answer>`.
-   - Các lập luận nháp, suy nghĩ trung gian phải viết bên ngoài, TRƯỚC thẻ `<answer>`.
    - Định dạng tư vấn bằng Markdown rõ ràng, đi thẳng vào trọng tâm, không chào hỏi ("Chào bạn", "Xin chào"). Xưng là "Phòng Giáo vụ" hoặc "chúng tôi".
    - Chèn trích dẫn dạng `(^Tên mục lục tương ứng)` (Ví dụ: `(^Điều 2: Điều kiện tốt nghiệp)`) ngay sau khi hoàn thành tư vấn một phần nội dung.
    - Nếu không tìm thấy thông tin phù hợp, trả lời: "Hệ thống không tìm thấy quy định này trong tài liệu hiện có." bên trong `<answer>`.
 """
 
-def build_pindex_tools(candidate_files: List[dict]) -> List[Callable]:
+def build_pindex_tools(candidate_files: List[dict], include_reasoning: bool = False) -> List[Callable]:
     """Create bound tool instances so LLM can invoke PageIndex client."""
     client = get_page_index_client()
     allow_ids = [c["file_id"] for c in candidate_files]
@@ -63,40 +61,78 @@ def build_pindex_tools(candidate_files: List[dict]) -> List[Callable]:
                 return candidate_files[idx]["file_id"]
         return fid
 
-    async def get_document_structure(file_id: str) -> str:
-        """
-        Get the hierarchical table of contents (structure) for a document. 
-        Args:
-            file_id: The unique identifier of the file/document (or numeric index like '1').
-        """
-        real_id = resolve_file_id(file_id)
-        if real_id not in allow_ids:
-            msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
-            logger.warning(f"[Agent] {msg}")
-            return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
-        
-        file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
-        logger.info(f"[Agent] Tool call: get_document_structure(file_id='{file_id}') -> Resolved to ID: {real_id} (File: {file_name})")
-        return await client.get_document_structure(real_id)
+    if include_reasoning:
+        async def get_document_structure(file_id: str, reasoning: str) -> str:
+            """
+            Get the hierarchical table of contents (structure) for a document. 
+            Args:
+                file_id: The unique identifier of the file/document (or numeric index like '1').
+                reasoning: 1-2 sentences explanation in Vietnamese of why you need to inspect this document's structure now.
+            """
+            real_id = resolve_file_id(file_id)
+            if real_id not in allow_ids:
+                msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+                logger.warning(f"[Agent] {msg}")
+                return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+            
+            file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+            logger.info(f"[Agent] Tool call: get_document_structure(file_id='{file_id}', reasoning='{reasoning}') -> Resolved to ID: {real_id} (File: {file_name})")
+            return await client.get_document_structure(real_id)
 
-    async def get_page_content(file_id: str, pages: str) -> str:
-        """
-        Get the actual text content of specific sections or line ranges.
-        Args:
-            file_id: The unique identifier of the file/document (or numeric index like '1').
-            pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
-        """
-        real_id = resolve_file_id(file_id)
-        if real_id not in allow_ids:
-            msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
-            logger.warning(f"[Agent] {msg}")
-            return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
-        
-        file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
-        logger.info(f"[Agent] Tool call: get_page_content(file_id='{file_id}', pages='{pages}') -> Resolved to ID: {real_id} (File: {file_name})")
-        return await client.get_page_content(real_id, pages)
+        async def get_page_content(file_id: str, pages: str, reasoning: str) -> str:
+            """
+            Get the actual text content of specific sections or line ranges.
+            Args:
+                file_id: The unique identifier of the file/document (or numeric index like '1').
+                pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
+                reasoning: 1-2 sentences explanation in Vietnamese of why you need to read these pages now.
+            """
+            real_id = resolve_file_id(file_id)
+            if real_id not in allow_ids:
+                msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+                logger.warning(f"[Agent] {msg}")
+                return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+            
+            file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+            logger.info(f"[Agent] Tool call: get_page_content(file_id='{file_id}', pages='{pages}', reasoning='{reasoning}') -> Resolved to ID: {real_id} (File: {file_name})")
+            return await client.get_page_content(real_id, pages)
 
-    return [get_document_structure, get_page_content]
+        return [get_document_structure, get_page_content]
+    else:
+        async def get_document_structure(file_id: str) -> str:
+            """
+            Get the hierarchical table of contents (structure) for a document. 
+            Args:
+                file_id: The unique identifier of the file/document (or numeric index like '1').
+            """
+            real_id = resolve_file_id(file_id)
+            if real_id not in allow_ids:
+                msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+                logger.warning(f"[Agent] {msg}")
+                return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+            
+            file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+            logger.info(f"[Agent] Tool call: get_document_structure(file_id='{file_id}') -> Resolved to ID: {real_id} (File: {file_name})")
+            return await client.get_document_structure(real_id)
+
+        async def get_page_content(file_id: str, pages: str) -> str:
+            """
+            Get the actual text content of specific sections or line ranges.
+            Args:
+                file_id: The unique identifier of the file/document (or numeric index like '1').
+                pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
+            """
+            real_id = resolve_file_id(file_id)
+            if real_id not in allow_ids:
+                msg = f"Agent requested invalid file_id: {file_id} (Resolved: {real_id}). Allowed IDs: {allow_ids}"
+                logger.warning(f"[Agent] {msg}")
+                return f'{{"error": "Tài liệu \'{file_id}\' không hợp lệ. Hãy dùng số thứ tự [n] trong danh sách được cung cấp."}}'
+            
+            file_name = next((c["file_name"] for c in candidate_files if c["file_id"] == real_id), "Unknown")
+            logger.info(f"[Agent] Tool call: get_page_content(file_id='{file_id}', pages='{pages}') -> Resolved to ID: {real_id} (File: {file_name})")
+            return await client.get_page_content(real_id, pages)
+
+        return [get_document_structure, get_page_content]
 
 
 def parse_agent_response(text: str) -> tuple[str, str]:
@@ -322,11 +358,15 @@ async def build_sources_from_steps(
     return sources
 
 
-def get_agent_config(candidate_files: list[dict], system_prompt: str = CHAT_SYSTEM_PROMPT) -> tuple[list[Callable], dict[str, Callable], Any]:
+def get_agent_config(
+    candidate_files: list[dict], 
+    system_prompt: str = CHAT_SYSTEM_PROMPT,
+    include_reasoning: bool = False
+) -> tuple[list[Callable], dict[str, Callable], Any]:
     """
     Build tools, map, and GenerateContentConfig for the RAG agent.
     """
-    tools = build_pindex_tools(candidate_files)
+    tools = build_pindex_tools(candidate_files, include_reasoning=include_reasoning)
     tool_map = {tool.__name__: tool for tool in tools}
 
     config = types.GenerateContentConfig(
@@ -351,7 +391,12 @@ async def run_agent_loop(
     """
 
     max_turns = max_turns or settings.AGENT_MAX_TURNS
-    tools, tool_map, config = get_agent_config(candidate_files, system_prompt=system_prompt)
+    include_reasoning = (system_prompt == CHAT_SYSTEM_PROMPT)
+    tools, tool_map, config = get_agent_config(
+        candidate_files, 
+        system_prompt=system_prompt,
+        include_reasoning=include_reasoning
+    )
 
     # Normalise prompt_contents into a list of Content
     if isinstance(prompt_contents, str):
@@ -383,7 +428,7 @@ async def run_agent_loop(
             total_prompt_tokens += getattr(resp.usage_metadata, 'prompt_token_count', 0)
             total_candidates_tokens += getattr(resp.usage_metadata, 'candidates_token_count', 0)
 
-        if not resp.candidates or not resp.candidates[0].content.parts:
+        if not resp.candidates or not resp.candidates[0].content or not resp.candidates[0].content.parts:
             break
 
         model_parts = resp.candidates[0].content.parts
@@ -397,8 +442,12 @@ async def run_agent_loop(
             if part.function_call:
                 call = part.function_call
                 tool_calls.append(call)
-                steps.append({"type": "call", "name": call.name, "args": dict(call.args)})
-                logger.info(f"[Agent] Yêu cầu gọi tool: {call.name} với args: {dict(call.args)}")
+                args = dict(call.args)
+                reason_val = args.pop("reasoning", None)
+                if reason_val:
+                    steps.append({"type": "reasoning", "content": reason_val})
+                steps.append({"type": "call", "name": call.name, "args": args})
+                logger.info(f"[Agent] Yêu cầu gọi tool: {call.name} với args: {args}")
             if part.text:
                 turn_text += part.text
 
@@ -406,7 +455,8 @@ async def run_agent_loop(
             logger.info(f"[Agent] Dừng vòng lặp tại Turn {turn_idx + 1}. Agent đã đưa ra câu trả lời cuối cùng.")
             pre_think, parsed_answer = parse_agent_response(turn_text)
             if pre_think:
-                steps.append({"type": "reasoning", "content": pre_think})
+                steps.append({"type": "conclude", "content": pre_think})
+                logger.info(f"[Agent] Conclude/Pre-answer reasoning: {pre_think[:100]}...")
             final_answer = parsed_answer
             break
         else:
