@@ -39,14 +39,10 @@ Trích xuất thông tin lọc từ TOÀN BỘ ngữ cảnh (câu hỏi + lịch
 - academic_year: Năm học.
   + Nếu có dạng cụ thể như "NH 2024-2025" hoặc "năm học 24-25" -> from_year=2024, to_year=2025.
   + Nếu chỉ có dạng "năm học 2024" -> from_year=2024, to_year=2024.
-  + QUY TẮC ĐẶC BIỆT KHI CÓ NIÊN KHÓA: Nếu trích xuất được enrollment_year (K) và người dùng đề cập đến năm học thứ N (năm nhất/1, năm hai/2, năm ba/3, năm tư/4) của khóa đó:
+  + QUY TẮC ĐẶC BIỆT KHI CÓ NIÊN KHÓA: Nếu trích xuất được enrollment_year (K) và người dùng đề cập đến năm học thứ N (năm nhất/1, năm hai/2,...) của khóa đó:
     * Tính toán: from_year = K + N - 1, to_year = K + N.
     * Ví dụ: Năm nhất (năm 1) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2022, to_year=2023 (Năm học 2022-2023).
     * Ví dụ: Năm tư (năm 4) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2025, to_year=2026 (Năm học 2025-2026).
-- type: Loại tài liệu. Chỉ trích xuất khi người dùng nhắc tới hoặc câu hỏi hướng rõ về một loại tài liệu cụ thể:
-  + "ctdt": Chương trình đào tạo. Dùng cho câu hỏi về khung chương trình đào tạo, danh sách môn học, số tín chỉ bắt buộc, đề cương chi tiết học phần, lộ trình học, chuẩn đầu ra môn học.
-  + "cong_van": Công văn / Hướng dẫn / Thông báo. Dùng cho câu hỏi về thông báo, thông tin học phí, học bổng, lịch nộp hồ sơ, thủ tục đăng ký môn học/học phần tốt nghiệp, kế hoạch năm học.
-  + "quyet_dinh": Quyết định / Quy chế. Dùng cho câu hỏi về quy chế học vụ chính thức của trường, quy định đào tạo đại học, quyết định ban hành quy chế tốt nghiệp, quy định khen thưởng/kỷ luật.
 - Nếu không tìm thấy thông tin tương ứng -> null.
 
 **OUTPUT FORMAT — Chỉ trả về JSON hợp lệ theo schema sau:**
@@ -55,8 +51,7 @@ Trích xuất thông tin lọc từ TOÀN BỘ ngữ cảnh (câu hỏi + lịch
   "effective_question": "...",
   "metadata_filter": {
     "enrollment_year": {"from_year": int, "to_year": int} | null,
-    "academic_year": {"from_year": int, "to_year": int} | null,
-    "type": "ctdt" | "cong_van" | "quyet_dinh" | null
+    "academic_year": {"from_year": int, "to_year": int} | null
   } | null
 }
 """
@@ -135,8 +130,7 @@ class QueryAnalyzer:
             if metadata_filter:
                 enrollment_year = metadata_filter.get("enrollment_year")
                 academic_year = metadata_filter.get("academic_year")
-                doc_type = metadata_filter.get("type")
-                if not enrollment_year and not academic_year and not doc_type:
+                if not enrollment_year and not academic_year:
                     metadata_filter = None
                 else:
                     # Ensure from_year and to_year are set correctly
@@ -144,14 +138,9 @@ class QueryAnalyzer:
                         metadata_filter["enrollment_year"] = None
                     if academic_year and (academic_year.get("from_year") is None or academic_year.get("to_year") is None):
                         metadata_filter["academic_year"] = None
-                    if doc_type:
-                        if isinstance(doc_type, str):
-                            metadata_filter["type"] = [doc_type]
-                        elif isinstance(doc_type, list):
-                            metadata_filter["type"] = [d for d in doc_type if d]
 
             # Fallback to regex-based extraction if LLM didn't find filters
-            if not metadata_filter or (not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year") and not metadata_filter.get("type")):
+            if not metadata_filter or (not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year")):
                 from app.modules.metadata.extraction import extract_metadata_from_text
                 regex_filter = await extract_metadata_from_text(question)
                 if regex_filter:

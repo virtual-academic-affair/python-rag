@@ -25,9 +25,9 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Clean quotes from variables
-JWT_SECRET=$(echo "$JWT_SECRET" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
-JWT_AUDIENCE=$(echo "$JWT_AUDIENCE" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
-JWT_ISSUER=$(echo "$JWT_ISSUER" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "'$//")
+JWT_SECRET=$(echo "$JWT_SECRET" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+JWT_AUDIENCE=$(echo "$JWT_AUDIENCE" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+JWT_ISSUER=$(echo "$JWT_ISSUER" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
 
 ADMIN_TOKEN=$(python3 -c "
 import jwt, time

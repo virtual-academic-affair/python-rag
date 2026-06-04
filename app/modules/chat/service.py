@@ -6,6 +6,8 @@ import time
 from typing import Optional, AsyncGenerator, Any
 
 from google.genai import types
+from google.genai import errors as genai_errors
+from app.utils.retry import async_retry
 
 from app.core.config import settings
 from app.modules.chat.schemas import ChatHistoryItem, UserContext
@@ -426,12 +428,13 @@ class ChatService:
             turn_text_buffer = ""
             in_answer_block = False
             yielded_text_length = 0
-            yielded_reasoning_length = 0
 
-            stream = await gemini_client.client.aio.models.generate_content_stream(
+            stream = await async_retry(
+                gemini_client.client.aio.models.generate_content_stream,
                 model=settings.GEMINI_MODEL,
                 contents=history,
                 config=config,
+                retryable_exceptions=(genai_errors.ServerError,),
             )
 
             turn_prompt_tokens = 0
@@ -447,11 +450,9 @@ class ChatService:
                 for part in chunk.candidates[0].content.parts:
                     model_response_parts.append(part)
 
-                    # [A] Handle thought part (Gemini Thinking Budget)
+                    # [A] Handle thought part (Gemini Thinking Budget) — skip silently, do not stream to client
                     is_thought_part = hasattr(part, "thought") and part.thought
                     if is_thought_part:
-                        if part.text:
-                            yield json.dumps({"type": "reasoning", "content": part.text, "done": False})
                         continue
 
                     # [B] Handle tool/function calls
@@ -466,12 +467,6 @@ class ChatService:
                             stream_steps.append({"type": "reasoning", "content": reason_val})
                         
                         stream_steps.append({"type": "call", "name": call.name, "args": args})
-
-                        # Flush any pending reasoning text accumulated before this tool call
-                        new_reasoning = turn_text_buffer[yielded_reasoning_length:]
-                        if new_reasoning:
-                            yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
-                            yielded_reasoning_length += len(new_reasoning)
 
                         # Yield simplified call event
                         call_step = {"type": "call", "name": call.name, "args": args}
@@ -526,13 +521,8 @@ class ChatService:
                                             yield json.dumps({"type": "text", "content": formatted, "done": False})
                                         yielded_text_length += len(new_text)
 
-            # Yield accumulated text based on whether this turn had tool calls
-            if tool_calls_in_turn:
-                new_reasoning = turn_text_buffer[yielded_reasoning_length:]
-                if new_reasoning:
-                    yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
-                    yielded_reasoning_length += len(new_reasoning)
-            else:
+            # Yield accumulated text for turns without tool calls
+            if not tool_calls_in_turn:
                 if turn_text_buffer:
                     if in_answer_block:
                         pre_think, final_text = parse_agent_response(turn_text_buffer)
@@ -566,11 +556,8 @@ class ChatService:
                                 final_answer_accumulated += combined
                                 yield json.dumps({"type": "text", "content": combined, "done": False})
                     else:
-                        # Turn didn't transition to answer block (e.g. no tags or intermediate turn), flush reasoning
-                        new_reasoning = turn_text_buffer[yielded_reasoning_length:]
-                        if new_reasoning:
-                            yield json.dumps({"type": "reasoning", "content": new_reasoning, "done": False})
-                            yielded_reasoning_length += len(new_reasoning)
+                        # Turn had no answer block and no tool calls — discard any free-text reasoning
+                        pass
 
             # History fragmentation fix: combine consecutive text parts into one, preserving original relative order
             clean_parts = []

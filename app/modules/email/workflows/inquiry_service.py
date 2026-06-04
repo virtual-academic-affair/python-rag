@@ -37,7 +37,7 @@ class InquiryService:
                 "   - 'graduation': Các vấn đề liên quan đến tốt nghiệp, xét tốt nghiệp, chứng nhận, bằng cấp.\n"
                 "   - 'training': Các vấn đề về đào tạo, học phần, đăng ký học tập, thời khóa biểu, điểm số, học vụ.\n"
                 "   - Nếu không rõ ràng hoặc thuộc loại khác, mặc định chọn ['training'].\n"
-                "3. 'metadata_filter': Trích xuất bộ lọc năm học (academic_year), khóa tuyển sinh (enrollment_year) và loại tài liệu (type) từ toàn bộ ngữ cảnh email:\n"
+                "3. 'metadata_filter': Trích xuất bộ lọc năm học (academic_year) và khóa tuyển sinh (enrollment_year) từ toàn bộ ngữ cảnh email:\n"
                 "   - 'enrollment_year': Khóa sinh viên. Quy tắc BẮT BUỘC: \"K22\" hoặc \"Khóa 22\" -> from_year=2022, to_year=2022.\n"
                 "     Công thức: năm = 2000 + số sau K (ví dụ K20 -> 2020, K19 -> 2019, K22 -> 2022). TUYỆT ĐỐI KHÔNG suy diễn khác. Thiết lập: {{\"from_year\": năm, \"to_year\": năm}}.\n"
                 "   - 'academic_year': Năm học.\n"
@@ -47,10 +47,6 @@ class InquiryService:
                 "       * Tính toán: from_year = K + N - 1, to_year = K + N.\n"
                 "       * Ví dụ: Năm nhất (năm 1) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2022, to_year=2023 (Năm học 2022-2023).\n"
                 "       * Ví dụ: Năm tư (năm 4) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2025, to_year=2026 (Năm học 2025-2026).\n"
-                "   - 'type': Loại tài liệu. Chỉ trích xuất khi email nhắc tới hoặc hướng rõ về một loại tài liệu cụ thể:\n"
-                "     + \"ctdt\": Chương trình đào tạo. Dùng cho câu hỏi về khung chương trình đào tạo, danh sách môn học, số tín chỉ bắt buộc, đề cương chi tiết học phần, lộ trình học, chuẩn đầu ra môn học.\n"
-                "     + \"cong_van\": Công văn / Hướng dẫn / Thông báo. Dùng cho câu hỏi về thông báo, thông tin học phí, học bổng, lịch nộp hồ sơ, thủ tục đăng ký môn học/học phần tốt nghiệp, kế hoạch năm học.\n"
-                "     + \"quyet_dinh\": Quyết định / Quy chế. Dùng cho câu hỏi về quy chế học vụ chính thức của trường, quy định đào tạo đại học, quyết định ban hành quy chế tốt nghiệp, quy định khen thưởng/kỷ luật.\n"
                 "   - Nếu không tìm thấy thông tin tương ứng -> null.\n\n"
                 "Trả về DUY NHẤT một đối tượng JSON hợp lệ theo schema sau (không có ký tự nào khác ngoài JSON):\n"
                 "{{\n"
@@ -64,8 +60,7 @@ class InquiryService:
                 "    \"academic_year\": {{\n"
                 "      \"from_year\": integer,\n"
                 "      \"to_year\": integer\n"
-                "    }} | null,\n"
-                "    \"type\": \"ctdt\" | \"cong_van\" | \"quyet_dinh\" | null\n"
+                "    }} | null\n"
                 "  }} | null\n"
                 "}}"
             )),
@@ -99,13 +94,10 @@ class InquiryService:
         extracted_question = extraction_data.get("question")
         inquiry_types = extraction_data.get("inquiry_types", ["training"])
         metadata_filter = extraction_data.get("metadata_filter") or {}
-        # Đảm bảo type là list nếu LLM trả về string đơn (normalize về list để thống nhất với chat analyzer)
-        if metadata_filter.get("type") and isinstance(metadata_filter["type"], str):
-            metadata_filter["type"] = [metadata_filter["type"]]
         logger.info(f"[Inquiry] QueryAnalysis done in {dur_extraction:.2f}s | Result: {extraction_data}")
 
         # 2. Xử lý bộ lọc enrollment_year & academic_year với Regex Fallback và RabbitMQ Fallback
-        # Chỉ chạy regex khi LLM không tìm được cả hai (giữ nguyên type từ LLM)
+        # Chỉ chạy regex khi LLM không tìm được cả hai
         if not metadata_filter.get("enrollment_year") and not metadata_filter.get("academic_year"):
             regex_filter = await extract_metadata_from_text(f"{title} {content}")
             if regex_filter:
@@ -227,17 +219,12 @@ class InquiryService:
         if to_rich_text:
             final_answer = markdown_to_rich_text(final_answer)
 
-        # Convert metadata_filter['type'] back to string for InquiryFilters validation
-        output_filters = dict(metadata_filter)
-        if "type" in output_filters and isinstance(output_filters["type"], list):
-            output_filters["type"] = output_filters["type"][0] if output_filters["type"] else None
-
         return {
             "answer": final_answer,
             "sources": rag_result["sources"],
             "source": rag_result.get("source"),
             "question": extracted_question,
             "types": inquiry_types,
-            "filters": output_filters,
+            "filters": metadata_filter,
             "message_id": message_id
         }

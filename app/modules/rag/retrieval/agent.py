@@ -12,7 +12,9 @@ from app.integrations.storage.client import r2_storage
 from app.core.config import settings
 from app.integrations.llm.gemini import gemini_client
 from google.genai import types
+from google.genai import errors as genai_errors
 from app.utils.format_utils import sanitize_latex_in_markdown
+from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +23,8 @@ Bạn là tư vấn viên hỗ trợ sinh viên của trường đại học.
 Bạn được cung cấp danh sách file_id và các công cụ để tìm kiếm, đọc tài liệu quy chế.
 
 # QUY TẮC BẮT BUỘC:
-1. TRƯỚC KHI GỌI CÔNG CỤ: Viết 1-2 câu suy nghĩ/lập luận bằng tiếng Việt mô tả việc bạn sắp làm (Ví dụ: "Tôi sẽ dùng get_document_structure để xem mục lục của Quy chế...").
-2. ĐỌC TÀI LIỆU: Dùng `get_document_structure` xem mục lục trước, sau đó dùng `get_page_content(file_id, pages="start_line-end_line")` để đọc chi tiết nội dung. Ưu tiên dùng số thứ tự [n] thay thế cho file_id.
-3. CÂU TRẢ LỜI CHO SINH VIÊN:
+1. ĐỌC TÀI LIỆU: Dùng `get_document_structure` xem mục lục trước, sau đó dùng `get_page_content(file_id, pages="start_line-end_line")` để đọc chi tiết nội dung. Ưu tiên dùng số thứ tự [n] thay thế cho file_id.
+2. CÂU TRẢ LỜI CHO SINH VIÊN:
    - Bắt buộc bọc toàn bộ câu trả lời tư vấn chi tiết trong cặp thẻ `<answer>` và `</answer>`.
    - Các lập luận nháp, suy nghĩ trung gian phải viết bên ngoài, TRƯỚC thẻ `<answer>`.
    - Định dạng tư vấn bằng Markdown rõ ràng, đi thẳng vào trọng tâm, không chào hỏi ("Chào bạn", "Xin chào"). Xưng là "chúng tôi".
@@ -67,7 +68,7 @@ def build_pindex_tools(candidate_files: List[dict], include_reasoning: bool = Fa
             Get the hierarchical table of contents (structure) for a document. 
             Args:
                 file_id: The unique identifier of the file/document (or numeric index like '1').
-                reasoning: 1-2 sentences explanation in Vietnamese of why you need to inspect this document's structure now.
+                reasoning: Brief explanation in Vietnamese (a few sentences) of why you need to inspect this document's structure now.
             """
             real_id = resolve_file_id(file_id)
             if real_id not in allow_ids:
@@ -85,7 +86,7 @@ def build_pindex_tools(candidate_files: List[dict], include_reasoning: bool = Fa
             Args:
                 file_id: The unique identifier of the file/document (or numeric index like '1').
                 pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
-                reasoning: 1-2 sentences explanation in Vietnamese of why you need to read these pages now.
+                reasoning: Brief explanation in Vietnamese (a few sentences) of why you need to read these pages now.
             """
             real_id = resolve_file_id(file_id)
             if real_id not in allow_ids:
@@ -416,10 +417,12 @@ async def run_agent_loop(
     for turn_idx in range(max_turns):
         logger.info(f"[Agent] Bắt đầu Turn {turn_idx + 1}")
         start_gen = time.perf_counter()
-        resp = await gemini_client.client.aio.models.generate_content(
+        resp = await async_retry(
+            gemini_client.client.aio.models.generate_content,
             model=settings.GEMINI_MODEL,
             contents=history,
             config=config,
+            retryable_exceptions=(genai_errors.ServerError,),
         )
         gen_dur = time.perf_counter() - start_gen
         logger.info(f"[Agent] Gemini generation Turn {turn_idx + 1} completed in {gen_dur:.2f}s")
@@ -459,10 +462,6 @@ async def run_agent_loop(
                 logger.info(f"[Agent] Conclude/Pre-answer reasoning: {pre_think[:100]}...")
             final_answer = parsed_answer
             break
-        else:
-            if turn_text:
-                steps.append({"type": "reasoning", "content": turn_text})
-
         tool_response_parts = []
         for call in tool_calls:
             try:
