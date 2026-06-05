@@ -219,6 +219,7 @@ class InquiryService:
         if to_rich_text:
             final_answer = markdown_to_rich_text(final_answer)
 
+        logger.info(f"[Inquiry] Final answer returned (first 300 chars): {final_answer[:300]!r}")
         return {
             "answer": final_answer,
             "sources": rag_result["sources"],

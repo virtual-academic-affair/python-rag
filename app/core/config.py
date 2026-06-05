@@ -98,8 +98,8 @@ class Settings(BaseSettings):
     # ====================================
     MONGODB_URL: str
     MONGODB_DB_NAME: str = "ai_service"
-    MONGODB_MIN_POOL_SIZE: int = 10
-    MONGODB_MAX_POOL_SIZE: int = 100
+    MONGODB_MIN_POOL_SIZE: int = 1
+    MONGODB_MAX_POOL_SIZE: int = 20
     MONGODB_DISABLED: bool = False
 
     # ====================================

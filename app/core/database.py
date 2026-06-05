@@ -49,7 +49,9 @@ class Database:
                 settings.MONGODB_URL,
                 minPoolSize=settings.MONGODB_MIN_POOL_SIZE,
                 maxPoolSize=settings.MONGODB_MAX_POOL_SIZE,
-                tz_aware=True,  # Return all datetimes as timezone-aware (UTC) instead of naive
+                tz_aware=True,          # Return all datetimes as timezone-aware (UTC) instead of naive
+                connectTimeoutMS=30000, # Give more margin for Atlas SSL handshake from Docker containers
+                serverSelectionTimeoutMS=30000,
             )
 
             cls._db = cls._client[settings.MONGODB_DB_NAME]

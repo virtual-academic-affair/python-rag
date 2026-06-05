@@ -54,14 +54,21 @@ class RabbitMQService:
                 connection_attempts=3,
                 retry_delay=2,
                 socket_timeout=5,
-                # heartbeat=0 disables heartbeat for the email ingest consumer.
-                # The on_message callback blocks the pika thread for up to 240s
-                # while LLM+RAG processing runs. With heartbeat=60 (default),
-                # RabbitMQ drops the connection after ~60s of silence.
-                # Disabling is the standard RabbitMQ pattern for long-running task consumers.
+                # heartbeat=0: pika won't send AMQP heartbeat frames.
+                # The on_message callback blocks the thread for up to 300s while LLM+RAG runs.
+                # AMQP heartbeats need the IO loop to be active, which it isn't during processing.
                 heartbeat=0,
                 blocked_connection_timeout=300,
+                # TCP keepalive: prevent Docker/NAT from silently dropping idle TCP connections.
+                # OS sends keepalive probe every 30s (idle_time), retries 3 times (interval=10s),
+                # declares dead if no reply after 3 probes. Total detection time: 30 + 3*10 = 60s.
+                tcp_options={
+                    "TCP_KEEPIDLE": 30,   # start keepalive probes after 30s idle
+                    "TCP_KEEPINTVL": 10,  # send probe every 10s
+                    "TCP_KEEPCNT": 3,     # give up after 3 failed probes
+                },
             )
+
 
             self.connection = pika.BlockingConnection(parameters)
             self.channel = self.connection.channel()
