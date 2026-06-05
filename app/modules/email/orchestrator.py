@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from app.integrations.grpc.client import get_grpc_client
@@ -146,10 +147,13 @@ class EmailWorkflowOrchestrator:
         extracted: ClassRegistrationPayload | None = None
         inquiry_draft: dict | None = None
 
-        # An empty split segment means that label has no real content -> skip its workflow.
+        # Prepare coroutines, skipping workflows with empty split content.
+        cr_coro = None
+        inq_coro = None
+
         if has_class_reg:
             if class_reg_content.strip():
-                extracted = await self._run_class_registration(title, class_reg_content, message_id)
+                cr_coro = self._run_class_registration(title, class_reg_content, message_id)
             else:
                 logger.warning(
                     "classRegistration label present but split content is empty for message_id=%s; skipping",
@@ -157,7 +161,7 @@ class EmailWorkflowOrchestrator:
                 )
         if has_inquiry:
             if inquiry_content.strip():
-                inquiry_draft = await self._run_inquiry(
+                inq_coro = self._run_inquiry(
                     title=title,
                     content=inquiry_content,
                     message_id=message_id,
@@ -169,6 +173,27 @@ class EmailWorkflowOrchestrator:
                     "inquiry label present but split content is empty for message_id=%s; skipping",
                     message_id,
                 )
+
+        # Run workflows in parallel when both are active, sequential otherwise.
+        if cr_coro and inq_coro:
+            import time as _time
+            _t0 = _time.perf_counter()
+            logger.info(
+                "[Orchestrator] Running classRegistration + inquiry in PARALLEL for message_id=%s",
+                message_id,
+            )
+            extracted, inquiry_draft = await asyncio.gather(cr_coro, inq_coro)
+            _elapsed = _time.perf_counter() - _t0
+            logger.info(
+                "[Orchestrator] Both workflows DONE in %.2fs (parallel) for message_id=%s",
+                _elapsed,
+                message_id,
+            )
+        elif cr_coro:
+            extracted = await cr_coro
+        elif inq_coro:
+            inquiry_draft = await inq_coro
+
 
         # Build the response from whatever workflows actually produced output.
         if extracted is not None and inquiry_draft is not None:

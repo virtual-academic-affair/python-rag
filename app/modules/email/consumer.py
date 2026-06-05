@@ -152,7 +152,7 @@ def start_email_ingest_consumer(
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_handle(), loop)
-            result = fut.result(timeout=120)
+            result = fut.result(timeout=300)
             if result is None:
                 logger.info("Email ingest ignored: messageId=%s", message_id)
                 ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -174,7 +174,7 @@ def start_email_ingest_consumer(
                         reason="processing_exception",
                     ),
                     loop,
-                ).result(timeout=10)
+                ).result(timeout=20)
             except Exception:
                 logger.debug(
                     "Unable to emit failed status event for messageId=%s",
