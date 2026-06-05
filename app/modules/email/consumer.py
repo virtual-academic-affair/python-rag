@@ -5,6 +5,8 @@ import time
 import threading
 from typing import Any, Dict, Optional
 
+import pika.exceptions
+
 from app.modules.email.schemas import IngestMessage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
 from app.integrations.grpc.client import get_grpc_client
@@ -27,6 +29,26 @@ def _get_message_id(payload: Dict[str, Any]) -> Optional[int]:
     data = payload.get("data") or {}
     message_id = data.get("messageId")
     return message_id if isinstance(message_id, int) else None
+
+
+def _safe_ack(ch, delivery_tag: int) -> None:
+    """Acknowledge a message, ignoring errors if the channel is already closed."""
+    try:
+        ch.basic_ack(delivery_tag=delivery_tag)
+    except (pika.exceptions.ChannelWrongStateError, pika.exceptions.AMQPConnectionError) as e:
+        logger.warning("Could not ack message (channel/connection closed): %s", e)
+    except Exception as e:
+        logger.warning("Unexpected error during basic_ack: %s", e)
+
+
+def _safe_nack(ch, delivery_tag: int, requeue: bool = False) -> None:
+    """Nack a message, ignoring errors if the channel is already closed."""
+    try:
+        ch.basic_nack(delivery_tag=delivery_tag, requeue=requeue)
+    except (pika.exceptions.ChannelWrongStateError, pika.exceptions.AMQPConnectionError) as e:
+        logger.warning("Could not nack message (channel/connection closed): %s", e)
+    except Exception as e:
+        logger.warning("Unexpected error during basic_nack: %s", e)
 
 
 def start_email_ingest_consumer(
@@ -155,7 +177,7 @@ def start_email_ingest_consumer(
             result = fut.result(timeout=300)
             if result is None:
                 logger.info("Email ingest ignored: messageId=%s", message_id)
-                ch.basic_ack(delivery_tag=method.delivery_tag)
+                _safe_ack(ch, method.delivery_tag)
                 return
 
             logger.info(
@@ -163,7 +185,7 @@ def start_email_ingest_consumer(
                 message_id,
                 getattr(result, "label", None) or getattr(result, "labels", None),
             )
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            _safe_ack(ch, method.delivery_tag)
         except Exception as e:
             logger.error("Failed processing ingest message: %s", str(e), exc_info=True)
             try:
@@ -181,7 +203,8 @@ def start_email_ingest_consumer(
                     message_id,
                     exc_info=True,
                 )
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            _safe_nack(ch, method.delivery_tag)
+
 
     def _run():
         max_retries = 10

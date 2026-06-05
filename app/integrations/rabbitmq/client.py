@@ -1,8 +1,9 @@
 """RabbitMQ service for token storage and retrieval"""
-import logging
-import json
-import pika
 import asyncio
+import json
+import logging
+import pika
+import pika.exceptions
 from typing import Optional, Dict, Any
 from app.core.config import settings
 
@@ -53,7 +54,13 @@ class RabbitMQService:
                 connection_attempts=3,
                 retry_delay=2,
                 socket_timeout=5,
-                heartbeat=60,
+                # heartbeat=0 disables heartbeat for the email ingest consumer.
+                # The on_message callback blocks the pika thread for up to 240s
+                # while LLM+RAG processing runs. With heartbeat=60 (default),
+                # RabbitMQ drops the connection after ~60s of silence.
+                # Disabling is the standard RabbitMQ pattern for long-running task consumers.
+                heartbeat=0,
+                blocked_connection_timeout=300,
             )
 
             self.connection = pika.BlockingConnection(parameters)
