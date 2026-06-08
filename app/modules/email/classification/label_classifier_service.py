@@ -117,17 +117,33 @@ Output constraints:
             [
                 (
                     "system",
-                    """You split a student email into 2 mutually exclusive parts for downstream workflows.
+                    """You split a student email into 2 parts for downstream workflows:
+- inquiry_content: the question / consultation / policy-clarification intent.
+- class_registration_content: the actionable registration intent (register/cancel/open/switch class).
 Return STRICT JSON ONLY with this schema:
 {{"inquiry_content":"...","class_registration_content":"..."}}
-Rules:
-- inquiry_content: only question/consultation/policy clarification intent.
-- class_registration_content: only actionable registration intent (register/cancel/open/switch class, course code/class code, constraints).
-- Each piece of the email goes to EXACTLY ONE part. NEVER put the same text in both parts.
-- If a single sentence mixes both intents, split it into clauses and assign each clause to the matching part. If it cannot be split cleanly, assign the whole sentence to its dominant intent only.
-- Together the two parts should cover the meaningful content without duplication.
-- Preserve original language.
+
+Separation rule (split by INTENT, not by words):
+- The QUESTION/clarification goes ONLY to inquiry_content.
+- The register/cancel/open/switch ACTION goes ONLY to class_registration_content.
+- NEVER put the other part's INTENT into a part: no question text in class_registration_content; no register/cancel/open action in inquiry_content.
+
+Shared-context rule (this is what keeps each part usable on its own):
+- Shared identifiers/context MAY and SHOULD appear in BOTH parts when needed to understand them: subject name, course/class code, cohort (Khóa/K..), academic year, student name/MSSV, and any entity that the question or the request refers to.
+- Resolve references: replace demonstratives/pronouns ("môn này", "lớp đó", "nó") with the explicit entity in EACH part.
+- Each part MUST be independently understandable on its own, WITHOUT reading the other part.
+
+Rewriting:
+- You MAY lightly rewrite a part (insert the referenced entity, drop dangling pronouns) so it stands alone.
+- Do NOT invent facts not present in the email. Do NOT change the original meaning. Preserve the original language.
+
+Edge cases:
+- If only ONE intent is actually present, return "" for the other part.
 - No markdown, no explanation.
+
+Example:
+Input: "Em muốn xin đăng ký lớp Thiết kế phần mềm 22CLC1. Em muốn hỏi thêm môn thiết kế phần mềm này có phải tín chỉ bắt buộc của khoa Kỹ thuật phần mềm không ạ."
+Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có phải là tín chỉ bắt buộc của khoa Kỹ thuật phần mềm không ạ?","class_registration_content":"Em muốn xin đăng ký lớp Thiết kế phần mềm 22CLC1."}}
 """,
                 ),
                 (
