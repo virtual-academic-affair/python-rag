@@ -64,18 +64,36 @@ class QdrantRetrievalService:
                         ),
                     )
                 
-                # Ensure payload indexes
-                fields = [
+                # Ensure keyword payload indexes
+                keyword_fields = [
                     "file_id", 
                     "metadata.academic_year", 
-                    "metadata.department"
+                    "metadata.department",
+                    "metadata.type"
                 ]
-                for field in fields:
+                for field in keyword_fields:
                     try:
                         self.qdrant_client_instance.create_payload_index(
                             collection_name=settings.QDRANT_COLLECTION_NAME,
                             field_name=field,
                             field_schema=qm.PayloadSchemaType.KEYWORD,
+                        )
+                    except Exception:
+                        pass
+
+                # Ensure integer payload indexes for range queries
+                int_fields = [
+                    "metadata.enrollment_year_from",
+                    "metadata.enrollment_year_to",
+                    "metadata.academic_year_from",
+                    "metadata.academic_year_to",
+                ]
+                for field in int_fields:
+                    try:
+                        self.qdrant_client_instance.create_payload_index(
+                            collection_name=settings.QDRANT_COLLECTION_NAME,
+                            field_name=field,
+                            field_schema=qm.PayloadSchemaType.INTEGER,
                         )
                     except Exception:
                         pass

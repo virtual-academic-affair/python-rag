@@ -1,3 +1,5 @@
-"""
-Core Package - Configuration, Database, Prompts, Exceptions.
-"""
+from app.core.base_schema import BaseSchema
+
+__all__ = [
+    "BaseSchema",
+]

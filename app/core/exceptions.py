@@ -35,11 +35,6 @@ class NotFoundException(AppException):
         super().__init__(message, status_code=404)
 
 
-# Aliases for backward compatibility
-DocumentNotFoundException = NotFoundException
-FileNotFoundException = NotFoundException
-StoreNotFoundException = NotFoundException
-FileNotFoundInStorageException = NotFoundException
 
 
 # ====================================
@@ -52,8 +47,6 @@ class ConflictException(AppException):
         super().__init__(message, status_code=409)
 
 
-# Aliases
-DuplicateDocumentException = ConflictException
 
 
 class DefaultStoreException(ConflictException):
@@ -137,8 +130,6 @@ class GrpcServerException(ExternalServiceException):
     pass
 
 
-# Legacy aliases for backward compatibility
-DatabaseException = AppException
 
 
 def handle_google_api_error(e: APIError, prefix: str = "") -> HTTPException:

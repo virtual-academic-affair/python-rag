@@ -11,9 +11,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
-from app.modules.files.schemas import ErrorResponse, HealthCheckResponse
+from app.modules.files.dtos.file_out import ErrorResponse, HealthCheckResponse
+from beanie import init_beanie
+from app.modules.files.models.file import FileDocument
+from app.modules.files.toc_tree.models.toc_tree import FileTocTree
+from app.modules.faq.models.faq import FaqDocument
+from app.modules.faq.models.faq_candidate import FaqCandidateDocument
+from app.modules.faq.models.interaction_log import InteractionLogDocument
+from app.modules.chat.models.chat_session import ChatSessionDocument
+from app.modules.chat.models.chat_message import ChatMessageDocument
+from app.modules.forms.models.form import FormDocument
 from app.core.config import settings
-from app.modules.email.orchestrator import EmailWorkflowOrchestrator
+from app.modules.email import EmailWorkflowOrchestrator
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
@@ -22,7 +31,7 @@ from app.integrations.redis.client import get_redis_client
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
 from app.integrations.qdrant.indexer import get_qdrant_indexer
-from app.modules.faq.synthesizer import get_faq_synthesis_service
+from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
 import uvicorn
 from google.genai.errors import APIError
 
@@ -153,14 +162,28 @@ async def lifespan(_: FastAPI):
         if settings.R2_DISABLED:
             print("   - R2_DISABLED=True: Files will NOT be stored!")
         print("=" * 80)
-    
-    # 1. Connect to MongoDB
+
+    # 1. Connect to MongoDB and Initialize Beanie
     try:
         await Database.connect()
         if settings.MONGODB_DISABLED:
             logger.warning("⚠️  MongoDB disabled. Continuing without DB.")
         else:
             logger.info("✅ MongoDB connected")
+            await init_beanie(
+                database=Database.get_db(),
+                document_models=[
+                    FileDocument,
+                    FileTocTree,
+                    FaqDocument,
+                    FaqCandidateDocument,
+                    InteractionLogDocument,
+                    ChatSessionDocument,
+                    ChatMessageDocument,
+                    FormDocument,
+                ]
+            )
+            logger.info("✅ Beanie ODM initialized")
     except Exception as e:
         logger.error(f"❌ Failed to connect to MongoDB: {e}")
         raise

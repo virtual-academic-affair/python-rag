@@ -7,10 +7,10 @@ from typing import Any, Dict, Optional
 
 import pika.exceptions
 
-from app.modules.email.schemas import IngestMessage
+from app.modules.email.models.email_types import IngestMessage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
 from app.integrations.grpc.client import get_grpc_client
-from app.modules.email.notifier import (
+from app.modules.email.utils.notifier import (
     EMAIL_INGEST_PROGRESS_CHANNEL,
     get_email_status_notifier,
 )

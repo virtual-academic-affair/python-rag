@@ -14,7 +14,6 @@ from .page_index_md import md_to_tree
 from .retrieve import get_document, get_document_structure, get_page_content
 from .utils import ConfigLoader, remove_fields
 from app.integrations.storage.client import r2_storage
-from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.integrations.redis.client import get_redis_client
 from app.core.config import settings
 
@@ -71,6 +70,7 @@ class PageIndexClient:
     @property
     def toc_repo(self):
         if self._toc_repo is None:
+            from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
             self._toc_repo = FileTocTreeRepository()
         return self._toc_repo
 

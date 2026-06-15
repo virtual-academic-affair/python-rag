@@ -5,10 +5,10 @@ from typing import Dict, Any, Optional, List
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_extraction_llm
-from app.modules.rag.retrieval.service import get_retrieval_service
-from app.modules.metadata.extraction import extract_metadata_from_text
-from app.modules.email.utils import extract_structured_data
-from app.modules.faq.service import get_faq_service
+from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
+from app.modules.metadata.services.extraction_service import extract_metadata_from_text
+from app.modules.email.utils.email_utils import extract_structured_data
+from app.modules.faq.services.faq_service import get_faq_service
 from app.utils.format_utils import markdown_to_rich_text
 import asyncio
 import time
@@ -183,7 +183,7 @@ class InquiryService:
                 )
 
                 # Generate Answer using shared Agent logic
-                from app.modules.rag.retrieval.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
+                from app.modules.rag.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 
                 agent_result = await run_agent_loop(
                     candidate_files=candidate_files,

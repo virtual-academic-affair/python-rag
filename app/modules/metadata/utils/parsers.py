@@ -2,7 +2,7 @@
 Metadata Parsers — Conversion from strings to structured models.
 """
 from typing import Optional
-from app.modules.metadata.models import YearRange, YEAR_MIN, YEAR_MAX
+from app.modules.metadata.models.value_objects import YearRange, YEAR_MIN, YEAR_MAX
 
 
 def parse_year_range(value: Optional[str]) -> YearRange:

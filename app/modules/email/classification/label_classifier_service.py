@@ -5,7 +5,7 @@ import re
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.modules.email.schemas import SystemLabel
+from app.modules.email.models.email_types import SystemLabel
 from app.core.config import settings
 from app.integrations.llm.gemini import (
     build_classification_llm,

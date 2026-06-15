@@ -13,7 +13,7 @@ from botocore.config import Config
 from app.core.config import settings
 from app.core.exceptions import (
     StorageException,
-    FileNotFoundInStorageException,
+    NotFoundException,
     FileUploadException,
     FileDownloadException,
 )
@@ -166,7 +166,7 @@ class R2Storage(BaseStorage):
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code')
             if error_code == 'NoSuchKey':
-                raise FileNotFoundInStorageException(f"File not found: {object_name}")
+                raise NotFoundException(f"File not found: {object_name}")
             logger.error(f"Failed to download {object_name}: {e}")
             raise FileDownloadException(f"Failed to download from R2: {e}")
             

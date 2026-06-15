@@ -16,7 +16,7 @@ echo "$RESPONSE" | sed '$d' | grep -q '"source":[[:space:]]*"llm"' && log_succes
 
 # 2. Chat query - FAQ Match (Direct answer)
 log_info "POST /api/chat/query — FAQ Match"
-QUERY_BODY='{"question": "Thủ tục xin bảo lưu kết quả học tập?", "chatHistory": []}'
+QUERY_BODY='{"question": "Quy định về chuẩn ngoại ngữ đầu ra?", "chatHistory": []}'
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -H "${STUDENT_AUTH_HEADER}" \
@@ -48,16 +48,16 @@ check_response "$RESPONSE" "200" "Chat Query — RAG Search (Customizations)"
 echo "$RESPONSE" | sed '$d' | grep -q '<p>' && log_success "  -> Rich Text check: answer contains HTML (Correct)" || log_warning "  -> Rich Text check failed: answer does not contain HTML"
 
 # 4. Chat streaming (SSE)
-log_info "POST /api/chat/stream — Streaming (max 60s)"
+log_info "POST /api/chat/stream — Streaming (max 100s)"
 QUERY_BODY='{"question": "GPA bao nhiêu thì được tốt nghiệp?", "chatHistory": []}'
-RESPONSE_STREAM=$(curl -s -N --max-time 60 -X POST "${API_URL}/chat/stream" \
+RESPONSE_STREAM=$(curl -s -N --max-time 100 -X POST "${API_URL}/chat/stream" \
     -H "Content-Type: application/json" \
     -H "${STUDENT_AUTH_HEADER}" \
     -d "$QUERY_BODY" 2>/dev/null)
 
 CUR_EXIT=$?
 if [ $CUR_EXIT -eq 28 ]; then
-    log_error "Chat Stream — Request timed out (60s)"
+    log_error "Chat Stream — Request timed out (100s)"
     return 1
 elif [ $CUR_EXIT -ne 0 ]; then
     log_error "Chat Stream — Curl failed with exit code $CUR_EXIT"

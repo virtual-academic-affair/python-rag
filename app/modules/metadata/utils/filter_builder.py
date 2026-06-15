@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional
 
 from qdrant_client.http import models as qm
 
-from app.modules.metadata.schemas import FaqMetadataSchema, UnifiedFilterSchema
-from app.modules.metadata.models import YEAR_MIN, YEAR_MAX
+from app.modules.metadata.dtos import UnifiedFilterSchema
+from app.modules.metadata.models.value_objects import YEAR_MIN, YEAR_MAX
 
 logger = logging.getLogger(__name__)
 

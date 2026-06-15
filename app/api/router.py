@@ -5,16 +5,16 @@ Unified router combining email classification and RAG features.
 
 from fastapi import APIRouter
 import logging
-from app.modules.email.router import router as email_router
-from app.modules.email.ws import router as email_ws
-from app.modules.chat.router import router as chat_router
-from app.modules.files.router import router as files_router
-from app.modules.files.ws import router as files_ws
-from app.modules.metadata.router import router as metadata_router
-from app.modules.files.debug_router import router as debug_router
-from app.modules.files.toc_tree.router import router as toc_tree_router
-from app.modules.faq.router import router as faq_router
-from app.modules.forms.router import router as forms_router
+from app.modules.email import router as email_router
+from app.modules.email import ws_router as email_ws
+from app.modules.chat.routers.chat_router import router as chat_router
+from app.modules.files.routers.file_router import router as files_router
+from app.modules.files.routers.file_ws_router import router as files_ws
+from app.modules.metadata.routers.metadata_router import router as metadata_router
+from app.modules.files.routers.debug_router import router as debug_router
+from app.modules.files.toc_tree.routers.toc_tree_router import router as toc_tree_router
+from app.modules.faq.routers.faq_router import router as faq_router
+from app.modules.forms import router as forms_router
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ Provides pagination helpers for API responses.
 
 from typing import List, Dict, Any, Optional
 from pydantic import Field
-from app.core.schemas import BaseSchema
+from app.core.base_schema import BaseSchema
 
 
 class PaginationParams(BaseSchema):

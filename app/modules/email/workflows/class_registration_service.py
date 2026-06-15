@@ -10,7 +10,7 @@ from app.integrations.llm.gemini import (
     env_thinking_level,
 )
 from app.utils.retry import async_retry
-from app.modules.email.schemas import ClassRegistrationPayload
+from app.modules.email.models.email_types import ClassRegistrationPayload
 from app.utils.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)

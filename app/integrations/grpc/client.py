@@ -272,9 +272,7 @@ class GrpcClient:
         return response_state
 
 
-# Backward compatibility bindings
-GrpcLabelClient = GrpcClient
-GrpcLabelClientConfig = GrpcClientConfig
+
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +295,4 @@ def get_grpc_client() -> GrpcClient:
             )
         )
     return _grpc_client_instance
-
-def get_grpc_inquiry_client() -> GrpcClient:
-    """Backward compatibility alias."""
-    return get_grpc_client()
 
