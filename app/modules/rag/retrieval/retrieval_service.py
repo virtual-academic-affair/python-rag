@@ -37,24 +37,21 @@ class RetrievalService:
         self,
         query: str,
         metadata_filter: Optional[Dict[str, Any]] = None,
-        user_role: str = "student",
         top_k_chunks: int = 30, # Increased for better document scoring
         max_files: int = 5,
     ) -> List[Dict[str, Any]]:
         """Unified helper to fetch relevant files using PageIndex Semantic Document Search algorithm."""
         qdrant_meta_filter = await self._filter_builder.build_qdrant_filter(
-            metadata_filter=metadata_filter or {},
-            user_role=user_role
+            metadata_filter=metadata_filter or {}
         )
 
-        logger.info(f"[Retrieval] Bắt đầu semantic search cho query: '{query[:50]}...', role: {user_role}, filter: {qdrant_meta_filter}")
+        logger.info(f"[Retrieval] Bắt đầu semantic search cho query: '{query[:50]}...', filter: {qdrant_meta_filter}")
         
         start_qdrant = time.perf_counter()
         hits = await self._qdrant.retrieve(
             query=query,
             top_k=top_k_chunks,
             metadata_filter=qdrant_meta_filter,
-            # user_role đã được xử lý bên trong filter_builder
         )
         qdrant_dur = time.perf_counter() - start_qdrant
 
@@ -113,21 +110,21 @@ class RetrievalService:
         # 4. Enrich with descriptions and structure (Batch query)
         top_ids = [d["file_id"] for d in top_docs]
         toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
-        toc_map = {t["file_id"]: t for t in toc_docs}
+        toc_map = {t.file_id: t for t in toc_docs}
         
         file_docs = await self._file_repo.find_by_ids(top_ids)
-        file_map = {str(f.get("_id")): f for f in file_docs}
+        file_map = {str(f.id): f for f in file_docs}
 
         for d in top_docs:
             fid = d["file_id"]
-            toc_doc = toc_map.get(fid, {})
-            d["doc_description"] = toc_doc.get("doc_description", "")
-            d["structure"] = toc_doc.get("structure", [])
-            d["markdown_storage_path"] = toc_doc.get("markdown_storage_path", "")
+            toc_doc = toc_map.get(fid)
+            d["doc_description"] = toc_doc.doc_description if toc_doc else ""
+            d["structure"] = toc_doc.structure if toc_doc else []
+            d["markdown_storage_path"] = toc_doc.markdown_storage_path if toc_doc else ""
             
             f_doc = file_map.get(fid)
             if f_doc:
-                d["storage_path"] = f_doc.get("storage_path", "")
+                d["storage_path"] = f_doc.storage_path or ""
             else:
                 d["storage_path"] = ""
 

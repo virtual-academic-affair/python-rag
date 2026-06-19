@@ -118,15 +118,15 @@ class ChatStreamService(ChatService):
             faq_check_step = {
                 "type": "faq_check",
                 "hit": True,
-                "faq_question": faq.get("question", ""),
+                "faq_question": faq.question,
             }
             pipeline_steps.append(faq_check_step)
             yield json.dumps({**simplify_step(faq_check_step), "done": False})
 
             logger.info("[Chat-Stream] FAQ hit. Sending direct answer.")
-            yield json.dumps({"type": "text", "content": faq["answer_markdown"], "done": False})
+            yield json.dumps({"type": "text", "content": faq.answer_markdown, "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq['question']}' (Completed in {processing_time_ms / 1000:.2f}s)")
+            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq.question}' (Completed in {processing_time_ms / 1000:.2f}s)")
             yield json.dumps({
                 "done": True, 
                 "source": "faq",

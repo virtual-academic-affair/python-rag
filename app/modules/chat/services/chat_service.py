@@ -48,7 +48,6 @@ class ChatService:
         candidate_files = await self._retrieval.retrieve_candidate_files(
             query=question,
             metadata_filter=meta_dict,
-            user_role=user_context.role,
         )
 
         if not candidate_files:
@@ -145,11 +144,11 @@ class ChatService:
             pipeline_steps.append({
                 "type": "faq_check",
                 "hit": True,
-                "faq_question": faq.get("question", ""),
+                "faq_question": faq.question,
             })
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat] FAQ hit: '{faq['question']}' ({processing_time_ms}ms)")
-            answer_markdown = faq["answer_markdown"]
+            logger.info(f"[Chat] FAQ hit: '{faq.question}' ({processing_time_ms}ms)")
+            answer_markdown = faq.answer_markdown
             final_answer = answer_markdown
             if to_rich_text:
                 final_answer = markdown_to_rich_text(answer_markdown)

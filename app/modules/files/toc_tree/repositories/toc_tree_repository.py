@@ -1,50 +1,39 @@
-from typing import Optional, Dict, Any, List
-from app.core.base_repository import BaseRepository
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from app.core.base_beanie_repository import BeanieRepository
 from app.modules.files.toc_tree.models.toc_tree import FileTocTree
 
-class FileTocTreeRepository(BaseRepository):
-    """Repository for file TOC trees documents using Beanie ODM."""
 
-    def __init__(self):
-        super().__init__("file_toc_trees")
+class FileTocTreeRepository(BeanieRepository[FileTocTree]):
+    """Repository-specific queries for file TOC tree documents."""
 
-    async def find_by_file_id(self, file_id: str) -> Optional[Dict[str, Any]]:
-        doc = await FileTocTree.find_one(FileTocTree.file_id == file_id)
-        if doc:
-            d = doc.model_dump(by_alias=True)
-            d["_id"] = str(doc.id)
-            return d
-        return None
+    document_class = FileTocTree
 
-    async def find_by_file_ids(self, file_ids: list[str]) -> list[Dict[str, Any]]:
-        """Find multiple TOC trees by their file IDs."""
-        docs = await FileTocTree.find(
-            {"file_id": {"$in": file_ids}}
-        ).limit(len(file_ids)).to_list()
-        
-        results = []
-        for doc in docs:
-            d = doc.model_dump(by_alias=True)
-            d["_id"] = str(doc.id)
-            results.append(d)
-        return results
+    async def find_by_file_id(self, file_id: str) -> Optional[FileTocTree]:
+        return await FileTocTree.find_one(FileTocTree.file_id == file_id)
+
+    async def find_by_file_ids(self, file_ids: list[str]) -> List[FileTocTree]:
+        if not file_ids:
+            return []
+        return await FileTocTree.find({"file_id": {"$in": file_ids}}).limit(len(file_ids)).to_list()
 
     async def upsert_by_file_id(self, file_id: str, data: Dict[str, Any]) -> bool:
-        """Insert or replace TOC tree for a file."""
-        existing = await FileTocTree.find_one(FileTocTree.file_id == file_id)
+        existing = await self.find_by_file_id(file_id)
         if existing:
-            for k, v in data.items():
-                setattr(existing, k, v)
-            await existing.save()
+            for key, value in data.items():
+                setattr(existing, key, value)
+            await self.save(existing)
             return True
-        
+
         doc = FileTocTree(file_id=file_id, **data)
-        await doc.insert()
+        await self.create(doc)
         return True
 
     async def delete_by_file_id(self, file_id: str) -> bool:
-        doc = await FileTocTree.find_one(FileTocTree.file_id == file_id)
-        if doc:
-            await doc.delete()
-            return True
-        return False
+        doc = await self.find_by_file_id(file_id)
+        if not doc:
+            return False
+        await self.delete(doc)
+        return True

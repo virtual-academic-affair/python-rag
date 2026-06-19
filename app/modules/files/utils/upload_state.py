@@ -8,7 +8,6 @@ class UploadStep(Enum):
     DB_CREATED = "db_created"
     R2_UPLOADED = "r2_uploaded"
     METADATA_SYNCED = "metadata_synced"
-    MARKDOWN_GENERATED = "markdown_generated"
     COMPLETED = "completed"
 
 @dataclass
@@ -16,7 +15,6 @@ class UploadState:
     """Track upload progress for intelligent rollback."""
     file_id: Optional[str] = None
     storage_path: Optional[str] = None
-    markdown_storage_path: Optional[str] = None
     table_of_contents: list[str] = field(default_factory=list)
     custom_metadata: Optional[dict] = None
     completed_steps: list = field(default_factory=list)

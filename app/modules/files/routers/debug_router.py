@@ -12,7 +12,7 @@ from app.modules.files.dtos import (
 )
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.modules.rag.ingestion.chunking_service import get_chunking_service
-from app.core.exceptions import ValidationException
+from app.core.exceptions import AppException
 from app.core.dependencies import require_admin
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,10 @@ async def parse_pdf_preview(
             page_count=len(pages),
             pages=[FileParsePreviewPage(page_index=p.page_index, markdown=p.markdown) for p in pages],
         )
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except AppException:
+        raise
     except Exception as e:
         logger.error(f"Parse preview failed: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
@@ -110,8 +112,10 @@ async def chunk_pdf_preview(
                 for c in chunks
             ],
         )
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except AppException:
+        raise
     except Exception as e:
         logger.error(f"Chunk preview failed: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

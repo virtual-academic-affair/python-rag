@@ -25,12 +25,12 @@ async def list_forms(
 ):
     result = await form_svc.list_forms(page=page, limit=limit, search=search)
     return FormListResponse(
-        items=[FormResponse.from_mongo(item) for item in result["items"]],
+        items=[FormResponse.from_document(item) for item in result.items],
         pagination={
-            "total": result["total"],
-            "current_page": result["page"],
-            "limit": result["limit"],
-            "total_pages": (result["total"] + result["limit"] - 1) // result["limit"] if result["limit"] > 0 else 1
+            "total": result.total,
+            "current_page": result.page,
+            "limit": result.limit,
+            "total_pages": result.total_pages
         }
     )
 
@@ -43,7 +43,7 @@ async def get_form(
     form = await form_svc.get_form_by_id(form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Form not found")
-    return FormResponse.from_mongo(form)
+    return FormResponse.from_document(form)
 
 @router.post("", response_model=FormResponse, status_code=status.HTTP_201_CREATED)
 async def create_form(
@@ -56,7 +56,7 @@ async def create_form(
         content_link=request.content_link,
         notes=request.notes
     )
-    return FormResponse.from_mongo(result)
+    return FormResponse.from_document(result)
 
 @router.put("/{form_id}", response_model=FormResponse)
 async def update_form(
@@ -73,7 +73,7 @@ async def update_form(
     )
     if not result:
         raise HTTPException(status_code=404, detail="Form not found")
-    return FormResponse.from_mongo(result)
+    return FormResponse.from_document(result)
 
 @router.delete("/{form_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_form(

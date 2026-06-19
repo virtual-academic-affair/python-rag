@@ -22,6 +22,7 @@ from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
 from app.modules.forms.models.form import FormDocument
 from app.core.config import settings
+from app.core.exceptions import AppException
 from app.modules.email import EmailWorkflowOrchestrator
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
@@ -346,6 +347,32 @@ async def add_process_time_header(request: Request, call_next):
 # GLOBAL EXCEPTION HANDLERS
 # ====================================
 
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException):
+    """Handle application exceptions with their declared status codes."""
+    if exc.status_code >= 500:
+        logger.error(f"Application exception: {exc.message}", exc_info=True)
+    else:
+        logger.warning(f"Application exception: {exc.message}")
+
+    details = exc.details if isinstance(exc.details, dict) or exc.details is None else {"detail": exc.details}
+    if settings.DEBUG:
+        debug_details = {"path": str(request.url)}
+        if isinstance(details, dict):
+            details = {**details, **debug_details}
+        elif details is None:
+            details = debug_details
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            error=exc.__class__.__name__,
+            message=exc.message,
+            details=details,
+        ).model_dump(by_alias=True),
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
@@ -468,4 +495,3 @@ if __name__ == "__main__":
         reload=settings.RELOAD,
         log_level=settings.UVICORN_LOG_LEVEL,
     )
-

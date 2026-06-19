@@ -2,9 +2,7 @@ import io
 import os
 import logging
 import time
-from pathlib import Path
 from typing import Optional, Dict, Any, Callable, Awaitable, Tuple
-from bson import ObjectId
 
 from app.core.config import settings
 from app.core.exceptions import NotFoundException, ConflictException, ValidationException
@@ -64,7 +62,7 @@ class FileUploadMixin:
                 custom_metadata=state.custom_metadata or {},
                 status=FileStatus.UPLOADING,
             )
-            await file_doc.insert()
+            await self.file_repo.create(file_doc)
             state.file_id = str(file_doc.id)
             state.mark_step(UploadStep.DB_CREATED)
 
@@ -107,15 +105,13 @@ class FileUploadMixin:
                 await progress_callback({"step": step, "message": message, "file_id": file_id})
 
         try:
-            file_doc = await FileDocument.get(file_id)
+            file_doc = await self.file_repo.find_by_id(file_id)
             if not file_doc:
                 raise NotFoundException("File", file_id)
 
             storage_path = file_doc.storage_path
 
-            # Update status to processing
-            file_doc.status = FileStatus.PROCESSING
-            await file_doc.save()
+            await self.file_repo.mark_processing(file_id)
 
             await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Vector DB")
             ingest_result = await self._ingest_to_vector_db(
@@ -145,27 +141,22 @@ class FileUploadMixin:
                 "markdown_storage_path": md_storage_path,
             })
 
-            # Final update atomically
-            file_ready_doc = await FileDocument.find_one(
-                FileDocument.id == ObjectId(file_id),
-                FileDocument.status != FileStatus.READY
+            ready_doc = await self.file_repo.mark_ready(
+                file_id=file_id,
+                markdown_storage_path=md_storage_path,
+                markdown_file_size=len(markdown_bytes),
+                table_of_contents=ingest_result.get("table_of_contents", []),
             )
-            if file_ready_doc:
-                file_ready_doc.markdown_storage_path = md_storage_path
-                file_ready_doc.markdown_file_size = len(markdown_bytes)
-                file_ready_doc.table_of_contents = ingest_result.get("table_of_contents", [])
-                file_ready_doc.status = FileStatus.READY
-                await file_ready_doc.save()
+            if not ready_doc:
+                await self._cleanup_background_artifacts(file_id, md_storage_path, toc_repo)
+                raise NotFoundException("File", file_id)
             
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")
             await _notify("completed", "Upload hoàn tất")
         except Exception as e:
             logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
-            doc_err = await FileDocument.get(file_id)
-            if doc_err:
-                doc_err.status = FileStatus.FAILED
-                await doc_err.save()
+            await self.file_repo.mark_failed(file_id)
             await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
         finally:
             cleanup_temp_file(file_path)
@@ -175,6 +166,23 @@ class FileUploadMixin:
                 await ingest_svc.cleanup_local_artifacts(file_id)
             except Exception as e:
                 logger.warning(f"Failed to cleanup markdown artifacts for {file_id}: {e}")
+
+    async def _cleanup_background_artifacts(
+        self,
+        file_id: str,
+        markdown_storage_path: str,
+        toc_repo: FileTocTreeRepository,
+    ) -> None:
+        """Best-effort cleanup for artifacts created before a background failure."""
+        try:
+            await r2_storage.delete_file(markdown_storage_path)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup markdown artifact for failed file {file_id}: {e}")
+
+        try:
+            await toc_repo.delete_by_file_id(file_id)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup TOC for failed file {file_id}: {e}")
 
     async def _ingest_to_vector_db(
         self,
@@ -214,9 +222,7 @@ class FileUploadMixin:
 
         custom_metadata = meta_model.model_dump(mode="json") if meta_model else {}
 
-        existing_file = await FileDocument.find_one(
-            FileDocument.original_filename == original_filename
-        )
+        existing_file = await self.file_repo.find_by_original_filename(original_filename)
         if existing_file:
             raise ConflictException(f"File '{original_filename}' already exists")
 
@@ -235,12 +241,6 @@ class FileUploadMixin:
         """Intelligent rollback based on completed steps."""
         logger.warning(f"Rolling back upload (file_id={state.file_id}): {error_msg}")
 
-        if state.has_step(UploadStep.MARKDOWN_GENERATED) and state.markdown_storage_path:
-            try:
-                await r2_storage.delete_file(state.markdown_storage_path)
-            except Exception as e:
-                logger.warning(f"Rollback: Failed to delete markdown artifact: {e}")
-
         if state.has_step(UploadStep.R2_UPLOADED) and state.storage_path:
             try:
                 await r2_storage.delete_file(state.storage_path)
@@ -249,8 +249,8 @@ class FileUploadMixin:
 
         if state.has_step(UploadStep.DB_CREATED) and state.file_id:
             try:
-                doc = await FileDocument.get(state.file_id)
+                doc = await self.file_repo.find_by_id(state.file_id)
                 if doc:
-                    await doc.delete()
+                    await self.file_repo.delete(doc)
             except Exception as e:
                 logger.warning(f"Rollback: Failed to delete DB record: {e}")

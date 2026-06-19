@@ -62,10 +62,10 @@ async def list_faqs(
         limit=limit
     )
     return FaqListResponse(
-        items=[FaqResponse.from_mongo(item) for item in result["items"]],
-        total=result["total"],
-        page=result["page"],
-        limit=result["limit"]
+        items=[FaqResponse.from_document(item) for item in result.items],
+        total=result.total,
+        page=result.page,
+        limit=result.limit
     )
 
 
@@ -85,7 +85,7 @@ async def create_faq(
         metadata_filter=request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {},
         source="manual"
     )
-    return FaqResponse.from_mongo(result)
+    return FaqResponse.from_document(result)
 
 
 @router.post("/match", response_model=FaqResponse)
@@ -101,7 +101,7 @@ async def debug_match_faq(
     faq = await faq_svc.find_best_match(vector, meta, threshold=request.threshold)
     if not faq:
         raise HTTPException(status_code=404, detail="No matching FAQ found above threshold")
-    return FaqResponse.from_mongo(faq)
+    return FaqResponse.from_document(faq)
 
 
 # ==========================================
@@ -119,10 +119,10 @@ async def list_candidates(
     """List FAQ candidates from synthesis."""
     result = await faq_svc.list_candidates(status=status_filter, search=search, page=page, limit=limit)
     return FaqCandidateListResponse(
-        items=[FaqCandidateResponse.from_mongo(item) for item in result["items"]],
-        total=result["total"],
-        page=result["page"],
-        limit=result["limit"]
+        items=[FaqCandidateResponse.from_document(item) for item in result.items],
+        total=result.total,
+        page=result.page,
+        limit=result.limit
     )
 
 
@@ -136,7 +136,7 @@ async def get_candidate(
     candidate = await faq_svc.get_candidate(candidate_id)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return FaqCandidateResponse.from_mongo(candidate)
+    return FaqCandidateResponse.from_document(candidate)
 
 
 @router.post("/candidates/{candidate_id}/review", response_model=FaqCandidateResponse)
@@ -157,7 +157,7 @@ async def review_candidate(
             metadata_filter_override=request.metadata_filter_override.model_dump(by_alias=False) if request.metadata_filter_override else None,
             note=request.note
         )
-        return FaqCandidateResponse.from_mongo(result)
+        return FaqCandidateResponse.from_document(result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -199,7 +199,7 @@ async def update_faq(
     result = await faq_svc.update_faq(faq_id, update_data)
     if not result:
         raise HTTPException(status_code=404, detail="FAQ not found")
-    return FaqResponse.from_mongo(result)
+    return FaqResponse.from_document(result)
 
 
 @router.delete("/{faq_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -224,7 +224,7 @@ async def get_faq(
     faq = await faq_svc.get_faq(faq_id)
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
-    return FaqResponse.from_mongo(faq)
+    return FaqResponse.from_document(faq)
 
 
 # --- Bulk Import Endpoints ---

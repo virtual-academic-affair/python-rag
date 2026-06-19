@@ -28,7 +28,6 @@ class FilterBuilder:
     async def build_qdrant_filter(
         self,
         metadata_filter: Dict[str, Any],
-        user_role: str = "student",
         skip_validation: bool = False
     ) -> Optional[qm.Filter]:
         """
@@ -104,7 +103,6 @@ class FilterBuilder:
         self,
         metadata_filter: Dict[str, Any],
         mongo_prefix: str = "custom_metadata",
-        user_role: str = "student",
         skip_validation: bool = False
     ) -> Dict[str, Any]:
         """

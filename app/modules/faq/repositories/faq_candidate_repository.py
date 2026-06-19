@@ -1,39 +1,44 @@
-from typing import List, Optional, Dict, Any
-from app.core.base_repository import BaseRepository
+from __future__ import annotations
+
+from typing import List, Optional, Tuple
+
+from app.core.base_beanie_repository import BeanieRepository
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 
-class FaqCandidateRepository(BaseRepository):
-    """Repository for FAQ Candidates using Beanie ODM."""
-    
-    def __init__(self):
-        super().__init__("faq_candidates")
-        
-    def _serialize_doc(self, doc) -> Optional[Dict[str, Any]]:
-        if not doc:
-            return None
-        if isinstance(doc, dict):
-            d = doc.copy()
-            if "_id" in d:
-                d["_id"] = str(d["_id"])
-            return d
-        d = doc.model_dump(by_alias=True)
-        d["_id"] = str(doc.id)
-        return d
+
+class FaqCandidateRepository(BeanieRepository[FaqCandidateDocument]):
+    """Repository-specific queries for FAQ candidate documents."""
+
+    document_class = FaqCandidateDocument
+
+    async def list_candidates(
+        self,
+        status: Optional[str] = None,
+        search_text: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> Tuple[List[FaqCandidateDocument], int]:
+        expressions = []
+        if status:
+            expressions.append(FaqCandidateDocument.status == status)
+
+        query = FaqCandidateDocument.find(*expressions)
+        if search_text:
+            query = query.find({"$text": {"$search": search_text}}).sort(
+                [("score", {"$meta": "textScore"})]
+            )
+        else:
+            query = query.sort("-created_at")
+
+        total = await query.count()
+        items = await query.skip(skip).limit(limit).to_list()
+        return items, total
 
     async def find_by_status(
         self,
         status: Optional[str] = None,
         skip: int = 0,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        query = {}
-        if status:
-            query["status"] = status
-            
-        docs = await FaqCandidateDocument.find(
-            query,
-            skip=skip,
-            limit=limit,
-            sort=[("created_at", 1)]
-        ).to_list()
-        return [self._serialize_doc(d) for d in docs]
+        limit: int = 100,
+    ) -> List[FaqCandidateDocument]:
+        items, _ = await self.list_candidates(status=status, skip=skip, limit=limit)
+        return items

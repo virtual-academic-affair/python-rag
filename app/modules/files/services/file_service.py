@@ -1,12 +1,10 @@
-import io
 import logging
-import mimetypes
 from pathlib import Path
-from typing import Optional, BinaryIO, List, Tuple, Dict, Any, Literal
-from bson import ObjectId
+from typing import Optional, BinaryIO, Dict, Any, Literal
 
-from app.core.config import settings
 from app.core.exceptions import (
+    AppException,
+    ExternalServiceException,
     NotFoundException,
     StorageException,
     ValidationException,
@@ -48,11 +46,10 @@ class FileService(FileUploadMixin):
     async def download_file(
         self, 
         file_id: str, 
-        user_role: Optional[str] = None,
         file_format: Literal["original", "markdown"] = "original"
     ) -> tuple[BinaryIO, str, str]:
         """Download a file from Cloudflare R2."""
-        file_doc = await self.get_file_by_id(file_id, user_role=user_role)
+        file_doc = await self.get_file_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
@@ -75,40 +72,34 @@ class FileService(FileUploadMixin):
             raise StorageException(f"File download failed: {str(e)}")
 
     async def delete_file(self, file_id: str) -> bool:
-        """Delete file from storage, vector DB, and database (Beanie hard delete)."""
-        file_doc = await FileDocument.get(file_id)
+        """Delete file from indexes, storage, and database (Beanie hard delete)."""
+        file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        # Delete original from Cloudflare R2
+        indexer = get_qdrant_indexer()
+        await indexer.delete_by_file_id(file_id)
+
+        toc_repo = FileTocTreeRepository()
+        await toc_repo.delete_by_file_id(file_id)
+
+        from app.integrations.pageindex.client import get_page_index_client
+        page_index_client = get_page_index_client()
+        await page_index_client.evict_doc(file_id)
+
         if file_doc.storage_path:
             try:
                 await r2_storage.delete_file(file_doc.storage_path)
             except Exception as e:
                 logger.warning(f"Failed to delete from Cloudflare R2: {e}")
 
-        # Delete markdown from Cloudflare R2
         if file_doc.markdown_storage_path:
             try:
                 await r2_storage.delete_file(file_doc.markdown_storage_path)
             except Exception as e:
                 logger.warning(f"Failed to delete markdown artifact from Cloudflare R2: {e}")
 
-        # Delete from Qdrant
-        indexer = get_qdrant_indexer()
-        await indexer.delete_by_file_id(file_id)
-
-        # Delete from file_toc_trees
-        toc_repo = FileTocTreeRepository()
-        await toc_repo.delete_by_file_id(file_id)
-
-        # Evict page index cache
-        from app.integrations.pageindex.client import get_page_index_client
-        page_index_client = get_page_index_client()
-        await page_index_client.evict_doc(file_id)
-
-        # Hard delete from MongoDB
-        await file_doc.delete()
+        await self.file_repo.delete(file_doc)
         logger.info(f"File {file_id} deleted from MongoDB")
         return True
 
@@ -119,83 +110,65 @@ class FileService(FileUploadMixin):
         custom_metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[FileDocument]:
         """Update file details (display name and/or metadata) and syncs to Qdrant."""
-        file_doc = await FileDocument.get(file_id)
+        file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        display_name_changed = False
-        metadata_changed = False
+        old_display_name = file_doc.display_name
+        old_metadata = file_doc.custom_metadata
+        new_display_name = file_doc.display_name
+        new_metadata = file_doc.custom_metadata
 
         if display_name is not None:
-            file_doc.display_name = display_name
-            file_doc.display_name_unaccented = remove_accents(display_name)
-            display_name_changed = True
+            new_display_name = display_name
 
         if custom_metadata is not None:
-            # Validate partial update request DTO
             validator = get_metadata_service()
-            is_valid, errors, update_schema = validator.validate_and_parse_file_metadata_update(custom_metadata)
-            if not is_valid:
-                raise ValidationException(f"Invalid custom metadata: {', '.join(errors)}")
-
-            # Deep merge incoming metadata into existing metadata state
-            existing_meta = file_doc.custom_metadata.model_dump() if file_doc.custom_metadata else {}
-            
-            merged_meta = {}
-            if existing_meta.get("enrollment_year"):
-                merged_meta["enrollment_year"] = dict(existing_meta["enrollment_year"])
-            if existing_meta.get("academic_year"):
-                merged_meta["academic_year"] = dict(existing_meta["academic_year"])
-            if existing_meta.get("type"):
-                merged_meta["type"] = existing_meta["type"]
-
-            update_dict = update_schema.model_dump(exclude_unset=True, by_alias=False) if update_schema else {}
-
-            if "type" in update_dict:
-                merged_meta["type"] = update_dict["type"]
-
-            if "enrollment_year" in update_dict:
-                inc_ey = update_dict["enrollment_year"] or {}
-                exist_ey = merged_meta.get("enrollment_year") or {}
-                merged_meta["enrollment_year"] = {
-                    "from_year": inc_ey.get("from_year") if inc_ey.get("from_year") is not None else exist_ey.get("from_year", 0),
-                    "to_year": inc_ey.get("to_year") if inc_ey.get("to_year") is not None else exist_ey.get("to_year", 9999),
-                }
-
-            if "academic_year" in update_dict:
-                inc_ay = update_dict["academic_year"] or {}
-                exist_ay = merged_meta.get("academic_year") or {}
-                merged_meta["academic_year"] = {
-                    "from_year": inc_ay.get("from_year") if inc_ay.get("from_year") is not None else exist_ay.get("from_year", 0),
-                    "to_year": inc_ay.get("to_year") if inc_ay.get("to_year") is not None else exist_ay.get("to_year", 9999),
-                }
-
-            # Validate the final merged metadata state
-            clean_merged = {k: v for k, v in merged_meta.items() if v is not None and v != {}}
-            is_valid, errors, meta_model = validator.validate_and_parse_file_metadata(clean_merged)
+            is_valid, errors, meta_model = validator.merge_file_metadata_update(
+                existing=old_metadata,
+                incoming_update=custom_metadata,
+            )
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
-            
-            file_doc.custom_metadata = meta_model
-            metadata_changed = True
+
+            new_metadata = meta_model
+
+        display_name_changed = new_display_name != old_display_name
+        metadata_changed = new_metadata != old_metadata
 
         if display_name_changed or metadata_changed:
-            await file_doc.save()
-
-            # Sync update to Qdrant
+            indexer = get_qdrant_indexer()
+            new_metadata_payload = new_metadata.model_dump(mode="json") if metadata_changed and new_metadata else None
+            new_qdrant_name = new_display_name if display_name_changed else None
             try:
-                indexer = get_qdrant_indexer()
-                qdrant_metadata = file_doc.custom_metadata.to_qdrant_payload() if file_doc.custom_metadata else None
-                qdrant_filename = file_doc.display_name if display_name_changed else None
-                
                 await indexer.update_payload_by_file_id(
                     file_id=file_id,
-                    new_metadata=qdrant_metadata,
-                    file_name=qdrant_filename
+                    new_metadata=new_metadata_payload,
+                    file_name=new_qdrant_name
                 )
                 logger.info(f"[FileService] Synced update to Qdrant for file {file_id}")
             except Exception as e:
-                logger.warning(f"[FileService] Failed to sync update to Qdrant for file {file_id}: {e}")
+                logger.error(f"[FileService] Failed to sync update to Qdrant for file {file_id}: {e}", exc_info=True)
+                raise ExternalServiceException(
+                    f"Failed to sync file update to vector index: {str(e)}"
+                ) from e
+
+            file_doc.display_name = new_display_name
+            file_doc.display_name_unaccented = remove_accents(new_display_name)
+            file_doc.custom_metadata = new_metadata
+
+            try:
+                await self.file_repo.save(file_doc)
+            except Exception as e:
+                try:
+                    await indexer.update_payload_by_file_id(
+                        file_id=file_id,
+                        new_metadata=old_metadata.model_dump(mode="json") if metadata_changed and old_metadata else None,
+                        file_name=old_display_name if display_name_changed else None
+                    )
+                except Exception as rollback_error:
+                    logger.warning(f"[FileService] Failed to rollback Qdrant update for file {file_id}: {rollback_error}")
+                raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
             return file_doc
             
@@ -206,11 +179,10 @@ class FileService(FileUploadMixin):
         status: Optional[FileStatus] = None,
         custom_metadata_filter: Optional[Dict[str, Any]] = None,
         keywords: Optional[str] = None,
-        user_role: str = "student",
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[FileDocument], int]:
-        """List files with optional filters and role-based access control."""
+        """List files with optional status, keyword, and metadata filters."""
         filters = {}
         if status:
             filters["status"] = status
@@ -226,7 +198,6 @@ class FileService(FileUploadMixin):
         mongo_filter = await builder.build_mongo_filter(
             metadata_filter=custom_metadata_filter or {},
             mongo_prefix="custom_metadata",
-            user_role=user_role,
             skip_validation=True
         )
         
@@ -236,22 +207,15 @@ class FileService(FileUploadMixin):
             if keyword_or:
                 filters["$and"] = filters.get("$and", []) + [{"$or": keyword_or}]
 
-        # Run query through Beanie Find
-        query = FileDocument.find(filters)
-        total = await query.count()
-        files = await query.sort("-created_at").skip(skip).limit(limit).to_list()
-        return files, total
+        return await self.file_repo.list_files(filters=filters, skip=skip, limit=limit)
 
-    async def get_file_by_id(self, file_id: str, user_role: Optional[str] = None) -> Optional[FileDocument]:
+    async def get_file_by_id(self, file_id: str) -> Optional[FileDocument]:
         """Get a single file by ID."""
-        try:
-            return await FileDocument.get(file_id)
-        except Exception:
-            return None
+        return await self.file_repo.find_by_id(file_id)
 
-    async def get_file_data(self, file_id: str, user_role: str = "student") -> tuple[Any, FileDocument]:
+    async def get_file_data(self, file_id: str) -> tuple[Any, FileDocument]:
         """Get file bytes and document for download."""
-        file_doc = await FileDocument.get(file_id)
+        file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 

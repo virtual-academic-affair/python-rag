@@ -24,18 +24,31 @@ from app.modules.files.services.file_service import get_file_service
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.files.utils.notifier import get_file_status_notifier
 from app.modules.files.utils.file_helpers import get_download_url
-from app.core.exceptions import (
-    NotFoundException,
-    StorageException,
-    ConflictException,
-    ValidationException,
-)
+from app.core.exceptions import AppException, NotFoundException
 from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.files.models.file import FileStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["Files"])
+
+
+def _to_file_detail_response(file_doc) -> FileDetailResponse:
+    return FileDetailResponse(
+        file_id=str(file_doc.id),
+        original_filename=file_doc.original_filename,
+        display_name=file_doc.display_name,
+        file_size=file_doc.file_size,
+        mime_type=file_doc.mime_type,
+        storage_path=file_doc.storage_path,
+        status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+        custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
+        file_url=get_download_url(file_doc.storage_path),
+        markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
+        table_of_contents=file_doc.table_of_contents,
+        created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
+        updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
+    )
 
 async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any], progress_cb=None):
     file_svc = get_file_service()
@@ -116,23 +129,10 @@ async def upload_file(
             message="File uploaded to storage. Background processing started.",
         )
 
-    except ValidationException as e:
-        logger.warning(f"Validation failed: {e}")
+    except AppException:
         if temp_file_path and os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    except ConflictException as e:
-        logger.warning(f"Duplicate file: {e}")
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-
-    except StorageException as e:
-        logger.error(f"File upload failed: {e}", exc_info=True)
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"File upload failed: {str(e)}")
+        raise
 
     except Exception as e:
         logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
@@ -180,35 +180,19 @@ async def list_files(
             status=status_enum,
             custom_metadata_filter=custom_metadata_filter,
             keywords=keywords,
-            user_role=_user.get("role", "student"),
             skip=skip,
             limit=limit,
         )
 
         return FileListResponse(
-            files=[
-                FileDetailResponse(
-                    file_id=str(f.id),
-                    original_filename=f.original_filename,
-                    display_name=f.display_name,
-                    file_size=f.file_size,
-                    mime_type=f.mime_type,
-                    storage_path=f.storage_path,
-                    status=f.status.value if hasattr(f.status, "value") else str(f.status),
-                    custom_metadata=FileMetadataResponse.from_model(f.custom_metadata) if f.custom_metadata else None,
-                    file_url=get_download_url(f.storage_path),
-                    markdown_file_url=get_download_url(f.markdown_storage_path) if f.markdown_storage_path else None,
-                    table_of_contents=f.table_of_contents,
-                    created_at=f.created_at.isoformat() if f.created_at else "",
-                    updated_at=f.updated_at.isoformat() if f.updated_at else "",
-                )
-                for f in files
-            ],
+            files=[_to_file_detail_response(f) for f in files],
             total=total,
             page=page,
             limit=limit,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing files: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list files: {str(e)}")
@@ -324,26 +308,14 @@ async def batch_upload_files(
 async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
     try:
         file_svc = get_file_service()
-        file_doc = await file_svc.get_file_by_id(file_id, user_role=_user.get("role", "student"))
+        file_doc = await file_svc.get_file_by_id(file_id)
         if not file_doc:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise NotFoundException("File", file_id)
 
-        return FileDetailResponse(
-            file_id=str(file_doc.id),
-            original_filename=file_doc.original_filename,
-            display_name=file_doc.display_name,
-            file_size=file_doc.file_size,
-            mime_type=file_doc.mime_type,
-            storage_path=file_doc.storage_path,
-            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
-            file_url=get_download_url(file_doc.storage_path),
-            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
-            table_of_contents=file_doc.table_of_contents,
-            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
-            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
-        )
+        return _to_file_detail_response(file_doc)
     except HTTPException:
+        raise
+    except AppException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -370,7 +342,6 @@ async def download_file_endpoint(
         file_svc = get_file_service()
         file_obj, filename, mime_type = await file_svc.download_file(
             file_id,
-            user_role=_user.get("role", "student"),
             file_format=requested_format,
         )
         encoded_filename = urllib.parse.quote(filename)
@@ -380,9 +351,9 @@ async def download_file_endpoint(
             media_type=mime_type,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
         )
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
+        raise
+    except AppException:
         raise
     except Exception as e:
         logger.error(f"Error downloading file {file_id}: {e}", exc_info=True)
@@ -406,26 +377,12 @@ async def update_file(
             custom_metadata=request.custom_metadata
         )
         if not file_doc:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise NotFoundException("File", file_id)
 
-        return FileDetailResponse(
-            file_id=str(file_doc.id),
-            original_filename=file_doc.original_filename,
-            display_name=file_doc.display_name,
-            file_size=file_doc.file_size,
-            mime_type=file_doc.mime_type,
-            storage_path=file_doc.storage_path,
-            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
-            file_url=get_download_url(file_doc.storage_path),
-            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
-            table_of_contents=file_doc.table_of_contents,
-            created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
-            updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
-        )
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return _to_file_detail_response(file_doc)
     except HTTPException:
+        raise
+    except AppException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -440,7 +397,7 @@ async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_adm
         file_svc = get_file_service()
         await file_svc.delete_file(file_id)
         return
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except AppException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -14,7 +14,10 @@ from app.integrations.llm.gemini import build_extraction_llm, chain_prompt
 from app.utils.text_utils import remove_accents
 from app.utils.json_utils import parse_json_safely
 from app.modules.metadata.services.metadata_service import get_metadata_service
-from app.modules.metadata.models.value_objects import YEAR_MIN, YEAR_MAX
+from app.modules.metadata.models.value_objects import FaqMetadata, YEAR_MIN, YEAR_MAX
+from app.modules.faq.models.faq import FaqDocument
+from app.modules.faq.models.faq_candidate import FaqCandidateDocument
+from app.modules.faq.models.interaction_log import InteractionLogDocument
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,11 @@ class FaqSynthesisService:
             return 0.0
         return float(dot_product / (norm1 * norm2))
 
-    def _greedy_clustering(self, logs: List[Dict[str, Any]], threshold: float = 0.85) -> List[List[Dict[str, Any]]]:
+    def _greedy_clustering(
+        self,
+        logs: List[InteractionLogDocument],
+        threshold: float = 0.85,
+    ) -> List[List[InteractionLogDocument]]:
         """
         Group logs into clusters using greedy cosine similarity.
         Assumes vectors are already available in the logs.
@@ -75,7 +82,7 @@ class FaqSynthesisService:
             # Pop the first unassigned log as the seed for a new cluster
             seed = unassigned.pop(0)
             current_cluster = [seed]
-            seed_vector = seed.get("question_vector")
+            seed_vector = seed.question_vector
             
             if not seed_vector:
                 # If no vector, it stays in its own cluster of size 1
@@ -84,7 +91,7 @@ class FaqSynthesisService:
 
             next_unassigned = []
             for candidate in unassigned:
-                candidate_vector = candidate.get("question_vector")
+                candidate_vector = candidate.question_vector
                 
                 if not candidate_vector:
                     next_unassigned.append(candidate)
@@ -101,11 +108,11 @@ class FaqSynthesisService:
 
         return clusters
 
-    def _group_by_metadata(self, logs: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    def _group_by_metadata(self, logs: List[InteractionLogDocument]) -> Dict[str, List[InteractionLogDocument]]:
         """Group logs by their metadata footprint and source type."""
         groups = {}
         for log in logs:
-            meta = log.get("metadata_filter", {})
+            meta = log.metadata_filter.model_dump() if log.metadata_filter else {}
             _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(meta)
             
             if meta_model:
@@ -115,7 +122,7 @@ class FaqSynthesisService:
                 ay = f"{YEAR_MIN}-{YEAR_MAX}"
                 ey = f"{YEAR_MIN}-{YEAR_MAX}"
                 
-            source = log.get("source_type", "unknown")
+            source = log.source_type or "unknown"
             
             key = f"{source}|ay:{ay}|ey:{ey}"
             if key not in groups:
@@ -124,9 +131,14 @@ class FaqSynthesisService:
             
         return groups
 
-    async def _synthesize_cluster(self, cluster: List[Dict[str, Any]], batch_id: str, recent_faqs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    async def _synthesize_cluster(
+        self,
+        cluster: List[InteractionLogDocument],
+        batch_id: str,
+        recent_faqs: List[FaqDocument],
+    ) -> Optional[FaqCandidateDocument]:
         """Call LLM to synthesize a candidate from a cluster."""
-        source_type = cluster[0].get("source_type", "mixed")
+        source_type = cluster[0].source_type or "mixed"
         
         # Prepare context for LLM
         # Limit to top 10 diverse examples to save context window
@@ -134,9 +146,9 @@ class FaqSynthesisService:
         cluster_text = ""
         for idx, log in enumerate(sample_logs):
             cluster_text += f"--- Example {idx+1} ---\n"
-            cluster_text += f"Q: {log.get('question')}\n"
-            cluster_text += f"A: {log.get('answer_markdown')}\n"
-            meta = log.get("metadata_filter", {})
+            cluster_text += f"Q: {log.question}\n"
+            cluster_text += f"A: {log.answer_markdown}\n"
+            meta = log.metadata_filter.model_dump() if log.metadata_filter else {}
             if meta:
                 cluster_text += f"Meta: {meta}\n"
             cluster_text += "\n"
@@ -144,7 +156,7 @@ class FaqSynthesisService:
         recent_faqs_text = ""
         if recent_faqs:
             for idx, faq in enumerate(recent_faqs):
-                recent_faqs_text += f"FAQ {idx+1}:\nQ: {faq.get('question')}\nA: {faq.get('answer_markdown')}\n\n"
+                recent_faqs_text += f"FAQ {idx+1}:\nQ: {faq.question}\nA: {faq.answer_markdown}\n\n"
         else:
             recent_faqs_text = "Chưa có FAQ nào trong hệ thống.\n\n"
 
@@ -162,21 +174,24 @@ class FaqSynthesisService:
                 
             now = datetime.now(timezone.utc)
             answer_draft_md = result["answer_draft"]
-            candidate = {
-                "question": result["question"],
-                "question_unaccented": remove_accents(result["question"]),
-                "answer_draft_markdown": answer_draft_md,
-                "answer_draft_rich_text": markdown_to_rich_text(answer_draft_md),
-                "answer_draft_unaccented": remove_accents(answer_draft_md),
-                "metadata_filter_suggestion": result.get("metadata_filter_suggestion", {}),
-                "source_type": source_type,
-                "source_log_ids": [str(log.get("_id")) for log in cluster],
-                "similar_count": len(cluster),
-                "status": "pending",
-                "synthesis_batch_id": batch_id,
-                "created_at": now,
-                "updated_at": now
-            }
+            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(
+                result.get("metadata_filter_suggestion", {}) or {}
+            )
+            candidate = FaqCandidateDocument(
+                question=result["question"],
+                question_unaccented=remove_accents(result["question"]),
+                answer_draft_markdown=answer_draft_md,
+                answer_draft_rich_text=markdown_to_rich_text(answer_draft_md),
+                answer_draft_unaccented=remove_accents(answer_draft_md),
+                metadata_filter_suggestion=meta_model or FaqMetadata(),
+                source_type=source_type,
+                source_log_ids=[str(log.id) for log in cluster],
+                similar_count=len(cluster),
+                status="pending",
+                synthesis_batch_id=batch_id,
+                created_at=now,
+                updated_at=now,
+            )
             return candidate
             
         except Exception as e:
@@ -214,7 +229,7 @@ class FaqSynthesisService:
         from app.modules.faq.services.faq_service import get_faq_service
         faq_svc = await get_faq_service()
         recent_faqs_res = await faq_svc.list_faqs(is_active=True, limit=5)
-        recent_faqs = recent_faqs_res.get("items", [])
+        recent_faqs = recent_faqs_res.items
 
         # 2. Group by Metadata & Source
         groups = self._group_by_metadata(logs)
@@ -251,7 +266,7 @@ class FaqSynthesisService:
                     if candidate_doc:
                         await self._candidate_repo.create(candidate_doc)
                         candidates_created += 1
-                        logger.info(f"Successfully created FAQ Candidate: '{candidate_doc['question']}'")
+                        logger.info(f"Successfully created FAQ Candidate: '{candidate_doc.question}'")
                     else:
                         failed_clusters += 1
                         logger.warning(f"Failed to synthesize cluster {c_idx+1} of bucket '{group_key}'.")

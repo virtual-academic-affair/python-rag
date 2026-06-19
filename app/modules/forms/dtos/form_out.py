@@ -1,4 +1,4 @@
-from typing import Optional, Union, Any
+from typing import Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.forms.models.form import FormDocument
@@ -12,16 +12,7 @@ class FormResponse(BaseSchema):
     updated_at: str
 
     @classmethod
-    def from_mongo(cls, doc: Union[dict, FormDocument, Any]) -> 'FormResponse':
-        if isinstance(doc, dict):
-            return cls(
-                id=str(doc.get("_id", doc.get("id"))),
-                document_type=doc.get("documentType", ""),
-                content_link=doc.get("contentLink", ""),
-                notes=doc.get("notes"),
-                created_at=doc.get("createdAt").isoformat() if doc.get("createdAt") else "",
-                updated_at=doc.get("updatedAt").isoformat() if doc.get("updatedAt") else ""
-            )
+    def from_document(cls, doc: FormDocument) -> 'FormResponse':
         return cls(
             id=str(doc.id),
             document_type=doc.documentType,

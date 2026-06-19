@@ -32,7 +32,7 @@ from app.modules.chat.services.chat_stream_service import get_chat_stream_servic
 from app.modules.chat.repositories.chat_history_repository import get_chat_history_repository
 from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
 from app.core.config import settings
-from app.core.exceptions import handle_google_api_error
+from app.core.exceptions import AppException, NotFoundException, ValidationException, handle_google_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def chat_query(
             limit=6,
         )
         chat_history = [
-            ChatHistoryItem(role=m["role"], content=m["content"])
+            ChatHistoryItem(role=m.role, content=m.content)
             for m in raw_history
         ]
 
@@ -122,6 +122,8 @@ async def chat_query(
         )
     except APIError as e:
         raise handle_google_api_error(e)
+    except AppException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -160,7 +162,7 @@ async def chat_stream(
             limit=6,
         )
         chat_history = [
-            ChatHistoryItem(role=m["role"], content=m["content"])
+            ChatHistoryItem(role=m.role, content=m.content)
             for m in raw_history
         ]
 
@@ -283,6 +285,8 @@ async def chat_stream(
         )
     except APIError as e:
         raise handle_google_api_error(e)
+    except AppException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -316,10 +320,7 @@ async def list_chat_sessions(
         repo.SESSION_STATUS_ARCHIVED,
     }
     if normalized_status_filter not in valid_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid status_filter. Allowed values: active, archived",
-        )
+        raise ValidationException("Invalid statusFilter. Allowed values: active, archived")
 
     sessions, total = await repo.list_sessions_by_user(
         user_id=user_id,
@@ -330,13 +331,13 @@ async def list_chat_sessions(
 
     items = [
         ChatSessionItem(
-            session_id=s.get("session_id", ""),
-            title=s.get("title"),
-            status=s.get("status", "active"),
-            message_count=int(s.get("message_count", 0)),
-            last_message_at=to_iso_str(s.get("last_message_at")),
-            created_at=to_iso_str(s.get("created_at")),
-            updated_at=to_iso_str(s.get("updated_at")),
+            session_id=s.session_id,
+            title=s.title,
+            status=s.status,
+            message_count=int(s.message_count or 0),
+            last_message_at=to_iso_str(s.last_message_at),
+            created_at=to_iso_str(s.created_at),
+            updated_at=to_iso_str(s.updated_at),
         )
         for s in sessions
     ]
@@ -370,15 +371,15 @@ async def list_chat_messages(
 
     items = [
         ChatMessageItem(
-            role=m.get("role", "assistant"),
-            content=m.get("content", ""),
-            sequence=int(m.get("sequence", 0)),
-            message_type=m.get("message_type", "text"),
-            token_usage=m.get("token_usage"),
-            sources=m.get("sources"),
-            steps=m.get("steps") or None,
-            processing_time_ms=m.get("processing_time_ms"),
-            created_at=to_iso_str(m.get("created_at")),
+            role=m.role,
+            content=m.content,
+            sequence=int(m.sequence or 0),
+            message_type=m.message_type,
+            token_usage=m.token_usage,
+            sources=m.sources,
+            steps=m.steps or None,
+            processing_time_ms=m.processing_time_ms,
+            created_at=to_iso_str(m.created_at),
         )
         for m in messages
     ]
@@ -406,7 +407,7 @@ async def rename_chat_session(
     user_id = str(user.get("sub", ""))
     updated = await repo.rename_session(session_id=session_id, user_id=user_id, title=request.title)
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise NotFoundException("Session", session_id)
     return ChatSessionMutationResponse(session_id=session_id, success=True)
 
 
@@ -423,7 +424,7 @@ async def archive_chat_session(
     user_id = str(user.get("sub", ""))
     updated = await repo.archive_session(session_id=session_id, user_id=user_id)
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise NotFoundException("Session", session_id)
     return ChatSessionMutationResponse(session_id=session_id, success=True)
 
 
@@ -440,7 +441,7 @@ async def unarchive_chat_session(
     user_id = str(user.get("sub", ""))
     updated = await repo.unarchive_session(session_id=session_id, user_id=user_id)
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise NotFoundException("Session", session_id)
     return ChatSessionMutationResponse(session_id=session_id, success=True)
 
 
@@ -457,7 +458,7 @@ async def delete_chat_session(
     user_id = str(user.get("sub", ""))
     deleted = await repo.delete_session(session_id=session_id, user_id=user_id)
     if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise NotFoundException("Session", session_id)
     return ChatSessionMutationResponse(session_id=session_id, success=True)
 
 
@@ -473,15 +474,12 @@ async def chat_retrieve_preview(
 ):
     """Preview semantic retrieval result list for relevance tuning."""
     try:
-        user_role = user.get("role", "student")
-
         retrieval = get_retrieval_service()
 
         meta_dict = request.metadata_filter.model_dump() if request.metadata_filter else {}
 
         qdrant_meta_filter = await retrieval._filter_builder.build_qdrant_filter(
-            metadata_filter=meta_dict,
-            user_role=user_role
+            metadata_filter=meta_dict
         )
 
         chunks = await retrieval._qdrant.retrieve(
@@ -523,6 +521,8 @@ async def chat_retrieve_preview(
         )
     except APIError as e:
         raise handle_google_api_error(e, prefix="Failed to preview Qdrant retrieval: ")
+    except AppException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

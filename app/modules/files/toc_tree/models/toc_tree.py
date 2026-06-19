@@ -17,6 +17,7 @@ class FileTocTree(BaseDocument):
     doc_description: str
     line_count: int
     structure: List[Dict[str, Any]]  # Raw tree from PageIndex
+    markdown_storage_path: Optional[str] = None
 
     class Settings:
         name = "file_toc_trees"

@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any
 import logging
 
 from app.core.exceptions import NotFoundException
+from app.modules.files.toc_tree.models.toc_tree import FileTocTree
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ class TocTreeService:
     def __init__(self):
         self._repo = FileTocTreeRepository()
 
-    async def get_toc_tree(self, file_id: str) -> Optional[Dict[str, Any]]:
+    async def get_toc_tree(self, file_id: str) -> FileTocTree:
         """Retrieve the Table of Contents tree for a given file_id."""
         logger.info(f"Retrieving TOC tree for file: {file_id}")
         toc_data = await self._repo.find_by_file_id(file_id)

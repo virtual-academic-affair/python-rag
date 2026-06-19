@@ -1,4 +1,4 @@
-from beanie import Document, before_event, Replace, Update, SaveChanges
+from beanie import Document, before_event, Replace, Save, SaveChanges, Update
 from datetime import datetime, timezone
 from pydantic import Field
 
@@ -10,7 +10,7 @@ class BaseDocument(Document):
         default_factory=lambda: datetime.now(timezone.utc)
     )
 
-    @before_event([Replace, Update, SaveChanges])
+    @before_event([Replace, Save, SaveChanges, Update])
     def touch_updated_at(self):
         self.updated_at = datetime.now(timezone.utc)
 

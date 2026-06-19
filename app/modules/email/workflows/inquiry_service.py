@@ -140,8 +140,7 @@ class InquiryService:
             # Retrieval Step
             candidate_files = await self._retrieval.retrieve_candidate_files(
                 query=rag_query,
-                metadata_filter=metadata_filter,
-                user_role=user_role
+                metadata_filter=metadata_filter
             )
             logger.info(f"[Inquiry] Document retrieval found {len(candidate_files)} candidate files.")
             
