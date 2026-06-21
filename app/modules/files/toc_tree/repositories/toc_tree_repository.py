@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from app.core.base_beanie_repository import BeanieRepository
+from app.modules.files.toc_tree.models.toc_tree import FileTocTree
+
+
+class FileTocTreeRepository(BeanieRepository[FileTocTree]):
+    """Repository-specific queries for file TOC tree documents."""
+
+    document_class = FileTocTree
+
+    async def find_by_file_id(self, file_id: str) -> Optional[FileTocTree]:
+        return await FileTocTree.find_one(FileTocTree.file_id == file_id)
+
+    async def find_by_file_ids(self, file_ids: list[str]) -> List[FileTocTree]:
+        if not file_ids:
+            return []
+        return await FileTocTree.find({"file_id": {"$in": file_ids}}).limit(len(file_ids)).to_list()
+
+    async def upsert_by_file_id(self, file_id: str, data: Dict[str, Any]) -> bool:
+        existing = await self.find_by_file_id(file_id)
+        if existing:
+            for key, value in data.items():
+                setattr(existing, key, value)
+            await self.save(existing)
+            return True
+
+        doc = FileTocTree(file_id=file_id, **data)
+        await self.create(doc)
+        return True
+
+    async def delete_by_file_id(self, file_id: str) -> bool:
+        doc = await self.find_by_file_id(file_id)
+        if not doc:
+            return False
+        await self.delete(doc)
+        return True

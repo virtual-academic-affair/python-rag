@@ -1,0 +1,20 @@
+from app.modules.metadata.dtos.update_metadata import (
+    YearRangeSchema, FileMetadataSchema, FileMetadataUpdateSchema,
+    FaqMetadataSchema, FaqMetadataCreateSchema, UnifiedFilterSchema
+)
+from app.modules.metadata.dtos.metadata_out import (
+    YearRangeResponse, FileMetadataResponse, FaqMetadataResponse, MetadataSchemaResponse
+)
+
+__all__ = [
+    "YearRangeSchema",
+    "FileMetadataSchema",
+    "FileMetadataUpdateSchema",
+    "FaqMetadataSchema",
+    "FaqMetadataCreateSchema",
+    "UnifiedFilterSchema",
+    "YearRangeResponse",
+    "FileMetadataResponse",
+    "FaqMetadataResponse",
+    "MetadataSchemaResponse",
+]

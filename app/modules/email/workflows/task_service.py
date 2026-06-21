@@ -13,7 +13,7 @@ from app.integrations.llm.gemini import (
 )
 from app.utils.retry import async_retry
 from app.integrations.grpc.client import get_grpc_client
-from app.modules.email.schemas import TaskPayload
+from app.modules.email.models.email_types import TaskPayload
 from app.utils.json_utils import parse_json_safely
 
 logger = logging.getLogger(__name__)

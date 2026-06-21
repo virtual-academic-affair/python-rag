@@ -13,7 +13,7 @@ from app.core.config import settings
 from google import genai
 from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from google.genai import types
-from app.modules.metadata.models import FileMetadata
+from app.modules.metadata.models.value_objects import FileMetadata
 
 logger = logging.getLogger(__name__)
 

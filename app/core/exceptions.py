@@ -3,7 +3,7 @@ Custom exceptions for the application.
 Unified exception hierarchy for classification and RAG features.
 """
 
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from fastapi import HTTPException
 from google.genai.errors import APIError
 
@@ -15,7 +15,7 @@ class AppException(Exception):
         self,
         message: str,
         status_code: int = 500,
-        details: Optional[Any] = None
+        details: Optional[Dict[str, Any]] = None
     ):
         self.message = message
         self.status_code = status_code
@@ -35,11 +35,6 @@ class NotFoundException(AppException):
         super().__init__(message, status_code=404)
 
 
-# Aliases for backward compatibility
-DocumentNotFoundException = NotFoundException
-FileNotFoundException = NotFoundException
-StoreNotFoundException = NotFoundException
-FileNotFoundInStorageException = NotFoundException
 
 
 # ====================================
@@ -52,8 +47,6 @@ class ConflictException(AppException):
         super().__init__(message, status_code=409)
 
 
-# Aliases
-DuplicateDocumentException = ConflictException
 
 
 class DefaultStoreException(ConflictException):
@@ -68,7 +61,7 @@ class DefaultStoreException(ConflictException):
 
 class ForbiddenException(AppException):
     """Action forbidden (insufficient permissions, protected resource, etc.)."""
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=403, details=details)
 
 
@@ -78,7 +71,7 @@ class ForbiddenException(AppException):
 
 class ValidationException(AppException):
     """Validation failed."""
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=400, details=details)
 
 
@@ -100,7 +93,7 @@ class FileTypeException(ValidationException):
 
 class StorageException(AppException):
     """Storage (R2) operation failed."""
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=500, details=details)
 
 
@@ -116,19 +109,19 @@ class FileDownloadException(StorageException):
 
 class GeminiException(AppException):
     """Gemini API operation failed."""
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=502, details=details)
 
 
 class RabbitMQException(AppException):
     """RabbitMQ operation failed."""
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=500, details=details)
 
 
 class ExternalServiceException(AppException):
     """External service (API) failed."""
-    def __init__(self, message: str, status_code: int = 502, details: Optional[Any] = None):
+    def __init__(self, message: str, status_code: int = 502, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, status_code=status_code, details=details)
 
 
@@ -137,8 +130,6 @@ class GrpcServerException(ExternalServiceException):
     pass
 
 
-# Legacy aliases for backward compatibility
-DatabaseException = AppException
 
 
 def handle_google_api_error(e: APIError, prefix: str = "") -> HTTPException:

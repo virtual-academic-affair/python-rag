@@ -60,63 +60,6 @@ class Database:
             await cls._client.admin.command('ping')
 
             logger.info("✅ MongoDB connected successfully")
-
-            # Ensure indexes
-            file_toc_trees = cls._db[cls.FILE_TOC_TREES]
-            await file_toc_trees.create_index([("file_id", ASCENDING)], name="idx_file_toc_trees_file_id", unique=True)
-
-            files_col = cls._db[cls.FILES]
-
-            indexes_to_create = [
-                ([("display_name_unaccented", ASCENDING)], "idx_files_display_name"),
-                ([("status", ASCENDING)], "status_1"),
-            ]
-
-            for keys, name in indexes_to_create:
-                try:
-                    await files_col.create_index(keys, name=name)
-                except Exception as e:
-                    # Ignore index name conflict if it already exists, log others
-                    if getattr(e, 'code', None) == 85:
-                        pass
-                    else:
-                        logger.warning(f"⚠️ Could not create index {name}: {e}")
-
-            # Ensure FAQ indexes
-            interaction_col = cls._db[cls.INTERACTION_LOGS]
-            await interaction_col.create_index(
-                [("expires_at", ASCENDING)],
-                expireAfterSeconds=0,
-                name="idx_interaction_logs_ttl"
-            )
-            await interaction_col.create_index(
-                [("question_unaccented", ASCENDING), ("expires_at", ASCENDING)],
-                name="idx_interaction_logs_dedup"
-            )
-            await interaction_col.create_index(
-                [("source_type", ASCENDING), ("expires_at", ASCENDING)],
-                name="idx_interaction_logs_source"
-            )
-
-            faqs_col = cls._db[cls.FAQS]
-            await faqs_col.create_index([("is_active", ASCENDING), ("sort_order", ASCENDING)], name="idx_faqs_active")
-            await faqs_col.create_index([("question_unaccented", "text"), ("answer_unaccented", "text")], name="idx_faqs_text")
-
-            cands_col = cls._db[cls.FAQ_CANDIDATES]
-            await cands_col.create_index([("status", ASCENDING), ("created_at", ASCENDING)], name="idx_faq_cands_status")
-
-            # Ensure Chat history indexes
-            sessions_col = cls._db[cls.CHAT_SESSIONS]
-            await sessions_col.create_index([("session_id", ASCENDING)], name="idx_chat_sessions_session_id", unique=True)
-            await sessions_col.create_index([("user_id", ASCENDING), ("last_message_at", DESCENDING)], name="idx_chat_sessions_user_last_message")
-            await sessions_col.create_index([("user_id", ASCENDING), ("status", ASCENDING), ("updated_at", DESCENDING)], name="idx_chat_sessions_user_status_updated")
-
-            messages_col = cls._db[cls.CHAT_MESSAGES]
-            await messages_col.create_index([("session_id", ASCENDING), ("sequence", ASCENDING)], name="idx_chat_messages_session_sequence")
-            await messages_col.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)], name="idx_chat_messages_user_created")
-            await messages_col.create_index([("session_id", ASCENDING), ("created_at", ASCENDING)], name="idx_chat_messages_session_created")
-            await cands_col.create_index([("question_unaccented", "text"), ("answer_draft_unaccented", "text")], name="idx_faq_cands_text")
-
         except Exception as e:
             logger.error(f"❌ Failed to connect to MongoDB: {e}")
             raise

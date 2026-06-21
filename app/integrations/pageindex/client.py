@@ -14,7 +14,6 @@ from .page_index_md import md_to_tree
 from .retrieve import get_document, get_document_structure, get_page_content
 from .utils import ConfigLoader, remove_fields
 from app.integrations.storage.client import r2_storage
-from app.modules.files.toc_tree.repository import FileTocTreeRepository
 from app.integrations.redis.client import get_redis_client
 from app.core.config import settings
 
@@ -71,6 +70,7 @@ class PageIndexClient:
     @property
     def toc_repo(self):
         if self._toc_repo is None:
+            from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
             self._toc_repo = FileTocTreeRepository()
         return self._toc_repo
 
@@ -298,7 +298,7 @@ class PageIndexClient:
                 logger.warning(f"Metadata for document {doc_id} not found in MongoDB.")
                 return
 
-            md_storage_path = full.get('markdown_storage_path')
+            md_storage_path = full.markdown_storage_path
             if md_storage_path:
                 if background_download:
                     asyncio.create_task(self._check_and_refresh_cache(doc_id, md_storage_path))
@@ -309,10 +309,11 @@ class PageIndexClient:
                 'id': doc_id,
                 'type': 'md',
                 'path': str(local_md_path_obj) if local_md_path_obj else "",
-                'doc_name': full.get('doc_name', ''),
-                'doc_description': full.get('doc_description', ''),
-                'line_count': full.get('line_count', 0),
-                'structure': full.get('structure', []),
+                'doc_name': full.doc_name or '',
+                'doc_description': full.doc_description or '',
+                'line_count': full.line_count or 0,
+                'structure': full.structure or [],
+                'markdown_storage_path': full.markdown_storage_path,
             }
             await self._save_doc_to_cache(doc_id, doc)
         else:
@@ -324,7 +325,7 @@ class PageIndexClient:
                 if not md_storage_path:
                     # Try to get from DB if not in cache
                     full = await self.toc_repo.find_by_file_id(doc_id)
-                    md_storage_path = full.get('markdown_storage_path') if full else None
+                    md_storage_path = full.markdown_storage_path if full else None
                 
                 if md_storage_path:
                     if background_download:
