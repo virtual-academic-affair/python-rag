@@ -26,7 +26,7 @@ from app.modules.chat.dtos import (
     ChatSessionRenameRequest,
     ChatSessionMutationResponse,
 )
-from app.core.dependencies import require_auth
+from app.core.dependencies import require_auth, require_admin
 from app.modules.chat.services.chat_service import get_chat_service
 from app.modules.chat.services.chat_stream_service import get_chat_stream_service
 from app.modules.chat.repositories.chat_history_repository import get_chat_history_repository
@@ -102,16 +102,18 @@ async def chat_query(
             to_rich_text=request.to_rich_text,
         )
 
-        await chat_history_repo.append_message(
-            session_id=session_id,
-            user_id=user_context.user_id,
-            role="assistant",
-            content=result.get("answer", ""),
-            token_usage=result.get("token_usage"),
-            sources=result.get("sources"),
-            steps=result.get("steps"),
-            processing_time_ms=result.get("processing_time_ms"),
-        )
+        answer_content = result.get("answer", "")
+        if answer_content.strip():
+            await chat_history_repo.append_message(
+                session_id=session_id,
+                user_id=user_context.user_id,
+                role="assistant",
+                content=answer_content,
+                token_usage=result.get("token_usage"),
+                sources=result.get("sources"),
+                steps=result.get("steps"),
+                processing_time_ms=result.get("processing_time_ms"),
+            )
 
         return ChatQueryResponse(session_id=session_id, **result)
 
@@ -204,17 +206,18 @@ async def chat_stream(
                                 or ""
                             )
 
-                        await chat_history_repo.append_message(
-                            session_id=session_id,
-                            user_id=user_context.user_id,
-                            role="assistant",
-                            content=assistant_content,
-                            token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
-                            sources=payload.get("sources"),
-                            steps=payload.get("steps"),
-                            processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
-                            message_type="text",
-                        )
+                        if assistant_content.strip():
+                            await chat_history_repo.append_message(
+                                session_id=session_id,
+                                user_id=user_context.user_id,
+                                role="assistant",
+                                content=assistant_content,
+                                token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
+                                sources=payload.get("sources"),
+                                steps=payload.get("steps"),
+                                processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
+                                message_type="text",
+                            )
                     
                     chunk_json = json.dumps(payload, ensure_ascii=False)
                     yield f"data: {chunk_json}\n\n"
@@ -470,7 +473,7 @@ async def delete_chat_session(
 )
 async def chat_retrieve_preview(
     request: ChatRetrievePreviewRequest,
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_admin),
 ):
     """Preview semantic retrieval result list for relevance tuning."""
     try:

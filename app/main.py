@@ -156,35 +156,24 @@ async def lifespan(_: FastAPI):
     print(f"🐛 Debug Mode: {settings.DEBUG}")
     print("=" * 80)
     
-    if settings.MONGODB_DISABLED or settings.R2_DISABLED:
-        print("🚨 WARNING: RUNNING WITH DISABLED SERVICES!")
-        if settings.MONGODB_DISABLED:
-            print("   - MONGODB_DISABLED=True: NO data persistence!")
-        if settings.R2_DISABLED:
-            print("   - R2_DISABLED=True: Files will NOT be stored!")
-        print("=" * 80)
-
     # 1. Connect to MongoDB and Initialize Beanie
     try:
         await Database.connect()
-        if settings.MONGODB_DISABLED:
-            logger.warning("⚠️  MongoDB disabled. Continuing without DB.")
-        else:
-            logger.info("✅ MongoDB connected")
-            await init_beanie(
-                database=Database.get_db(),
-                document_models=[
-                    FileDocument,
-                    FileTocTree,
-                    FaqDocument,
-                    FaqCandidateDocument,
-                    InteractionLogDocument,
-                    ChatSessionDocument,
-                    ChatMessageDocument,
-                    FormDocument,
-                ]
-            )
-            logger.info("✅ Beanie ODM initialized")
+        logger.info("✅ MongoDB connected")
+        await init_beanie(
+            database=Database.get_db(),
+            document_models=[
+                FileDocument,
+                FileTocTree,
+                FaqDocument,
+                FaqCandidateDocument,
+                InteractionLogDocument,
+                ChatSessionDocument,
+                ChatMessageDocument,
+                FormDocument,
+            ]
+        )
+        logger.info("✅ Beanie ODM initialized")
     except Exception as e:
         logger.error(f"❌ Failed to connect to MongoDB: {e}")
         raise
@@ -192,12 +181,9 @@ async def lifespan(_: FastAPI):
     # 2. Initialize R2 storage
     try:
         # R2 client initializes on import, test connection
-        if settings.R2_DISABLED:
-            logger.warning("⚠️  R2 disabled. Continuing without storage.")
-        else:
-            response = r2_storage.get_client().list_buckets()
-            buckets = response.get('Buckets', [])
-            logger.info(f"✅ R2 storage initialized ({len(buckets)} buckets)")
+        response = r2_storage.get_client().list_buckets()
+        buckets = response.get('Buckets', [])
+        logger.info(f"✅ R2 storage initialized ({len(buckets)} buckets)")
     except Exception as e:
         logger.warning(f"⚠️  R2 initialization warning: {e}")
 
@@ -223,6 +209,7 @@ async def lifespan(_: FastAPI):
         try:
             loop = asyncio.get_running_loop()
             email_consumer_thread = start_email_ingest_consumer(email_orchestrator, loop=loop)
+            _.state.email_consumer_thread = email_consumer_thread
             logger.info("Email ingest consumer started")
         except Exception as e:
             logger.warning(f"⚠️  Email consumer not started: {e}")
@@ -434,7 +421,7 @@ async def genai_api_error_handler(request: Request, exc: APIError):
 # ====================================
 
 @app.get("/health", response_model=HealthCheckResponse, tags=["Health"])
-async def health_check():
+async def health_check(request: Request):
     """
     Health check endpoint.
     Returns service status, version, and dependency connectivity.
@@ -443,6 +430,11 @@ async def health_check():
     mongodb_connected = False
     redis_connected = False
     qdrant_connected = False
+    email_consumer_running = None
+
+    if settings.RABBITMQ_ENABLED:
+        consumer_thread = getattr(request.app.state, "email_consumer_thread", None)
+        email_consumer_running = consumer_thread.is_alive() if consumer_thread is not None else False
     
     try:
         gemini_connected = gemini_client.client is not None
@@ -464,14 +456,19 @@ async def health_check():
     except Exception as e:
         logger.debug(f"Health check: qdrant probe failed: {e}")
     
+    dependencies_ok = (gemini_connected and mongodb_connected and redis_connected and qdrant_connected)
+    if settings.RABBITMQ_ENABLED and not email_consumer_running:
+        dependencies_ok = False
+
     return HealthCheckResponse(
-        status="healthy" if (gemini_connected and mongodb_connected and redis_connected and qdrant_connected) else "degraded",
+        status="healthy" if dependencies_ok else "degraded",
         service=settings.APP_NAME,
         version=settings.APP_VERSION,
         gemini_api_connected=gemini_connected,
         mongodb_connected=mongodb_connected,
         redis_connected=redis_connected,
         qdrant_connected=qdrant_connected,
+        email_consumer_running=email_consumer_running,
     )
 
 

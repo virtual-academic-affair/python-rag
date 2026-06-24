@@ -35,21 +35,21 @@ class QdrantIndexer:
         h = hashlib.md5(chunk_id.encode("utf-8")).hexdigest()
         return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
-    async def ingest_chunks(self, chunks_data: List[dict]) -> int:
+    async def ingest_chunks(self, chunks_data: List[dict]) -> tuple[int, List[str]]:
         """
         Embed and ingest chunks into Qdrant (native async).
         
         Args:
             chunks_data: List of dicts representing chunks (with chunk_id, text, metadata)
         Returns:
-            Number of points successfully ingested to Qdrant
+            Tuple of (number of points successfully ingested, list of point IDs)
         """
         await self.ensure_collection()
         
         # Batch collect texts to embed — filter out empty-text chunks
         texts = [c.get("text", "") for c in chunks_data]
         if not texts or all(not t.strip() for t in texts):
-            return 0
+            return 0, []
 
         # Gemini API giới hạn tối đa 100 requests/batch — chia nhỏ nếu cần
         EMBED_BATCH_SIZE = 100
@@ -100,7 +100,7 @@ class QdrantIndexer:
             points=points,
             wait=True,
         )
-        return len(points)
+        return len(points), [p.id for p in points]
         
     async def delete_by_file_id(self, file_id: str) -> None:
         """
@@ -117,6 +117,33 @@ class QdrantIndexer:
                             key="file_id",
                             match=qm.MatchValue(value=file_id)
                         )
+                    ]
+                )
+            )
+        )
+
+    async def delete_by_file_id_exclude_points(self, file_id: str, exclude_point_ids: List[str]) -> None:
+        """
+        Delete all chunks associated with a file_id from Qdrant, except the ones with the specified point IDs.
+        """
+        if not exclude_point_ids:
+            await self.delete_by_file_id(file_id)
+            return
+
+        await self.ensure_collection()
+        await asyncio.to_thread(
+            self._qdrant_client.delete,
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            points_selector=qm.FilterSelector(
+                filter=qm.Filter(
+                    must=[
+                        qm.FieldCondition(
+                            key="file_id",
+                            match=qm.MatchValue(value=file_id)
+                        )
+                    ],
+                    must_not=[
+                        qm.HasIdCondition(has_id=exclude_point_ids)
                     ]
                 )
             )

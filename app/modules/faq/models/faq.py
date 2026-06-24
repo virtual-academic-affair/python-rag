@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic import Field
+from pymongo import IndexModel, TEXT, ASCENDING
 from app.core.base_document import BaseDocument
 from app.modules.metadata.models.value_objects import FaqMetadata
 
@@ -19,3 +20,21 @@ class FaqDocument(BaseDocument):
 
     class Settings:
         name = "faqs"
+        indexes = [
+            IndexModel(
+                [("question_unaccented", TEXT), ("answer_unaccented", TEXT)],
+                name="idx_faqs_text"
+            ),
+            IndexModel(
+                [("question_unaccented", ASCENDING)],
+                unique=True,
+                name="idx_faqs_question_unique"
+            ),
+            "is_active",
+            IndexModel(
+                [("candidate_id", ASCENDING)],
+                unique=True,
+                partialFilterExpression={"candidate_id": {"$type": "string"}},
+                name="idx_faqs_candidate_id_unique"
+            )
+        ]

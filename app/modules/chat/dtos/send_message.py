@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
@@ -18,8 +18,13 @@ class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     session_id: Optional[str] = Field(default=None, description="Chat session ID")
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
-    citation_link_type: Optional[str] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
+    citation_link_type: Literal["original", "markdown"] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
     to_rich_text: Optional[bool] = Field(default=False, description="Convert final markdown answer to HTML rich text")
+
+class TokenUsage(BaseSchema):
+    prompt_tokens: int = Field(..., description="Number of prompt tokens used")
+    completion_tokens: int = Field(..., description="Number of completion tokens used")
+    total_tokens: int = Field(..., description="Total number of tokens used")
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
@@ -27,5 +32,5 @@ class ChatQueryResponse(BaseSchema):
     source: str = Field(default="llm", description="Source of the answer: 'llm' | 'faq'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
-    token_usage: Optional[dict] = Field(default=None, description="Token consumption statistics")
+    token_usage: Optional[TokenUsage] = Field(default=None, description="Token consumption statistics")
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")

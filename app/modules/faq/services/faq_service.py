@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
-from app.core.exceptions import ValidationException
+from pymongo.errors import DuplicateKeyError
+from app.core.exceptions import ValidationException, ConflictException, ExternalServiceException
 from app.core.pagination import PagedResult
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
@@ -69,7 +70,11 @@ class FaqService:
             view_count=0,
             qdrant_point_id=None,
         )
-        created = await self._faq_repo.create(doc)
+        try:
+            created = await self._faq_repo.create(doc)
+        except DuplicateKeyError:
+            raise ConflictException(f"FAQ with question '{question}' already exists.")
+            
         faq_id = str(created.id)
 
         try:
@@ -83,8 +88,18 @@ class FaqService:
         except Exception as e:
             logger.error(
                 f"[FAQ] Failed to upsert to Qdrant for FAQ {faq_id}: {e}. "
-                "FAQ created in DB but not searchable via vector."
+                "Rolling back MongoDB FAQ creation..."
             )
+            try:
+                await self._faq_repo.delete(created)
+            except Exception as rollback_err:
+                logger.error(f"[FAQ] Rollback failed to delete FAQ {faq_id} from Mongo: {rollback_err}")
+            try:
+                point_id = self._qdrant._stable_point_id(faq_id)
+                await self._qdrant.delete_faq(point_id)
+            except Exception:
+                pass
+            raise ExternalServiceException(f"Qdrant vector registration failed: {e}")
 
         return created
 
@@ -159,6 +174,8 @@ class FaqService:
                     question_vector=embeddings[idx],
                 )
                 created_count += 1
+            except ConflictException:
+                skipped_count += 1
             except Exception as e:
                 logger.error(f"Failed to create FAQ in bulk at row {original_idx}: {e}")
                 failed_count += 1
@@ -171,12 +188,65 @@ class FaqService:
         if not doc:
             return None
 
+        original_state = {
+            "question": doc.question,
+            "question_unaccented": doc.question_unaccented,
+            "answer_markdown": doc.answer_markdown,
+            "answer_rich_text": doc.answer_rich_text,
+            "answer_unaccented": doc.answer_unaccented,
+            "metadata_filter": doc.metadata_filter.model_copy(deep=True),
+            "is_active": doc.is_active,
+            "qdrant_point_id": doc.qdrant_point_id,
+        }
+
+        async def rollback_mongo_state() -> None:
+            rollback_doc = await self._faq_repo.find_by_id(faq_id)
+            if not rollback_doc:
+                logger.error(f"[FAQ] Rollback could not find FAQ {faq_id} in Mongo.")
+                return
+            for key, value in original_state.items():
+                setattr(rollback_doc, key, value)
+            await self._faq_repo.save(rollback_doc)
+
+        async def rollback_qdrant_state() -> None:
+            if original_state["is_active"]:
+                question_vector = await self.embed(original_state["question"])
+                point_id = await self._qdrant.upsert_faq(
+                    faq_id=faq_id,
+                    question_vector=question_vector,
+                    metadata_filter=original_state["metadata_filter"].model_dump(),
+                )
+                original_state["qdrant_point_id"] = point_id
+            else:
+                point_id = original_state["qdrant_point_id"] or self._qdrant._stable_point_id(faq_id)
+                await self._qdrant.delete_faq(point_id)
+
+        async def rollback_after_qdrant_failure() -> None:
+            try:
+                await rollback_qdrant_state()
+            except Exception as rollback_err:
+                logger.error(f"[FAQ] Qdrant rollback failed for FAQ {faq_id}: {rollback_err}")
+            try:
+                await rollback_mongo_state()
+            except Exception as rollback_err:
+                logger.error(f"[FAQ] Mongo rollback failed for FAQ {faq_id}: {rollback_err}")
+
         need_qdrant_update = False
+        deleting_qdrant = False
+
+        if "is_active" in data:
+            new_active = data["is_active"]
+            if not new_active and doc.is_active:
+                deleting_qdrant = True
+            elif new_active and not doc.is_active:
+                need_qdrant_update = True
+            doc.is_active = new_active
 
         if "question" in data and data["question"] != doc.question:
             doc.question = data["question"]
             doc.question_unaccented = remove_accents(data["question"])
-            need_qdrant_update = True
+            if doc.is_active:
+                need_qdrant_update = True
 
         if "answer_rich_text" in data:
             answer_markdown = rich_text_to_markdown(data["answer_rich_text"])
@@ -197,30 +267,59 @@ class FaqService:
                 raise ValidationException(f"Invalid merged FAQ metadata: {', '.join(errors)}")
 
             doc.metadata_filter = meta_model or FaqMetadata()
-            need_qdrant_update = True
+            if doc.is_active:
+                need_qdrant_update = True
 
-        if "is_active" in data:
-            doc.is_active = data["is_active"]
+        old_qdrant_point_id = original_state["qdrant_point_id"]
 
-        if need_qdrant_update:
-            if "question" in data:
-                question_vector = await self.embed(doc.question)
-            else:
-                question_vector = await self.embed(doc.question)
-            await self._qdrant.upsert_faq(faq_id, question_vector, doc.metadata_filter.model_dump())
+        # Qdrant mutation intent: determine what to do before touching Mongo
+        if deleting_qdrant:
+            doc.qdrant_point_id = None  # optimistically clear before save
 
-        return await self._faq_repo.save(doc)
+        # --- Save Mongo first ---
+        try:
+            saved = await self._faq_repo.save(doc)
+        except DuplicateKeyError:
+            raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
+
+        # --- Then sync Qdrant ---
+        if deleting_qdrant:
+            point_to_delete = old_qdrant_point_id or self._qdrant._stable_point_id(faq_id)
+            try:
+                await self._qdrant.delete_faq(point_to_delete)
+            except Exception as e:
+                logger.error(f"[FAQ] Qdrant delete failed after Mongo save for FAQ {faq_id}: {e}. Rolling back Mongo.")
+                await rollback_after_qdrant_failure()
+                raise ExternalServiceException(f"Qdrant deletion failed: {e}")
+        elif need_qdrant_update:
+            try:
+                question_vector = await self.embed(saved.question)
+                qdrant_point_id = await self._qdrant.upsert_faq(
+                    faq_id=faq_id,
+                    question_vector=question_vector,
+                    metadata_filter=saved.metadata_filter.model_dump()
+                )
+                saved.qdrant_point_id = qdrant_point_id
+                await self._faq_repo.save(saved)
+            except Exception as e:
+                logger.error(f"[FAQ] Qdrant upsert failed after Mongo save for FAQ {faq_id}: {e}. Rolling back Mongo.")
+                await rollback_after_qdrant_failure()
+                raise ExternalServiceException(f"Qdrant upsert failed: {e}")
+
+        return saved
 
     async def delete_faq(self, faq_id: str) -> bool:
         doc = await self._faq_repo.find_by_id(faq_id)
         if not doc:
             return False
 
-        if doc.qdrant_point_id:
-            try:
-                await self._qdrant.delete_faq(doc.qdrant_point_id)
-            except Exception as e:
-                logger.warning(f"Failed to delete Qdrant point for FAQ {faq_id}: {e}")
+        point_id = doc.qdrant_point_id or self._qdrant._stable_point_id(faq_id)
+        try:
+            await self._qdrant.delete_faq(point_id)
+        except Exception as e:
+            # Fail-closed regardless of whether qdrant_point_id was set or using stable ID
+            logger.error(f"[FAQ] Failed to delete Qdrant point {point_id} for FAQ {faq_id}: {e}")
+            raise ExternalServiceException(f"Failed to delete vector from Qdrant: {e}")
 
         await self._faq_repo.delete(doc)
         return True
@@ -255,17 +354,23 @@ class FaqService:
         question_vector: List[float],
         metadata_filter: Dict[str, Any],
         threshold: Optional[float] = None,
+        top_k: int = 5,
     ) -> Optional[FaqDocument]:
         th = threshold or settings.FAQ_SEMANTIC_THRESHOLD
-        results = await self._qdrant.search(question_vector, metadata_filter, th, top_k=1)
+        results = await self._qdrant.search(question_vector, metadata_filter, th, top_k=top_k)
         if not results:
             return None
 
-        faq_id = results[0]["faq_id"]
-        faq = await self._faq_repo.find_by_id(faq_id)
-        if faq and faq.is_active:
-            asyncio.create_task(self._faq_repo.increment_view_count(faq_id))
-            return faq
+        for res in results:
+            faq_id = res["faq_id"]
+            faq = await self._faq_repo.find_by_id(faq_id)
+            if faq and faq.is_active:
+                asyncio.create_task(self._faq_repo.increment_view_count(faq_id))
+                return faq
+            if not faq:
+                logger.warning(f"[FAQ] Stale Qdrant point found: faq_id {faq_id} not in Mongo.")
+            elif not faq.is_active:
+                logger.debug(f"[FAQ] Matched inactive FAQ {faq_id}, skipping.")
 
         return None
 
@@ -331,17 +436,21 @@ class FaqService:
         now = datetime.now(timezone.utc)
 
         if action == "approve":
-            final_question = question_override or candidate.question
-            final_answer_rt = answer_rich_text_override or candidate.answer_draft_rich_text
-            final_meta = metadata_filter_override or candidate.metadata_filter_suggestion.model_dump()
+            existing_faq = await self._faq_repo.find_by_candidate_id(candidate_id)
+            if not existing_faq:
+                final_question = question_override or candidate.question
+                final_answer_rt = answer_rich_text_override or candidate.answer_draft_rich_text
+                final_meta = metadata_filter_override or candidate.metadata_filter_suggestion.model_dump()
 
-            await self.create_faq(
-                question=final_question,
-                answer_rich_text=final_answer_rt or "",
-                metadata_filter=final_meta,
-                source="synthesized",
-                candidate_id=candidate_id,
-            )
+                await self.create_faq(
+                    question=final_question,
+                    answer_rich_text=final_answer_rt or "",
+                    metadata_filter=final_meta,
+                    source="synthesized",
+                    candidate_id=candidate_id,
+                )
+            else:
+                logger.info(f"[FAQ] FAQ for candidate {candidate_id} already exists. Skipping creation.")
 
             candidate.status = "approved"
             if question_override:

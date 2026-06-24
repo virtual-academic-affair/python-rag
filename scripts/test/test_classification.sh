@@ -3,9 +3,10 @@ source "$(dirname "$0")/common.sh"
 
 log_header "2. EMAIL CLASSIFICATION"
 
-log_info "POST /api/email/process — label: classRegistration"
+log_info "POST /api/email/process (Admin) — label: classRegistration"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
     -d '{
         "messageId": 12345,
         "title": "Xin dang ky mon hoc",
@@ -13,9 +14,10 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     }' 2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Classify email — classRegistration"
 
-log_info "POST /api/email/process — label: inquiry (AI draft reply)"
+log_info "POST /api/email/process (Admin) — label: inquiry (AI draft reply)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/email/process" \
     -H "Content-Type: application/json" \
+    -H "${AUTH_HEADER}" \
     -d '{
         "messageId": 67890,
         "title": "Hoi ve dieu kien tot nghiep",

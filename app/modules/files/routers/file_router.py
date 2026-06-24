@@ -241,7 +241,11 @@ async def batch_upload_files(
             temp_file_path = None
             try:
                 display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
-                metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
+                metadata_dict = {}
+                if idx < len(meta_list) and meta_list[idx] is not None:
+                    if not isinstance(meta_list[idx], dict):
+                        raise ValueError(f"Metadata at index {idx} must be a JSON object (dict)")
+                    metadata_dict = meta_list[idx]
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
                     contents = await file.read()
@@ -345,9 +349,8 @@ async def download_file_endpoint(
             file_format=requested_format,
         )
         encoded_filename = urllib.parse.quote(filename)
-        file_data = file_obj.read()
         return StreamingResponse(
-            BytesIO(file_data),
+            file_obj,
             media_type=mime_type,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
         )
@@ -374,7 +377,11 @@ async def update_file(
         file_doc = await file_svc.update_file(
             file_id=file_id, 
             display_name=request.display_name,
-            custom_metadata=request.custom_metadata
+            custom_metadata=(
+                request.custom_metadata.model_dump(exclude_unset=True, by_alias=False)
+                if request.custom_metadata
+                else None
+            )
         )
         if not file_doc:
             raise NotFoundException("File", file_id)

@@ -1,6 +1,7 @@
-from typing import Any, List, Optional
+from typing import List, Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
+from app.modules.metadata.dtos.metadata_out import FileMetadataResponse
 
 class FileUploadRequest(BaseSchema):
     display_name: Optional[str] = None
@@ -14,7 +15,7 @@ class FileUploadResponse(BaseSchema):
     file_size: int = Field(..., description="File size in bytes")
     mime_type: str
     status: str
-    custom_metadata: Optional[Any] = Field(default=None)
+    custom_metadata: Optional[FileMetadataResponse] = Field(default=None)
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     file_url: Optional[str] = Field(None, description="Direct download URL from R2")
     markdown_file_url: Optional[str] = Field(None, description="Direct download URL for generated markdown in R2")

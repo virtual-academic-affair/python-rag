@@ -78,13 +78,13 @@ def generate_storage_path(
     
     name, ext = os.path.splitext(filename)
     safe_name = slugify(name)
-    safe_filename = f"{safe_name}{ext}"
     
     parts = ["uploads"]
     parts.extend([year, month])
     
-    timestamp = now.strftime("%Y%m%d_%H%M%S")
-    unique_filename = f"{timestamp}_{safe_filename}"
+    # Use UUID to prevent path collision
+    unique_suffix = uuid.uuid4().hex[:12]
+    unique_filename = f"{safe_name}_{unique_suffix}{ext}"
     parts.append(unique_filename)
     
     return "/".join(parts)

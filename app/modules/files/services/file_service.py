@@ -12,6 +12,7 @@ from app.core.exceptions import (
 from app.modules.files.models.file import FileDocument, FileStatus
 from app.modules.files.repositories.file_repository import FileRepository
 from app.integrations.storage.client import r2_storage
+from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.utils.text_utils import remove_accents
 from app.integrations.qdrant.indexer import get_qdrant_indexer
@@ -77,30 +78,39 @@ class FileService(FileUploadMixin):
         if not file_doc:
             raise NotFoundException("File", file_id)
 
+        # 1. Delete from Qdrant index, TOC, and PageIndex cache first
         indexer = get_qdrant_indexer()
         await indexer.delete_by_file_id(file_id)
 
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
 
-        from app.integrations.pageindex.client import get_page_index_client
         page_index_client = get_page_index_client()
         await page_index_client.evict_doc(file_id)
 
-        if file_doc.storage_path:
-            try:
-                await r2_storage.delete_file(file_doc.storage_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete from Cloudflare R2: {e}")
-
-        if file_doc.markdown_storage_path:
-            try:
-                await r2_storage.delete_file(file_doc.markdown_storage_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete markdown artifact from Cloudflare R2: {e}")
-
+        # 2. Delete DB record — after this point the file is logically gone
         await self.file_repo.delete(file_doc)
         logger.info(f"File {file_id} deleted from MongoDB")
+
+        # 3. Delete from R2 storage last — if this fails the file is already gone from DB/indexes
+        #    so it is effectively inaccessible. Log the error but do not raise to avoid
+        #    leaving an orphan DB record pointing to missing storage.
+        if file_doc.storage_path:
+            deleted = await r2_storage.delete_file(file_doc.storage_path)
+            if not deleted:
+                logger.error(
+                    f"[File] R2 object '{file_doc.storage_path}' could not be deleted for file {file_id}. "
+                    "DB record has already been removed — manual R2 cleanup may be required."
+                )
+
+        if file_doc.markdown_storage_path:
+            deleted = await r2_storage.delete_file(file_doc.markdown_storage_path)
+            if not deleted:
+                logger.error(
+                    f"[File] R2 markdown '{file_doc.markdown_storage_path}' could not be deleted for file {file_id}. "
+                    "Manual R2 cleanup may be required."
+                )
+
         return True
 
     async def update_file(

@@ -22,6 +22,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from scripts.snapshot import SnapshotManager
+from scripts.seed_faqs import main as seed_faqs_main
 
 from app.core.config import settings
 
@@ -34,6 +35,14 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ASCENDING, DESCENDING, TEXT
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qm
+
+from app.core.database import Database
+from app.integrations.storage.client import r2_storage
 
 # ====================================
 # Configuration
@@ -62,8 +71,6 @@ async def drop_mongodb_database():
     """Drop all MongoDB collections."""
     logger.info("Dropping MongoDB database...")
 
-    from motor.motor_asyncio import AsyncIOMotorClient
-
     mongodb_url = os.getenv("MONGODB_URL")
     db_name = os.getenv("MONGODB_DB_NAME", "ai_service")
 
@@ -89,13 +96,8 @@ async def drop_mongodb_database():
 async def clear_r2_bucket():
     """Delete all files from R2 bucket."""
     logger.info("Clearing R2 bucket...")
-
-    from app.integrations.storage.client import r2_storage
     
     try:
-        if settings.R2_DISABLED:
-            logger.info("  R2 is disabled, skipping.")
-            return
 
         files = await r2_storage.list_files()
         if not files:
@@ -118,9 +120,6 @@ async def clear_r2_bucket():
 async def clear_qdrant_collections():
     """Delete all points from Qdrant collection and recreate using current settings."""
     logger.info("Clearing Qdrant collection...")
-
-    from qdrant_client import QdrantClient
-    from app.core.config import settings
 
     if not settings.QDRANT_URL:
         logger.info("  QDRANT_URL not set, skipping.")
@@ -150,7 +149,6 @@ async def clear_qdrant_collections():
             
         # Recreate using STRICT .env settings
         vector_size = settings.QDRANT_VECTOR_SIZE
-        from qdrant_client.http import models as qm
         client.create_collection(
             collection_name=collection_name,
             vectors_config=qm.VectorParams(
@@ -214,9 +212,6 @@ async def create_database_indexes():
     """Create MongoDB indexes."""
     logger.info("Creating database indexes...")
 
-    from app.core.database import Database
-    from pymongo import ASCENDING, DESCENDING
-
     await Database.connect()
     db = Database.get_db()
 
@@ -224,10 +219,31 @@ async def create_database_indexes():
     await db[Database.FILES].create_index([("status", ASCENDING)])
     await db[Database.FILES].create_index([("created_at", DESCENDING)])
 
-    # Database.connect() already ensures indexes for FILE_CHUNKS,
-    # so we only add additional ones if needed.
+    # FAQ collection indexes — names must match Settings.indexes in faq.py (Beanie is source of truth)
+    await db[Database.FAQS].create_index(
+        [("question_unaccented", TEXT), ("answer_unaccented", TEXT)],
+        name="idx_faqs_text"
+    )
+    await db[Database.FAQS].create_index(
+        [("question_unaccented", ASCENDING)],
+        unique=True,
+        name="idx_faqs_question_unique"
+    )
+    await db[Database.FAQS].create_index([("is_active", ASCENDING)], name="is_active_1")
+    await db[Database.FAQS].create_index(
+        [("candidate_id", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"candidate_id": {"$type": "string"}},
+        name="idx_faqs_candidate_id_unique"
+    )
 
-
+    # FAQ Candidate collection indexes — names must match Settings.indexes in faq_candidate.py
+    await db[Database.FAQ_CANDIDATES].create_index(
+        [("question_unaccented", TEXT), ("answer_draft_unaccented", TEXT)],
+        name="idx_faq_candidates_text"
+    )
+    await db[Database.FAQ_CANDIDATES].create_index([("status", ASCENDING)], name="status_1")
+    await db[Database.FAQ_CANDIDATES].create_index([("synthesis_batch_id", ASCENDING)], name="synthesis_batch_id_1")
 
     await Database.disconnect()
 
@@ -434,7 +450,6 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
                 if uploaded_ids:
                     await wait_for_ingestion(uploaded_ids)
                     
-            from scripts.seed_faqs import main as seed_faqs_main
             sample_faqs_path = SCRIPT_DIR / "sample_faqs.json"
             if sample_faqs_path.exists():
                 print("\n" + "-" * 50)

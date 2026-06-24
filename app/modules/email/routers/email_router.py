@@ -11,6 +11,8 @@ from app.modules.email.models.email_out import ProcessResponse
 from app.modules.email.services.email_orchestrator_service import EmailWorkflowOrchestrator
 from app.core.exceptions import handle_google_api_error
 
+from app.core.dependencies import require_admin
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/email", tags=["Email Classification"])
@@ -28,6 +30,7 @@ def get_classifier(request: Request) -> EmailWorkflowOrchestrator:
 async def process_request(
     request: RequestData,
     classifier_service: EmailWorkflowOrchestrator = Depends(get_classifier),
+    _admin: dict = Depends(require_admin),
 ):
     """Process email title/content and return one of 4 supported labels."""
     try:
@@ -61,6 +64,7 @@ async def process_request(
 async def test_classification_from_ingested_payload(
     payload: IngestMessage,
     classifier_service: EmailWorkflowOrchestrator = Depends(get_classifier),
+    _admin: dict = Depends(require_admin),
 ):
     """Test endpoint: process one RabbitMQ 'ingested' payload directly."""
     try:
@@ -82,9 +86,9 @@ async def test_classification_from_ingested_payload(
     except Exception as e:
         logger.error("Error in test ingested classification endpoint: %s", str(e), exc_info=True)
         if isinstance(e, APIError):
-            try:
-                raise handle_google_api_error(e, prefix="Internal server error: ")
-            except HTTPException as hex:
-                return ProcessResponse(success=False, error=hex.detail)
-                
-        return ProcessResponse(success=False, error=f"Internal server error: {str(e)}")
+            raise handle_google_api_error(e, prefix="Internal server error: ")
+            
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}",
+        )

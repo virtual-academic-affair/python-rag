@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile
 from typing import Dict, Any, Optional
 import json
+import re
 
 from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.faq.dtos import (
@@ -22,6 +23,7 @@ from app.modules.faq.dtos import (
 from app.modules.faq.services.faq_service import get_faq_service, FaqService
 from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
 from app.modules.faq.utils.excel_parser import parse_excel_to_faq_rows, parse_csv_to_faq_rows
+from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.core.exceptions import handle_google_api_error
 from google.genai.errors import APIError
@@ -48,7 +50,7 @@ async def list_faqs(
         try:
             meta = json.loads(metadata_filter)
             metadata_svc = get_metadata_service()
-            is_valid, errors = metadata_svc.validate_unified_filter(meta)
+            is_valid, errors, _ = metadata_svc.validate_and_parse_faq_metadata(meta)
             if not is_valid:
                 raise HTTPException(status_code=400, detail=f"Invalid metadataFilter: {', '.join(errors)}")
         except json.JSONDecodeError:
@@ -238,7 +240,28 @@ async def preview_faq_import(
     """
     Upload Excel and preview extracted FAQ rows.
     """
-    metadata_map = json.loads(req.metadata_filter_json)
+    try:
+        metadata_map = json.loads(req.metadata_filter_json) if req.metadata_filter_json else {}
+        if not isinstance(metadata_map, dict):
+            raise HTTPException(status_code=400, detail="metadata_filter_json must be a JSON object")
+        allowed_keys = set()
+        for name, field in FaqMetadataSchema.model_fields.items():
+            allowed_keys.add(name)
+            if field.alias:
+                allowed_keys.add(field.alias)
+            camel = re.sub(r'_([a-z])', lambda match: match.group(1).upper(), name)
+            allowed_keys.add(camel)
+            
+        for k in metadata_map.keys():
+            if k not in allowed_keys:
+                raise HTTPException(status_code=400, detail=f"Invalid metadata key: {k}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid metadata_filter_json: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid FAQ metadata: {e}")
+        
     content = await file.read()
     try:
         if file.filename and file.filename.lower().endswith('.csv'):
@@ -273,7 +296,28 @@ async def import_faqs_from_excel(
     """
     Upload Excel and create FAQs in bulk.
     """
-    metadata_map = json.loads(req.metadata_filter_json)
+    try:
+        metadata_map = json.loads(req.metadata_filter_json) if req.metadata_filter_json else {}
+        if not isinstance(metadata_map, dict):
+            raise HTTPException(status_code=400, detail="metadata_filter_json must be a JSON object")
+        allowed_keys = set()
+        for name, field in FaqMetadataSchema.model_fields.items():
+            allowed_keys.add(name)
+            if field.alias:
+                allowed_keys.add(field.alias)
+            camel = re.sub(r'_([a-z])', lambda match: match.group(1).upper(), name)
+            allowed_keys.add(camel)
+            
+        for k in metadata_map.keys():
+            if k not in allowed_keys:
+                raise HTTPException(status_code=400, detail=f"Invalid metadata key: {k}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid metadata_filter_json: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid FAQ metadata: {e}")
+        
     content = await file.read()
     try:
         if file.filename and file.filename.lower().endswith('.csv'):

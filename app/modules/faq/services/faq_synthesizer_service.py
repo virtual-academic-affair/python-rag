@@ -18,6 +18,7 @@ from app.modules.metadata.models.value_objects import FaqMetadata, YEAR_MIN, YEA
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.faq.models.interaction_log import InteractionLogDocument
+from app.modules.faq.services.faq_service import get_faq_service
 
 logger = logging.getLogger(__name__)
 
@@ -174,9 +175,16 @@ class FaqSynthesisService:
                 
             now = datetime.now(timezone.utc)
             answer_draft_md = result["answer_draft"]
-            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(
+            is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(
                 result.get("metadata_filter_suggestion", {}) or {}
             )
+            if not is_valid:
+                logger.warning(
+                    f"LLM suggested invalid FAQ metadata: {', '.join(errors)}. "
+                    f"Rejecting synthesis for batch {batch_id}."
+                )
+                return None
+
             candidate = FaqCandidateDocument(
                 question=result["question"],
                 question_unaccented=remove_accents(result["question"]),
@@ -226,7 +234,6 @@ class FaqSynthesisService:
             return {"batch_id": batch_id, "candidates_created": 0, "total_logs_processed": 0, "clusters_found": 0, "failed_clusters": 0}
 
         # Fetch top 5 recent FAQs for context
-        from app.modules.faq.services.faq_service import get_faq_service
         faq_svc = await get_faq_service()
         recent_faqs_res = await faq_svc.list_faqs(is_active=True, limit=5)
         recent_faqs = recent_faqs_res.items

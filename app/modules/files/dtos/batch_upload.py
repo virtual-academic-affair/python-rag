@@ -13,6 +13,7 @@ class BatchFileUploadResult(BaseSchema):
     display_name: Optional[str] = None
     file_url: Optional[str] = None
     error: Optional[str] = None
+    message: Optional[str] = None
 
 class BatchFileUploadResponse(BaseSchema):
     total: int = Field(..., description="Total files processed")

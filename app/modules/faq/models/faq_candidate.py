@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import Field
+from pymongo import IndexModel, TEXT, ASCENDING
 from app.core.base_document import BaseDocument
 from app.modules.metadata.models.value_objects import FaqMetadata
 
@@ -23,3 +24,11 @@ class FaqCandidateDocument(BaseDocument):
 
     class Settings:
         name = "faq_candidates"
+        indexes = [
+            IndexModel(
+                [("question_unaccented", TEXT), ("answer_draft_unaccented", TEXT)],
+                name="idx_faq_candidates_text"
+            ),
+            "status",
+            "synthesis_batch_id"
+        ]

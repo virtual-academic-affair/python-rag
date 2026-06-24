@@ -6,7 +6,7 @@ import asyncio
 
 from google.genai import types
 from app.core.config import settings
-from app.modules.chat.dtos import ChatHistoryItem, UserContext
+from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
 from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
@@ -19,6 +19,13 @@ from app.modules.chat.services.query_analyzer_service import get_query_analyzer
 from app.utils.format_utils import markdown_to_rich_text
 
 logger = logging.getLogger(__name__)
+
+
+def fire_and_forget(coro):
+    task = asyncio.create_task(coro)
+    task.add_done_callback(
+        lambda t: logger.error("Background task failed: %s", t.exception()) if t.exception() else None
+    )
 
 
 class ChatService:
@@ -116,7 +123,7 @@ class ChatService:
         # [2] Gate = NO: generate direct reply
         if not needs_rag:
             logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
-            direct_answer = await analyzer.generate_reply(effective_question, chat_history)
+            direct_answer, reply_usage = await analyzer.generate_reply(effective_question, chat_history)
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
             answer_markdown = direct_answer
@@ -124,11 +131,29 @@ class ChatService:
             if to_rich_text:
                 final_answer = markdown_to_rich_text(answer_markdown)
 
+            analysis_usage = analysis.get("usage")
+            total_prompt_tokens = 0
+            total_candidates_tokens = 0
+            if analysis_usage:
+                total_prompt_tokens += analysis_usage.get("prompt_tokens", 0)
+                total_candidates_tokens += analysis_usage.get("completion_tokens", 0)
+            if reply_usage:
+                total_prompt_tokens += reply_usage.get("prompt_tokens", 0)
+                total_candidates_tokens += reply_usage.get("completion_tokens", 0)
+
+            token_usage_obj = None
+            if analysis_usage or reply_usage:
+                token_usage_obj = TokenUsage(
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_candidates_tokens,
+                    total_tokens=total_prompt_tokens + total_candidates_tokens
+                )
+
             return {
                 "answer": final_answer,
                 "sources": [],
                 "steps": [simplify_step(s) for s in pipeline_steps],
-                "token_usage": None,
+                "token_usage": token_usage_obj,
                 "processing_time_ms": processing_time_ms,
             }
 
@@ -153,12 +178,23 @@ class ChatService:
             if to_rich_text:
                 final_answer = markdown_to_rich_text(answer_markdown)
             
+            analysis_usage = analysis.get("usage")
+            token_usage_obj = None
+            if analysis_usage:
+                token_usage_obj = TokenUsage(
+                    prompt_tokens=analysis_usage.get("prompt_tokens", 0),
+                    completion_tokens=analysis_usage.get("completion_tokens", 0),
+                    total_tokens=analysis_usage.get("total_tokens", 0) or (
+                        analysis_usage.get("prompt_tokens", 0) + analysis_usage.get("completion_tokens", 0)
+                    )
+                )
+
             return {
                 "answer": final_answer,
                 "source": "faq",
                 "sources": [],
                 "steps": [simplify_step(s) for s in pipeline_steps],
-                "token_usage": None,
+                "token_usage": token_usage_obj,
                 "processing_time_ms": processing_time_ms,
             }
 
@@ -205,20 +241,28 @@ class ChatService:
         )
 
         processing_time_ms = int((time.time() - start_time) * 1000)
-        logger.info(f"[Chat] Final answer for user {user_context.name}: '{result['final_answer'][:200]}...' (Completed in {processing_time_ms}ms)")
-
-        # Log async interaction
-        faq_svc = await self._get_faq_svc()
-        asyncio.create_task(faq_svc.log_interaction(
-            question=effective_question,
-            question_vector=question_vector,
-            answer_markdown=result["final_answer"],
-            metadata_filter=metadata_filter,
-            source_type="chat",
-            processing_time_ms=processing_time_ms,
-        ))
-
+        
         answer_markdown = result["final_answer"]
+        if not answer_markdown:
+            logger.warning(f"[Chat] Empty answer from agent loop for user {user_context.name}. Using fallback.")
+            answer_markdown = "Hệ thống chưa tổng hợp được câu trả lời từ tài liệu. Vui lòng hỏi lại cụ thể hơn."
+
+        logger.info(f"[Chat] Final answer for user {user_context.name}: '{answer_markdown[:200]}...' (Completed in {processing_time_ms}ms)")
+
+        # Log async interaction if final answer was generated successfully
+        if not result.get("max_turns_reached"):
+            faq_svc = await self._get_faq_svc()
+            fire_and_forget(faq_svc.log_interaction(
+                question=effective_question,
+                question_vector=question_vector,
+                answer_markdown=answer_markdown,
+                metadata_filter=metadata_filter,
+                source_type="chat",
+                processing_time_ms=processing_time_ms,
+            ))
+        else:
+            logger.warning(f"[Chat] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
+
         final_answer = answer_markdown
         if to_rich_text:
             final_answer = markdown_to_rich_text(answer_markdown)
@@ -226,12 +270,21 @@ class ChatService:
         # Only persist structural pipeline steps
         agent_call_steps = [s for s in result["steps"] if s.get("type") in PERSISTED_STEP_TYPES]
 
+        agent_usage = result.get("tokenUsage")
+        token_usage_obj = None
+        if agent_usage:
+            token_usage_obj = TokenUsage(
+                prompt_tokens=agent_usage.get("promptTokens") or agent_usage.get("prompt_tokens") or 0,
+                completion_tokens=agent_usage.get("completionTokens") or agent_usage.get("completion_tokens") or 0,
+                total_tokens=agent_usage.get("totalTokens") or agent_usage.get("total_tokens") or 0
+            )
+
         return {
             "answer": final_answer,
             "source": "llm",
             "sources": result["sources"],
             "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + agent_call_steps)],
-            "token_usage": result.get("tokenUsage"),
+            "token_usage": token_usage_obj,
             "processing_time_ms": processing_time_ms,
         }
 

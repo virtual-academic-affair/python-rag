@@ -2,10 +2,10 @@
 Email response/output schemas — HTTP API response shapes.
 These are the data structures returned by email processing endpoints.
 """
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, List, Optional, Union
 from pydantic import Field
 from app.core.base_schema import BaseSchema
-from app.modules.email.models.email_types import SystemLabel, ClassRegistrationPayload
+from app.modules.email.models.email_types import SystemLabel, ClassRegistrationPayload, InquiryFilters
 from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
 
 
@@ -28,7 +28,7 @@ class InquiryPayload(BaseSchema):
     answer: str = Field(..., description="Generated reply email body")
     question: Optional[str] = Field(default=None, description="Extracted question/intent from the sender")
     types: List[str] = Field(default_factory=list, description="Categorized inquiry types")
-    filters: Optional[Any] = Field(default=None, description="Extracted filters used for RAG")
+    filters: Optional[InquiryFilters] = Field(default=None, description="Extracted filters used for RAG")
     sources: List[SourceCitation] = Field(default_factory=list, description="RAG source citations")
     message_id: Optional[int] = Field(default=None, description="Original email message ID")
 

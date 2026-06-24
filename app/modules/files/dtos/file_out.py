@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
+from app.modules.metadata.dtos.metadata_out import FileMetadataResponse
 
 class FileDetailResponse(BaseSchema):
     file_id: str
@@ -10,7 +11,7 @@ class FileDetailResponse(BaseSchema):
     mime_type: str
     storage_path: str
     status: str
-    custom_metadata: Optional[Any] = Field(default=None)
+    custom_metadata: Optional[FileMetadataResponse] = Field(default=None)
     file_url: Optional[str] = None
     markdown_file_url: Optional[str] = None
     table_of_contents: List[str] = Field(default_factory=list)
@@ -29,6 +30,7 @@ class HealthCheckResponse(BaseSchema):
     mongodb_connected: bool
     redis_connected: bool
     qdrant_connected: bool
+    email_consumer_running: Optional[bool] = None
 
 class ErrorResponse(BaseSchema):
     error: str

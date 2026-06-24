@@ -143,8 +143,6 @@ class IngestionService:
             chunk_overlap_chars=chunk_overlap_chars,
         )
 
-        await self._indexer.delete_by_file_id(file_id)
-
         chunk_docs: list[dict[str, Any]] = []
         for c in chunks:
             chunk_id = self._build_chunk_id(file_id=file_id, chunk_index=c.chunk_index, text=c.text)
@@ -161,8 +159,10 @@ class IngestionService:
             )
 
         if chunk_docs:
-            indexed_count = await self._indexer.ingest_chunks(chunk_docs)
+            indexed_count, new_point_ids = await self._indexer.ingest_chunks(chunk_docs)
+            await self._indexer.delete_by_file_id_exclude_points(file_id, new_point_ids)
         else:
+            await self._indexer.delete_by_file_id(file_id)
             indexed_count = 0
 
         return len(chunks), indexed_count

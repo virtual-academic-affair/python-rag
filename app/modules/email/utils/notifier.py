@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,8 @@ class EmailStatusNotifier:
         self._lock = asyncio.Lock()
 
     async def connect(self, client_id: str, websocket: WebSocket) -> None:
-        await websocket.accept()
+        if websocket.client_state == WebSocketState.CONNECTING:
+            await websocket.accept()
         async with self._lock:
             self._connections[client_id].add(websocket)
         logger.info("WS: Client connected to email progress channel: %s", client_id)
@@ -62,4 +64,3 @@ def get_email_status_notifier() -> EmailStatusNotifier:
     if _notifier_instance is None:
         _notifier_instance = EmailStatusNotifier()
     return _notifier_instance
-

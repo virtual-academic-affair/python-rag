@@ -154,17 +154,68 @@ class RabbitMQService:
             logger.error(f"Error closing RabbitMQ connection: {str(e)}")
 
     def declare_email_ingest_queue(self):
-        """Ensure the email ingest queue exists."""
-        self._ensure_connection()
-        self.channel.queue_declare(queue=self.EMAIL_INGEST_QUEUE, durable=True)
+        """Declare the email ingest queue, its DLX exchange, and the DLQ.
 
-    def start_email_ingest_consumer(self, on_message_callback, prefetch_count: int = 10):
+        Topology:
+          main queue  --NACK/requeue=False--> DLX exchange --> DLQ
+        """
+        self._ensure_connection()
+        dlx_name = settings.RABBITMQ_EMAIL_DLX
+        dlq_name = settings.RABBITMQ_EMAIL_DLQ
+        main_queue = self.EMAIL_INGEST_QUEUE
+
+        # 1. Declare DLX exchange (direct, durable)
+        self.channel.exchange_declare(
+            exchange=dlx_name,
+            exchange_type="direct",
+            durable=True,
+        )
+
+        # 2. Declare DLQ and bind it to DLX with routing key = main queue name
+        self.channel.queue_declare(queue=dlq_name, durable=True)
+        self.channel.queue_bind(
+            queue=dlq_name,
+            exchange=dlx_name,
+            routing_key=main_queue,
+        )
+
+        # 3. Declare main queue pointing dead letters at our DLX
+        #    NOTE: If the queue already exists with different args, this will
+        #    raise a 406 PRECONDITION_FAILED. Delete and redeclare if you
+        #    change arguments in an existing RabbitMQ setup.
+        self.channel.queue_declare(
+            queue=main_queue,
+            durable=True,
+            arguments={"x-dead-letter-exchange": dlx_name},
+        )
+        logger.info(
+            "Email queues declared: main=%s DLX=%s DLQ=%s",
+            main_queue,
+            dlx_name,
+            dlq_name,
+        )
+
+    def publish_to_main_queue(self, body: bytes, properties) -> None:
+        """Re-publish a message body onto the main ingest queue.
+
+        Used by the consumer to manually requeue a retryable message so that
+        RabbitMQ can increment the x-death counter on the next failure.
+        """
+        self._ensure_connection()
+        self.channel.basic_publish(
+            exchange="",
+            routing_key=self.EMAIL_INGEST_QUEUE,
+            body=body,
+            properties=properties,
+        )
+
+    def start_email_ingest_consumer(self, on_message_callback, prefetch_count: int = 1):
         """Start consuming messages from the email ingest queue.
 
         This is a blocking call. Run it in a dedicated thread/process.
         """
         self._ensure_connection()
-        self.channel.queue_declare(queue=self.EMAIL_INGEST_QUEUE, durable=True)
+        self.declare_email_ingest_queue()
         self.channel.basic_qos(prefetch_count=prefetch_count)
         self.channel.basic_consume(
             queue=self.EMAIL_INGEST_QUEUE,

@@ -17,6 +17,8 @@ import yaml
 from pathlib import Path
 from types import SimpleNamespace as config
 
+from app.core.config import settings
+
 # Backward compatibility: support CHATGPT_API_KEY as alias for OPENAI_API_KEY
 if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
     os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
@@ -654,7 +656,6 @@ def format_structure(structure, order=None):
 class ConfigLoader:
     def __init__(self, default_path: str = None):
         # We ignore default_path and use global settings
-        from app.core.config import settings
         self.settings = settings
         self._default_dict = {
             "model": settings.PAGEINDEX_MODEL,
@@ -714,4 +715,3 @@ def print_tree(tree, indent=0):
 def print_wrapped(text, width=100):
     for line in text.splitlines():
         print(textwrap.fill(line, width=width))
-

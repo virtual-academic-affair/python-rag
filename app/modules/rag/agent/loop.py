@@ -69,6 +69,7 @@ async def run_agent_loop(
     
     logger.info(f"[Agent] Khởi động vòng lặp tự động (Tối đa {max_turns} turns) với {len(candidate_files)} tài liệu ứng viên.")
 
+    max_turns_reached = False
     for turn_idx in range(max_turns):
         logger.info(f"[Agent] Bắt đầu Turn {turn_idx + 1}")
         start_gen = time.perf_counter()
@@ -83,8 +84,8 @@ async def run_agent_loop(
         logger.info(f"[Agent] Gemini generation Turn {turn_idx + 1} completed in {gen_dur:.2f}s")
 
         if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-            total_prompt_tokens += getattr(resp.usage_metadata, 'prompt_token_count', 0)
-            total_candidates_tokens += getattr(resp.usage_metadata, 'candidates_token_count', 0)
+            total_prompt_tokens += getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0
+            total_candidates_tokens += getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0
 
         if not resp.candidates or not resp.candidates[0].content or not resp.candidates[0].content.parts:
             break
@@ -142,6 +143,8 @@ async def run_agent_loop(
                 )
 
         history.append(types.Content(role="user", parts=tool_response_parts))
+    else:
+        max_turns_reached = True
 
     sources_data = await build_sources_from_steps(steps, candidate_files)
     final_answer = verify_citations(final_answer, sources_data, resolve_citations, citation_link_type)
@@ -149,6 +152,7 @@ async def run_agent_loop(
 
     return {
         "final_answer": final_answer,
+        "max_turns_reached": max_turns_reached,
         "steps": steps,
         "sources": sources_data,
         "tokenUsage": {

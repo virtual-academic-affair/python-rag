@@ -141,10 +141,7 @@ class MetadataValidator:
     def get_schema_definition(self) -> dict:
         """Return a JSON-serializable schema description for the frontend."""
         return {
-            "documentTypes": [
-                {"value": e.value, "displayName": _type_display_name(e)}
-                for e in DocumentType
-            ],
+            "documentTypes": [e.value for e in DocumentType],
             "yearMin": YEAR_MIN,
             "yearMax": YEAR_MAX,
         }
@@ -192,13 +189,6 @@ class MetadataValidator:
         if isinstance(exc, ValidationError):
             return [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in exc.errors()]
         return [str(exc)]
-
-def _type_display_name(t: DocumentType) -> str:
-    return {
-        DocumentType.CTDT:       "Chương trình đào tạo",
-        DocumentType.CONG_VAN:   "Công văn",
-        DocumentType.QUYET_DINH: "Quyết định",
-    }.get(t, t.value)
 
 _validator_instance: Optional[MetadataValidator] = None
 

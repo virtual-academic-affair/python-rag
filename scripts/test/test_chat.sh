@@ -18,7 +18,7 @@ if check_response "$RESPONSE" "200" "Chat Query — Small Talk"; then
 fi
 
 log_info "POST /api/chat/query — RAG with rich text and citation options"
-QUERY_BODY='{"question": "Quy chế là gì?", "chatHistory": [], "toRichText": true, "resolveCitations": true, "citationLinkType": "html"}'
+QUERY_BODY='{"question": "Quy chế là gì?", "chatHistory": [], "toRichText": true, "resolveCitations": true, "citationLinkType": "markdown"}'
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/chat/query" \
     -H "Content-Type: application/json" \
     -H "${STUDENT_AUTH_HEADER}" \

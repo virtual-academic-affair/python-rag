@@ -23,7 +23,7 @@ async def get_metadata_schema(
     validator = get_metadata_service()
     schema_def = validator.get_schema_definition()
     return MetadataSchemaResponse(
-        document_types=[d["value"] for d in schema_def["documentTypes"]],
+        document_types=schema_def["documentTypes"],
         year_min=schema_def["yearMin"],
         year_max=schema_def["yearMax"],
     )

@@ -11,7 +11,7 @@ from google.genai import errors as genai_errors
 from app.utils.retry import async_retry
 
 from app.core.config import settings
-from app.modules.chat.dtos import ChatHistoryItem, UserContext
+from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
 from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
@@ -25,7 +25,7 @@ from app.modules.rag.agent import (
 from app.integrations.llm.gemini import gemini_client
 from app.modules.chat.services.query_analyzer_service import get_query_analyzer
 from app.utils.format_utils import sanitize_latex_in_markdown
-from app.modules.chat.services.chat_service import ChatService
+from app.modules.chat.services.chat_service import ChatService, fire_and_forget
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +84,36 @@ class ChatStreamService(ChatService):
         if not needs_rag:
             logger.info("[Chat-Stream] RAG bypass via gate. Generating direct answer.")
             start_reply = time.perf_counter()
-            direct_answer = await analyzer.generate_reply(effective_question, chat_history)
+            direct_answer, reply_usage = await analyzer.generate_reply(effective_question, chat_history)
             dur_reply = time.perf_counter() - start_reply
             yield json.dumps({"type": "text", "content": direct_answer, "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat-Stream] Direct reply: {dur_reply:.2f}s. Final answer: '{direct_answer[:150]}...' (Total time: {processing_time_ms / 1000:.2f}s)")
+            
+            analysis_usage = analysis.get("usage")
+            total_prompt_tokens = 0
+            total_candidates_tokens = 0
+            if analysis_usage:
+                total_prompt_tokens += analysis_usage.get("prompt_tokens", 0)
+                total_candidates_tokens += analysis_usage.get("completion_tokens", 0)
+            if reply_usage:
+                total_prompt_tokens += reply_usage.get("prompt_tokens", 0)
+                total_candidates_tokens += reply_usage.get("completion_tokens", 0)
+
+            token_usage_obj = None
+            if analysis_usage or reply_usage:
+                token_usage_obj = TokenUsage(
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_candidates_tokens,
+                    total_tokens=total_prompt_tokens + total_candidates_tokens
+                )
+
             yield json.dumps({
                 "done": True, 
+                "source": "llm",
                 "sources": [], 
                 "steps": [simplify_step(s) for s in pipeline_steps],
-                "tokenUsage": None,
+                "tokenUsage": token_usage_obj.model_dump(by_alias=True) if token_usage_obj else None,
                 "processingTimeMs": processing_time_ms
             })
             return
@@ -127,12 +147,23 @@ class ChatStreamService(ChatService):
             yield json.dumps({"type": "text", "content": faq.answer_markdown, "done": False})
             processing_time_ms = int((time.time() - start_time) * 1000)
             logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq.question}' (Completed in {processing_time_ms / 1000:.2f}s)")
+            analysis_usage = analysis.get("usage")
+            token_usage_obj = None
+            if analysis_usage:
+                token_usage_obj = TokenUsage(
+                    prompt_tokens=analysis_usage.get("prompt_tokens", 0),
+                    completion_tokens=analysis_usage.get("completion_tokens", 0),
+                    total_tokens=analysis_usage.get("total_tokens", 0) or (
+                        analysis_usage.get("prompt_tokens", 0) + analysis_usage.get("completion_tokens", 0)
+                    )
+                )
+
             yield json.dumps({
                 "done": True, 
                 "source": "faq",
                 "sources": [], 
                 "steps": [simplify_step(s) for s in pipeline_steps],
-                "tokenUsage": None,
+                "tokenUsage": token_usage_obj.model_dump(by_alias=True) if token_usage_obj else None,
                 "processingTimeMs": processing_time_ms
             })
             return
@@ -213,8 +244,8 @@ class ChatStreamService(ChatService):
 
             async for chunk in stream:
                 if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                    turn_prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
-                    turn_candidates_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
+                    turn_prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0) or 0
+                    turn_candidates_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0) or 0
 
                 if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                     continue
@@ -360,35 +391,47 @@ class ChatStreamService(ChatService):
             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
 
         dur_agent = time.perf_counter() - start_agent
-        if turn_idx == settings.AGENT_MAX_TURNS - 1 and tool_calls_in_turn:
+        max_turns_reached = (turn_idx == settings.AGENT_MAX_TURNS - 1 and bool(tool_calls_in_turn))
+        if max_turns_reached:
             logger.warning(f"[Chat-Stream] Agent reached max_turns ({settings.AGENT_MAX_TURNS}) and was cut off.")
             
         final_answer_accumulated = sanitize_latex_in_markdown(final_answer_accumulated)
+        if not final_answer_accumulated:
+            fallback_text = "Hệ thống chưa tổng hợp được câu trả lời từ tài liệu. Vui lòng hỏi lại cụ thể hơn."
+            logger.warning(f"[Chat-Stream] Empty final_answer_accumulated for user {user_context.name}. Emitting fallback.")
+            yield json.dumps({"type": "text", "content": fallback_text, "done": False})
+            final_answer_accumulated = fallback_text
+
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[Chat-Stream] Agent Loop done in {dur_agent:.2f}s | turns={turn_idx + 1} | Usage: {total_prompt_tokens} prompt / {total_candidates_tokens} completion")
         
-        faq_svc = await self._get_faq_svc()
-        asyncio.create_task(faq_svc.log_interaction(
-            question=effective_question,
-            question_vector=question_vector,
-            answer_markdown=final_answer_accumulated,
-            metadata_filter=metadata_filter,
-            source_type="chat",
-            processing_time_ms=processing_time_ms,
-        ))
+        if not max_turns_reached:
+            faq_svc = await self._get_faq_svc()
+            fire_and_forget(faq_svc.log_interaction(
+                question=effective_question,
+                question_vector=question_vector,
+                answer_markdown=final_answer_accumulated,
+                metadata_filter=metadata_filter,
+                source_type="chat",
+                processing_time_ms=processing_time_ms,
+            ))
+        else:
+            logger.warning(f"[Chat-Stream] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
             
         filtered_stream_steps = [s for s in stream_steps if s.get("type") in PERSISTED_STEP_TYPES]
+
+        token_usage_obj = TokenUsage(
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_candidates_tokens,
+            total_tokens=total_prompt_tokens + total_candidates_tokens
+        )
 
         yield json.dumps({
             "done": True,
             "source": "llm",
             "sources": [SourceCitation(**s).model_dump(by_alias=True) for s in current_sources] if current_sources else [],
             "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + filtered_stream_steps)],
-            "tokenUsage": {
-                "promptTokens": total_prompt_tokens,
-                "completionTokens": total_candidates_tokens,
-                "totalTokens": total_prompt_tokens + total_candidates_tokens
-            },
+            "tokenUsage": token_usage_obj.model_dump(by_alias=True),
             "processingTimeMs": processing_time_ms,
         })
 
