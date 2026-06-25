@@ -16,6 +16,7 @@ from .utils import ConfigLoader, remove_fields
 from app.integrations.storage.client import r2_storage
 from app.integrations.redis.client import get_redis_client
 from app.core.config import settings
+from app.modules.files.toc_tree.models.toc_tree import serialize_toc_structure
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
@@ -312,7 +313,7 @@ class PageIndexClient:
                 'doc_name': full.doc_name or '',
                 'doc_description': full.doc_description or '',
                 'line_count': full.line_count or 0,
-                'structure': full.structure or [],
+                'structure': serialize_toc_structure(full.structure) if full.structure else [],
                 'markdown_storage_path': full.markdown_storage_path,
             }
             await self._save_doc_to_cache(doc_id, doc)

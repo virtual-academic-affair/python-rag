@@ -2,9 +2,21 @@ import json
 import logging
 from typing import Any, Optional
 from redis.asyncio import Redis, from_url
+from pydantic import BaseModel
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
 
 class RedisClient:
     """
@@ -58,7 +70,7 @@ class RedisClient:
         if not self._redis:
             return
         try:
-            await self._redis.set(key, json.dumps(value), ex=ex)
+            await self._redis.set(key, json.dumps(_json_safe(value)), ex=ex)
         except Exception as e:
             logger.warning("Failed to set key %s in Redis: %s", key, e)
 
