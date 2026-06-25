@@ -16,6 +16,7 @@ from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.models.file import FileStatus
+from app.modules.files.toc_tree.models.toc_tree import serialize_toc_structure
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.files.repositories.file_repository import FileRepository
 
@@ -125,7 +126,7 @@ class RetrievalService:
             fid = d["file_id"]
             toc_doc = toc_map.get(fid)
             d["doc_description"] = toc_doc.doc_description if toc_doc else ""
-            d["structure"] = [node.model_dump() for node in toc_doc.structure] if toc_doc else []
+            d["structure"] = serialize_toc_structure(toc_doc.structure) if toc_doc else []
             d["markdown_storage_path"] = toc_doc.markdown_storage_path if toc_doc else ""
             
             f_doc = ready_file_map.get(fid)

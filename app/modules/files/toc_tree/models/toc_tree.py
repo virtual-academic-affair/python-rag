@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,3 +42,7 @@ class FileTocTree(BaseDocument):
         indexes = [
             "file_id"
         ]
+
+
+def serialize_toc_structure(structure: List[TocTreeNode]) -> list[dict[str, Any]]:
+    return [node.model_dump(mode="json") for node in structure]
