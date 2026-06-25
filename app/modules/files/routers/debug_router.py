@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from typing import Dict, Any
 import tempfile
 import os
 import logging
@@ -12,6 +11,7 @@ from app.modules.files.dtos import (
 )
 from app.integrations.llamaparse.client import get_llamaparse_client
 from app.modules.rag.ingestion.chunking_service import get_chunking_service
+from app.core.auth import JWTPayload
 from app.core.exceptions import AppException
 from app.core.dependencies import require_admin
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/debug/files", tags=["Debug Files"])
 )
 async def parse_pdf_preview(
     file: UploadFile = File(..., description="PDF file to parse"),
-    _admin: Dict[str, Any] = Depends(require_admin),
+    _admin: JWTPayload = Depends(require_admin),
 ):
     """Preview LlamaParse output before indexing/chunking."""
     temp_file_path = None
@@ -73,7 +73,7 @@ async def chunk_pdf_preview(
     file: UploadFile = File(..., description="PDF file to parse and chunk"),
     chunk_size_chars: int = Form(1800, alias="chunkSizeChars"),
     chunk_overlap_chars: int = Form(250, alias="chunkOverlapChars"),
-    _admin: Dict[str, Any] = Depends(require_admin),
+    _admin: JWTPayload = Depends(require_admin),
 ):
     temp_file_path = None
     try:

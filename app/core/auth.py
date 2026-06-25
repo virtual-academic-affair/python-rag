@@ -18,8 +18,16 @@ class JWTPayload(BaseModel):
 
     model_config = {"populate_by_name": True, "coerce_numbers_to_str": True}
 
+    @property
+    def user_id(self) -> str:
+        return self.sub
 
-def verify_token_local(token: str) -> dict:
+    @property
+    def display_name(self) -> str:
+        return self.email.split("@")[0] if self.email else "Unknown"
+
+
+def verify_token_local(token: str) -> JWTPayload:
     """Verify JWT token locally using PyJWT library.
     
     Raises:
@@ -58,9 +66,8 @@ def verify_token_local(token: str) -> dict:
                 headers={"WWW-Authenticate": "Bearer"},
             )
             
-        normalized_payload = jwt_payload.model_dump()
-        logger.debug("Local token verified successfully for user: %s", normalized_payload.get("email"))
-        return normalized_payload
+        logger.debug("Local token verified successfully for user: %s", jwt_payload.email)
+        return jwt_payload
         
     except jwt.ExpiredSignatureError as exc:
         logger.warning("Local token verification failed: token has expired: %s", exc)

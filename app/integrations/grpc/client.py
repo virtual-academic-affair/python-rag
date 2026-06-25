@@ -12,10 +12,28 @@ from importlib import import_module
 
 import grpc
 from google.protobuf.json_format import MessageToDict
-from app.core.exceptions import GrpcServerException
+from app.core.exceptions import GrpcServerException, NonRetryableGrpcError, RetryableGrpcError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+RETRYABLE_GRPC_STATUS_CODES = {
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.RESOURCE_EXHAUSTED,
+    grpc.StatusCode.ABORTED,
+}
+
+NON_RETRYABLE_GRPC_STATUS_CODES = {
+    grpc.StatusCode.UNAUTHENTICATED,
+    grpc.StatusCode.PERMISSION_DENIED,
+    grpc.StatusCode.INVALID_ARGUMENT,
+    grpc.StatusCode.NOT_FOUND,
+    grpc.StatusCode.ALREADY_EXISTS,
+    grpc.StatusCode.FAILED_PRECONDITION,
+    grpc.StatusCode.UNIMPLEMENTED,
+    grpc.StatusCode.OUT_OF_RANGE,
+}
 
 
 @dataclass
@@ -117,22 +135,27 @@ class GrpcClient:
             rpc = getattr(stub, rpc_name)
             return await rpc(request, timeout=self._config.timeout_seconds)
         except grpc.aio.AioRpcError as exc:
-            if exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+            code = exc.code()
+            if code == grpc.StatusCode.UNIMPLEMENTED:
                 logger.warning(
                     "%s.%s is not yet implemented on nest-api. Skipping.",
                     service_key.capitalize(), rpc_name
                 )
-            elif exc.code() == grpc.StatusCode.UNAUTHENTICATED:
+            elif code == grpc.StatusCode.UNAUTHENTICATED:
                 logger.info("gRPC call %s unauthenticated/rejected: %s", rpc_name, exc.details())
-            elif exc.code() == grpc.StatusCode.UNAVAILABLE:
+            elif code == grpc.StatusCode.UNAVAILABLE:
                 logger.error("gRPC server unavailable for %s: %s", rpc_name, exc.details())
-            elif exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+            elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
                 logger.error("gRPC call %s timed out after %.1fs", rpc_name, self._config.timeout_seconds)
             else:
-                logger.warning("gRPC call %s failed: %s — %s", rpc_name, exc.code(), exc.details())
-            
-            # For other RPCs, we still log but now we raise to notify caller
-            raise GrpcServerException(f"gRPC call {rpc_name} failed with {exc.code()}: {exc.details()}") from exc
+                logger.warning("gRPC call %s failed: %s — %s", rpc_name, code, exc.details())
+
+            message = f"gRPC call {rpc_name} failed with {code}: {exc.details()}"
+            if code in RETRYABLE_GRPC_STATUS_CODES:
+                raise RetryableGrpcError(message) from exc
+            if code in NON_RETRYABLE_GRPC_STATUS_CODES:
+                raise NonRetryableGrpcError(message) from exc
+            raise GrpcServerException(message) from exc
         except Exception as exc:
             if isinstance(exc, GrpcServerException):
                 raise
@@ -295,4 +318,3 @@ def get_grpc_client() -> GrpcClient:
             )
         )
     return _grpc_client_instance
-

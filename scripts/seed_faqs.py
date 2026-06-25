@@ -13,8 +13,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from app.core.config import settings
 from app.core.database import Database
-from app.modules.faq.service import get_faq_service
-from app.modules.metadata.service import get_metadata_service
+from beanie import init_beanie
+from app.modules.faq.models.faq import FaqDocument
+from app.modules.faq.models.faq_candidate import FaqCandidateDocument
+from app.modules.faq.services.faq_service import get_faq_service
+from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.utils.text_utils import remove_accents
 from app.utils.format_utils import rich_text_to_markdown
 from datetime import datetime, timezone
@@ -44,6 +47,14 @@ async def main(file_path: str = None):
     # Connect to DB
     await Database.connect()
     
+    await init_beanie(
+        database=Database.get_db(),
+        document_models=[
+            FaqDocument,
+            FaqCandidateDocument
+        ]
+    )
+    
     faq_svc = await get_faq_service()
     validator = get_metadata_service()
     db = Database.get_db()
@@ -72,8 +83,7 @@ async def main(file_path: str = None):
             
             metadata_filter = meta_model.model_dump()
             
-            question_unaccented = remove_accents(question)
-            existing = await faq_svc._faq_repo.find_one({"question_unaccented": question_unaccented})
+            existing = await faq_svc.check_duplicate_question(question)
             if existing:
                 print(f"[{i+1}/{len(faqs_data)}] Skipped (already exists): {question[:50]}...")
                 continue

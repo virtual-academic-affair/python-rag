@@ -1,8 +1,12 @@
 import asyncio
 import logging
+import time
 
 from app.integrations.grpc.client import get_grpc_client
+from app.core.config import settings
+from app.core.exceptions import RetryableGrpcError
 from app.utils.retry import async_retry
+from app.modules.email.exceptions import DownstreamCommitError, PermanentEmailError
 from app.modules.email.classification.label_classifier_service import (
     LabelClassifierService,
 )
@@ -51,6 +55,7 @@ class EmailWorkflowOrchestrator:
         title: str,
         content: str,
         message_id: int | None,
+        raise_on_grpc_fail: bool = False,
     ) -> ClassRegistrationPayload:
         """Extract the class-registration payload and push it to NestJS via gRPC."""
         extracted = await self.class_registration_service.process(
@@ -62,19 +67,41 @@ class EmailWorkflowOrchestrator:
             "classRegistration extracted payload: %s",
             extracted.model_dump_json(by_alias=True, exclude_none=False),
         )
-        if self.grpc_client is not None:
+        if not extracted.items:
+            raise PermanentEmailError(
+                f"ClassRegistration payload has empty items for message_id={message_id}"
+            )
+
+        if self.grpc_client is not None and settings.GRPC_ENABLED:
             try:
                 grpc_ok = await async_retry(
                     self.grpc_client.create_class_registration,
                     payload=extracted,
+                    retryable_exceptions=(RetryableGrpcError,),
                 )
                 if not grpc_ok:
-                    logger.warning(
-                        "gRPC class registration create failed/rejected for message_id=%s",
-                        extracted.message_id,
-                    )
+                    if raise_on_grpc_fail:
+                        raise DownstreamCommitError(
+                            f"gRPC create_class_registration rejected for message_id={extracted.message_id}"
+                        )
+                    else:
+                        logger.error(
+                            "gRPC create_class_registration rejected (ignored due to raise_on_grpc_fail=False) for message_id=%s",
+                            extracted.message_id,
+                        )
+            except DownstreamCommitError:
+                raise
             except Exception as grpc_err:
-                logger.warning("gRPC create_class_registration raised exception: %s", grpc_err)
+                if raise_on_grpc_fail:
+                    raise DownstreamCommitError(
+                        f"gRPC create_class_registration raised exception for message_id={extracted.message_id}: {grpc_err}"
+                    ) from grpc_err
+                else:
+                    logger.error(
+                        "gRPC create_class_registration raised exception (ignored) for message_id=%s: %s",
+                        extracted.message_id,
+                        grpc_err,
+                    )
         return extracted
 
     async def _run_inquiry(
@@ -84,6 +111,7 @@ class EmailWorkflowOrchestrator:
         message_id: int | None,
         student_code: str | None = None,
         enrollment_year: int | None = None,
+        raise_on_grpc_fail: bool = False,
     ) -> dict:
         """Generate the inquiry reply (RAG) and push it to NestJS via gRPC."""
         draft_result = await self.inquiry_service.process(
@@ -93,7 +121,7 @@ class EmailWorkflowOrchestrator:
             student_code=student_code,
             enrollment_year=enrollment_year,
         )
-        if self.grpc_client is not None and message_id is not None:
+        if self.grpc_client is not None and message_id is not None and settings.GRPC_ENABLED:
             try:
                 grpc_ok = await async_retry(
                     self.grpc_client.create_inquiry,
@@ -101,14 +129,31 @@ class EmailWorkflowOrchestrator:
                     answer=draft_result["answer"],
                     extracted_question=draft_result.get("question"),
                     inquiry_types=draft_result.get("types", []),
+                    retryable_exceptions=(RetryableGrpcError,),
                 )
                 if not grpc_ok:
-                    logger.warning(
-                        "gRPC inquiry create failed/rejected for message_id=%s",
-                        message_id,
-                    )
+                    if raise_on_grpc_fail:
+                        raise DownstreamCommitError(
+                            f"gRPC create_inquiry rejected for message_id={message_id}"
+                        )
+                    else:
+                        logger.error(
+                            "gRPC create_inquiry rejected (ignored due to raise_on_grpc_fail=False) for message_id=%s",
+                            message_id,
+                        )
+            except DownstreamCommitError:
+                raise
             except Exception as grpc_err:
-                logger.warning("gRPC create_inquiry raised exception: %s", grpc_err)
+                if raise_on_grpc_fail:
+                    raise DownstreamCommitError(
+                        f"gRPC create_inquiry raised exception for message_id={message_id}: {grpc_err}"
+                    ) from grpc_err
+                else:
+                    logger.error(
+                        "gRPC create_inquiry raised exception (ignored) for message_id=%s: %s",
+                        message_id,
+                        grpc_err,
+                    )
         return draft_result
 
     async def process_request(
@@ -120,6 +165,7 @@ class EmailWorkflowOrchestrator:
         sender_name: str = "",
         student_code: str | None = None,
         enrollment_year: int | None = None,
+        raise_on_grpc_fail: bool = False,
     ) -> ResponseModel:
         labels = await self.label_classifier.classify_labels(
             title=title,
@@ -154,7 +200,12 @@ class EmailWorkflowOrchestrator:
 
         if has_class_reg:
             if class_reg_content.strip():
-                cr_coro = self._run_class_registration(title, class_reg_content, message_id)
+                cr_coro = self._run_class_registration(
+                    title,
+                    class_reg_content,
+                    message_id,
+                    raise_on_grpc_fail=raise_on_grpc_fail,
+                )
             else:
                 logger.warning(
                     "classRegistration label present but split content is empty for message_id=%s; skipping",
@@ -168,6 +219,7 @@ class EmailWorkflowOrchestrator:
                     message_id=message_id,
                     student_code=student_code,
                     enrollment_year=enrollment_year,
+                    raise_on_grpc_fail=raise_on_grpc_fail,
                 )
             else:
                 logger.warning(
@@ -176,14 +228,13 @@ class EmailWorkflowOrchestrator:
                 )
 
         if cr_coro and inq_coro:
-            import time as _time
-            _t0 = _time.perf_counter()
+            _t0 = time.perf_counter()
             logger.info(
                 "[Orchestrator] Running classRegistration + inquiry in PARALLEL for message_id=%s",
                 message_id,
             )
             extracted, inquiry_draft = await asyncio.gather(cr_coro, inq_coro)
-            _elapsed = _time.perf_counter() - _t0
+            _elapsed = time.perf_counter() - _t0
             logger.info(
                 "[Orchestrator] Both workflows DONE in %.2fs (parallel) for message_id=%s",
                 _elapsed,

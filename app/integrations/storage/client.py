@@ -49,12 +49,6 @@ class R2Storage(BaseStorage):
     def __init__(self):
         """Initialize R2 client (only once)."""
         if self._client is None:
-            self.disabled = settings.R2_DISABLED
-            if self.disabled:
-                logger.warning("R2 storage is disabled.")
-                self._client = None
-                return
-
             try:
                 self._client = boto3.client(
                     's3',
@@ -67,11 +61,6 @@ class R2Storage(BaseStorage):
                 logger.info("✅ R2 client setup (boto3)")
             except Exception as e:
                 logger.error(f"❌ Failed to initialize R2 client: {e}")
-                if settings.R2_BYPASS_ON_INIT_ERROR:
-                    logger.warning("R2 bypass enabled. Continue startup with R2 disabled.")
-                    self.disabled = True
-                    self._client = None
-                    return
                 raise StorageException(f"R2 initialization failed: {e}")
 
     def get_client(self):
@@ -82,7 +71,7 @@ class R2Storage(BaseStorage):
 
     async def _ensure_bucket(self):
         """Ensure bucket exists, create if not."""
-        if self.disabled or self._bucket_ensured:
+        if self._bucket_ensured:
             return
             
         async with self._lock:
@@ -113,8 +102,6 @@ class R2Storage(BaseStorage):
         content_type: Optional[str] = None,
         metadata: Optional[dict] = None,
     ) -> dict:
-        if self.disabled:
-            return {}
             
         await self._ensure_bucket()
         
@@ -149,8 +136,6 @@ class R2Storage(BaseStorage):
             raise FileUploadException(f"Failed to upload file to R2: {e}")
 
     async def download_file(self, object_name: str) -> io.BytesIO:
-        if self.disabled:
-            raise FileDownloadException("R2 storage disabled")
             
         try:
             def _download():
@@ -171,8 +156,6 @@ class R2Storage(BaseStorage):
             raise FileDownloadException(f"Failed to download from R2: {e}")
             
     async def delete_file(self, object_name: str) -> bool:
-        if self.disabled:
-            return False
             
         try:
             def _delete():
@@ -188,8 +171,6 @@ class R2Storage(BaseStorage):
             return False
             
     async def file_exists(self, object_name: str) -> bool:
-        if self.disabled:
-            return False
             
         try:
             def _head():
@@ -207,8 +188,6 @@ class R2Storage(BaseStorage):
             return False
             
     async def get_file_url(self, object_name: str, expires: int = 3600) -> str:
-        if self.disabled:
-            return ""
             
         if settings.R2_PUBLIC_DOMAIN:
             domain = settings.R2_PUBLIC_DOMAIN.rstrip('/')
@@ -230,8 +209,6 @@ class R2Storage(BaseStorage):
             return ""
 
     async def list_files(self, prefix: str = "") -> list[dict]:
-        if self.disabled:
-            return []
             
         await self._ensure_bucket()
         try:

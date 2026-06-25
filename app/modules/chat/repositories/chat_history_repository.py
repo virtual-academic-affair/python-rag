@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
+from pymongo import ReturnDocument
 
+from app.core.exceptions import NotFoundException
+from app.modules.chat.dtos.send_message import TokenUsage
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
+from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
 
 # Single source of truth for which pipeline step types are persisted to MongoDB.
 PERSISTED_STEP_TYPES = frozenset({"query_analysis", "faq_check", "retrieval", "call"})
@@ -18,27 +22,30 @@ class ChatHistoryRepository:
 
     async def ensure_session(self, session_id: str, user_id: str) -> ChatSessionDocument:
         now = datetime.now(timezone.utc)
+        coll = ChatSessionDocument.get_motor_collection()
+        await coll.find_one_and_update(
+            {"session_id": session_id, "user_id": user_id},
+            {
+                "$setOnInsert": {
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "title": None,
+                    "metadata": {},
+                    "message_count": 0,
+                    "created_at": now,
+                },
+                "$set": {
+                    "updated_at": now,
+                    "last_message_at": now,
+                    "status": self.SESSION_STATUS_ACTIVE,
+                }
+            },
+            upsert=True,
+        )
         session = await ChatSessionDocument.find_one(
             ChatSessionDocument.session_id == session_id,
             ChatSessionDocument.user_id == user_id
         )
-        if not session:
-            session = ChatSessionDocument(
-                session_id=session_id,
-                user_id=user_id,
-                title=None,
-                metadata={},
-                message_count=0,
-                status=self.SESSION_STATUS_ACTIVE,
-                last_message_at=now,
-            )
-            await session.insert()
-        else:
-            session.updated_at = now
-            session.last_message_at = now
-            session.status = self.SESSION_STATUS_ACTIVE
-            await session.save()
-            
         return session
 
     async def append_message(
@@ -47,40 +54,43 @@ class ChatHistoryRepository:
         user_id: str,
         role: str,
         content: str,
-        token_usage: Optional[dict[str, Any]] = None,
-        sources: Optional[list[dict[str, Any]]] = None,
+        token_usage: Optional[TokenUsage | dict[str, Any]] = None,
+        sources: Optional[list[SourceCitation | dict[str, Any]]] = None,
         steps: Optional[list[dict[str, Any]]] = None,
         processing_time_ms: Optional[int] = None,
         message_type: str = "text",
     ) -> ChatMessageDocument:
         now = datetime.now(timezone.utc)
-        session = await ChatSessionDocument.find_one(
-            ChatSessionDocument.session_id == session_id,
-            ChatSessionDocument.user_id == user_id
+        coll = ChatSessionDocument.get_motor_collection()
+        
+        session_doc = await coll.find_one_and_update(
+            {"session_id": session_id, "user_id": user_id},
+            {
+                "$inc": {"message_count": 1},
+                "$set": {
+                    "last_message_at": now,
+                    "updated_at": now,
+                    "status": self.SESSION_STATUS_ACTIVE
+                },
+                "$setOnInsert": {
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "title": None,
+                    "metadata": {},
+                    "created_at": now,
+                }
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER
         )
-        if not session:
-            session = ChatSessionDocument(
-                session_id=session_id,
-                user_id=user_id,
-                title=None,
-                metadata={},
-                message_count=1,
-                status=self.SESSION_STATUS_ACTIVE,
-                last_message_at=now,
-            )
-            await session.insert()
-        else:
-            session.message_count += 1
-            session.updated_at = now
-            session.last_message_at = now
-            await session.save()
-            
-        sequence = session.message_count
-
+        
+        sequence = session_doc["message_count"]
+        
         if role == "user" and sequence == 1:
-            if not session.title:
-                session.title = content
-                await session.save()
+            await coll.update_one(
+                {"session_id": session_id, "user_id": user_id, "title": None},
+                {"$set": {"title": content}}
+            )
 
         # Enforce the persistence whitelist
         persisted_steps = [
@@ -88,6 +98,8 @@ class ChatHistoryRepository:
             for s in (steps or [])
             if isinstance(s, dict) and s.get("type") in PERSISTED_STEP_TYPES
         ]
+        token_usage_model = TokenUsage.model_validate(token_usage) if token_usage else None
+        source_models = [SourceCitation.model_validate(source) for source in (sources or [])]
 
         message_doc = ChatMessageDocument(
             session_id=session_id,
@@ -95,8 +107,8 @@ class ChatHistoryRepository:
             role=role,
             content=content,
             message_type=message_type,
-            token_usage=token_usage,
-            sources=sources or [],
+            token_usage=token_usage_model,
+            sources=source_models,
             steps=persisted_steps,
             processing_time_ms=processing_time_ms,
             sequence=sequence,
@@ -145,6 +157,14 @@ class ChatHistoryRepository:
         limit: int,
         skip: int,
     ) -> tuple[list[ChatMessageDocument], int]:
+        # Verify session existence
+        session = await ChatSessionDocument.find_one(
+            ChatSessionDocument.session_id == session_id,
+            ChatSessionDocument.user_id == user_id
+        )
+        if not session:
+            raise NotFoundException("Session", session_id)
+
         total = await ChatMessageDocument.find(
             ChatMessageDocument.session_id == session_id,
             ChatMessageDocument.user_id == user_id
@@ -194,11 +214,12 @@ class ChatHistoryRepository:
             ChatSessionDocument.user_id == user_id
         )
         if session:
-            await session.delete()
+            # Delete messages first to prevent orphan messages if session delete fails
             await ChatMessageDocument.find(
                 ChatMessageDocument.session_id == session_id,
                 ChatMessageDocument.user_id == user_id
             ).delete()
+            await session.delete()
             return True
         return False
 

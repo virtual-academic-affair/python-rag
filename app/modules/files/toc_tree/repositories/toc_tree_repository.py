@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from app.core.base_beanie_repository import BeanieRepository
-from app.modules.files.toc_tree.models.toc_tree import FileTocTree
+from app.modules.files.toc_tree.models.toc_tree import FileTocTree, TocTreeUpsertData
 
 
 class FileTocTreeRepository(BeanieRepository[FileTocTree]):
@@ -19,15 +19,22 @@ class FileTocTreeRepository(BeanieRepository[FileTocTree]):
             return []
         return await FileTocTree.find({"file_id": {"$in": file_ids}}).limit(len(file_ids)).to_list()
 
-    async def upsert_by_file_id(self, file_id: str, data: Dict[str, Any]) -> bool:
+    async def upsert_by_file_id(self, file_id: str, data: TocTreeUpsertData) -> bool:
         existing = await self.find_by_file_id(file_id)
+        update_data = {
+            "doc_name": data.doc_name,
+            "doc_description": data.doc_description,
+            "line_count": data.line_count,
+            "structure": data.structure,
+            "markdown_storage_path": data.markdown_storage_path,
+        }
         if existing:
-            for key, value in data.items():
+            for key, value in update_data.items():
                 setattr(existing, key, value)
             await self.save(existing)
             return True
 
-        doc = FileTocTree(file_id=file_id, **data)
+        doc = FileTocTree(file_id=file_id, **update_data)
         await self.create(doc)
         return True
 

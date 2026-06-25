@@ -1,22 +1,40 @@
-from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from app.core.base_document import BaseDocument
 
+
 class TocTreeNode(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     title: str
     node_id: str
     line_num: int
     text: Optional[str] = None
     summary: Optional[str] = None
     prefix_summary: Optional[str] = None
-    nodes: List["TocTreeNode"] = Field(default_factory=list)
+    nodes: List[TocTreeNode] = Field(default_factory=list)
+
+
+class TocTreeUpsertData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    doc_name: str
+    doc_description: str = ""
+    line_count: int = 0
+    structure: List[TocTreeNode] = Field(default_factory=list)
+    markdown_storage_path: Optional[str] = None
+
 
 class FileTocTree(BaseDocument):
     file_id: str
     doc_name: str
     doc_description: str
     line_count: int
-    structure: List[Dict[str, Any]]  # Raw tree from PageIndex
+    structure: List[TocTreeNode] = Field(default_factory=list)
     markdown_storage_path: Optional[str] = None
 
     class Settings:

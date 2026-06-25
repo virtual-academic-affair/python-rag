@@ -6,6 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_extraction_llm
 from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
+from app.modules.rag.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
 from app.modules.email.utils.email_utils import extract_structured_data
 from app.modules.faq.services.faq_service import get_faq_service
@@ -129,9 +130,9 @@ class InquiryService:
         
         if faq:
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Inquiry] FAQ hit: '{faq['question']}'")
+            logger.info(f"[Inquiry] FAQ hit: '{faq.question}'")
             rag_result = {
-                "answer": faq["answer_markdown"],
+                "answer": faq.answer_markdown,
                 "sources": [],
                 "source": "faq"
             }
@@ -180,9 +181,6 @@ class InquiryService:
                     f"Relevant documents found:\n{files_info_str}\n\n"
                     f"Please answer the user's specific inquiry based on these documents. Respect the specific rules for the given academic year and cohort if provided."
                 )
-
-                # Generate Answer using shared Agent logic
-                from app.modules.rag.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 
                 agent_result = await run_agent_loop(
                     candidate_files=candidate_files,

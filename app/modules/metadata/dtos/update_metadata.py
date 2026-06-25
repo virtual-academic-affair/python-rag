@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, List
-from pydantic import Field, model_validator
+from typing import Optional, List, Any
+from pydantic import Field, model_validator, ConfigDict
 from app.core.base_schema import BaseSchema
 from app.modules.metadata.models.value_objects import (
     DocumentType,
@@ -75,6 +75,8 @@ class FileMetadataUpdateSchema(BaseSchema):
 
 class FaqMetadataSchema(BaseSchema):
     """Request body for FAQ metadata_filter."""
+    model_config = ConfigDict(extra="forbid")
+
     enrollment_year: Optional[YearRangeSchema] = None
     academic_year: Optional[YearRangeSchema] = None
 
@@ -86,6 +88,8 @@ class FaqMetadataSchema(BaseSchema):
 
 class FaqMetadataCreateSchema(BaseSchema):
     """Used specifically when creating/updating FAQs to ensure 0-9999 defaults."""
+    model_config = ConfigDict(extra="forbid")
+
     enrollment_year: Optional[YearRangeSchema] = Field(default_factory=YearRangeSchema)
     academic_year: Optional[YearRangeSchema] = Field(default_factory=YearRangeSchema)
 
@@ -97,9 +101,33 @@ class FaqMetadataCreateSchema(BaseSchema):
 
 class UnifiedFilterSchema(BaseSchema):
     """Generic schema for filtering by metadata. All fields are optional."""
+    model_config = ConfigDict(extra="forbid")
+
     enrollment_year: Optional[YearRangeSchema] = None
     academic_year: Optional[YearRangeSchema] = None
     type: Optional[List[DocumentType]] = Field(
         None, 
         description="Filter by document types (array)."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_type_and_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "type" in data:
+                val = data["type"]
+                if isinstance(val, str):
+                    if val == "":
+                        data["type"] = None
+                    else:
+                        data["type"] = [val]
+                elif isinstance(val, list):
+                    if not val:
+                        data["type"] = None
+                elif val is None:
+                    data["type"] = None
+        return data
+
+class RelaxedUnifiedFilterSchema(UnifiedFilterSchema):
+    """Relaxed version of UnifiedFilterSchema that ignores extra fields (used when skip_validation=True)."""
+    model_config = ConfigDict(extra="ignore")

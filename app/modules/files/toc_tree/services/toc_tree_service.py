@@ -1,8 +1,8 @@
-from typing import Optional, Dict, Any
 import logging
+from typing import Optional
 
 from app.core.exceptions import NotFoundException
-from app.modules.files.toc_tree.models.toc_tree import FileTocTree
+from app.modules.files.toc_tree.models.toc_tree import FileTocTree, TocTreeUpsertData
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class TocTreeService:
             raise NotFoundException("TOC Tree", file_id)
         return toc_data
 
-    async def upsert_toc_tree(self, file_id: str, data: Dict[str, Any]) -> bool:
+    async def upsert_toc_tree(self, file_id: str, data: TocTreeUpsertData) -> bool:
         """Insert or replace the TOC tree for a given file_id."""
         logger.info(f"Upserting TOC tree for file: {file_id}")
         return await self._repo.upsert_by_file_id(file_id, data)

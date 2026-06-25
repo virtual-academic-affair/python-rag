@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,8 @@ class FileStatusNotifier:
 
     async def connect(self, client_id: str, websocket: WebSocket) -> None:
         """Accept and register a new websocket connection."""
-        await websocket.accept()
+        if websocket.client_state == WebSocketState.CONNECTING:
+            await websocket.accept()
         async with self._lock:
             self._connections[client_id].add(websocket)
         logger.info(f"WS: Client connected to progress channel: {client_id}")

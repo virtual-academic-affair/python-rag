@@ -26,7 +26,8 @@ from app.modules.chat.dtos import (
     ChatSessionRenameRequest,
     ChatSessionMutationResponse,
 )
-from app.core.dependencies import require_auth
+from app.core.dependencies import require_auth, require_admin
+from app.core.auth import JWTPayload
 from app.modules.chat.services.chat_service import get_chat_service
 from app.modules.chat.services.chat_stream_service import get_chat_stream_service
 from app.modules.chat.repositories.chat_history_repository import get_chat_history_repository
@@ -57,17 +58,17 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 )
 async def chat_query(
     request: ChatQueryRequest,
-    user: dict = Depends(require_auth)
+    user: JWTPayload = Depends(require_auth)
 ):
     """
     Handle a single chat query with RAG support.
     """
     try:
         user_context = UserContext(
-            user_id=str(user.get("sub", "")),
-            name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=user.get("enrollment_year"),
-            role=user.get("role", "student"),
+            user_id=user.user_id,
+            name=user.display_name,
+            enrollment_year=user.enrollment_year,
+            role=user.role,
         )
 
         session_id = request.session_id or str(uuid4())
@@ -102,16 +103,18 @@ async def chat_query(
             to_rich_text=request.to_rich_text,
         )
 
-        await chat_history_repo.append_message(
-            session_id=session_id,
-            user_id=user_context.user_id,
-            role="assistant",
-            content=result.get("answer", ""),
-            token_usage=result.get("token_usage"),
-            sources=result.get("sources"),
-            steps=result.get("steps"),
-            processing_time_ms=result.get("processing_time_ms"),
-        )
+        answer_content = result.get("answer", "")
+        if answer_content.strip():
+            await chat_history_repo.append_message(
+                session_id=session_id,
+                user_id=user_context.user_id,
+                role="assistant",
+                content=answer_content,
+                token_usage=result.get("token_usage"),
+                sources=result.get("sources"),
+                steps=result.get("steps"),
+                processing_time_ms=result.get("processing_time_ms"),
+            )
 
         return ChatQueryResponse(session_id=session_id, **result)
 
@@ -139,17 +142,17 @@ async def chat_query(
 )
 async def chat_stream(
     request: ChatStreamRequest,
-    user: dict = Depends(require_auth)
+    user: JWTPayload = Depends(require_auth)
 ):
     """
     Stream chat response in real-time using RAG.
     """
     try:
         user_context = UserContext(
-            user_id=str(user.get("sub", "")),
-            name=user.get("email", "").split("@")[0] if user.get("email") else "Unknown",
-            enrollment_year=user.get("enrollment_year"),
-            role=user.get("role", "student"),
+            user_id=user.user_id,
+            name=user.display_name,
+            enrollment_year=user.enrollment_year,
+            role=user.role,
         )
 
         session_id = request.session_id or str(uuid4())
@@ -204,17 +207,18 @@ async def chat_stream(
                                 or ""
                             )
 
-                        await chat_history_repo.append_message(
-                            session_id=session_id,
-                            user_id=user_context.user_id,
-                            role="assistant",
-                            content=assistant_content,
-                            token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
-                            sources=payload.get("sources"),
-                            steps=payload.get("steps"),
-                            processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
-                            message_type="text",
-                        )
+                        if assistant_content.strip():
+                            await chat_history_repo.append_message(
+                                session_id=session_id,
+                                user_id=user_context.user_id,
+                                role="assistant",
+                                content=assistant_content,
+                                token_usage=payload.get("token_usage") or payload.get("tokenUsage"),
+                                sources=payload.get("sources"),
+                                steps=payload.get("steps"),
+                                processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
+                                message_type="text",
+                            )
                     
                     chunk_json = json.dumps(payload, ensure_ascii=False)
                     yield f"data: {chunk_json}\n\n"
@@ -303,14 +307,14 @@ async def list_chat_sessions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
     status_filter: str | None = Query(None, alias="statusFilter"),
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     page = max(1, page)
     page_size = min(max(1, page_size), 100)
     skip = (page - 1) * page_size
 
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
 
     normalized_status_filter = (
         status_filter.strip().lower() if status_filter else repo.SESSION_STATUS_ACTIVE
@@ -354,14 +358,14 @@ async def list_chat_messages(
     session_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100, alias="pageSize"),
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     page = max(1, page)
     page_size = min(max(1, page_size), 100)
     skip = (page - 1) * page_size
 
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
     messages, total = await repo.list_messages_by_session(
         session_id=session_id,
         user_id=user_id,
@@ -401,10 +405,10 @@ async def list_chat_messages(
 async def rename_chat_session(
     session_id: str,
     request: ChatSessionRenameRequest,
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
     updated = await repo.rename_session(session_id=session_id, user_id=user_id, title=request.title)
     if not updated:
         raise NotFoundException("Session", session_id)
@@ -418,10 +422,10 @@ async def rename_chat_session(
 )
 async def archive_chat_session(
     session_id: str,
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
     updated = await repo.archive_session(session_id=session_id, user_id=user_id)
     if not updated:
         raise NotFoundException("Session", session_id)
@@ -435,10 +439,10 @@ async def archive_chat_session(
 )
 async def unarchive_chat_session(
     session_id: str,
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
     updated = await repo.unarchive_session(session_id=session_id, user_id=user_id)
     if not updated:
         raise NotFoundException("Session", session_id)
@@ -452,10 +456,10 @@ async def unarchive_chat_session(
 )
 async def delete_chat_session(
     session_id: str,
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     repo = get_chat_history_repository()
-    user_id = str(user.get("sub", ""))
+    user_id = user.user_id
     deleted = await repo.delete_session(session_id=session_id, user_id=user_id)
     if not deleted:
         raise NotFoundException("Session", session_id)
@@ -470,7 +474,7 @@ async def delete_chat_session(
 )
 async def chat_retrieve_preview(
     request: ChatRetrievePreviewRequest,
-    user: dict = Depends(require_auth),
+    user: JWTPayload = Depends(require_admin),
 ):
     """Preview semantic retrieval result list for relevance tuning."""
     try:

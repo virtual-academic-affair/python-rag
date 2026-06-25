@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
-from typing import Dict, Any
 
+from app.core.auth import JWTPayload
 from app.core.dependencies import require_auth
 from app.modules.files.toc_tree.services.toc_tree_service import get_toc_tree_service
 from app.modules.files.toc_tree.dtos import TocTreeResponse
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/toc-tree", tags=["TOC Tree"])
 )
 async def get_toc_tree(
     file_id: str,
-    _user: Dict[str, Any] = Depends(require_auth)
+    _user: JWTPayload = Depends(require_auth)
 ):
     svc = get_toc_tree_service()
     toc_data = await svc.get_toc_tree(file_id)

@@ -75,13 +75,15 @@ class QueryAnalyzer:
         {
           "needs_rag": bool,
           "effective_question": str,
-          "metadata_filter": dict | None
+          "metadata_filter": dict | None,
+          "usage": dict | None
         }
         """
         fallback_res = {
             "needs_rag": True,
             "effective_question": question,
-            "metadata_filter": None
+            "metadata_filter": None,
+            "usage": None,
         }
 
         async def fallback_regex():
@@ -148,10 +150,19 @@ class QueryAnalyzer:
                     else:
                         metadata_filter = regex_filter
 
+            usage = None
+            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+                usage = {
+                    "prompt_tokens": getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0,
+                    "completion_tokens": getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0,
+                    "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0) or 0,
+                }
+
             return {
                 "needs_rag": needs_rag,
                 "effective_question": effective_question,
-                "metadata_filter": metadata_filter
+                "metadata_filter": metadata_filter,
+                "usage": usage,
             }
 
         except Exception as e:
@@ -162,9 +173,10 @@ class QueryAnalyzer:
         self,
         effective_question: str,
         history: List[ChatHistoryItem],
-    ) -> str:
+    ) -> tuple[str, Optional[Dict[str, int]]]:
         """
         Sinh câu trả lời trực tiếp (khi needs_rag=false).
+        Trả về (direct_answer, usage_dict)
         """
         try:
             history_str = "\n".join([f"{'User' if h.role == 'user' else 'Assistant'}: {h.content}" for h in history])
@@ -184,10 +196,18 @@ class QueryAnalyzer:
                 )
             )
 
-            return (resp.text or "").strip() or "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?"
+            usage = None
+            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
+                usage = {
+                    "prompt_tokens": getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0,
+                    "completion_tokens": getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0,
+                    "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0) or 0,
+                }
+
+            return ((resp.text or "").strip() or "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?", usage)
         except Exception as e:
             logger.error(f"[Analyzer] Error during generate_reply: {e}", exc_info=True)
-            return "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?"
+            return ("Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?", None)
 
 
 _analyzer_instance: Optional[QueryAnalyzer] = None

@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, Callable, Awaitable, Tuple
 
 from app.core.config import settings
 from app.core.exceptions import NotFoundException, ConflictException, ValidationException
+from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.models.file import FileDocument, FileStatus
 from app.integrations.storage.client import r2_storage
 from app.modules.files.utils.file_helpers import (
@@ -16,6 +17,7 @@ from app.modules.files.utils.file_helpers import (
     cleanup_temp_file,
 )
 from app.modules.files.utils.upload_state import UploadStep, UploadState
+from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.utils.text_utils import remove_accents
 from app.modules.metadata.services.metadata_service import get_metadata_service
@@ -133,13 +135,16 @@ class FileUploadMixin:
 
             # Update TOC Tree with markdown storage path
             toc_repo = FileTocTreeRepository()
-            await toc_repo.upsert_by_file_id(file_id, {
-                "doc_name": display_name,
-                "doc_description": ingest_result.get("summary", ""),
-                "line_count": ingest_result.get("line_count", 0),
-                "structure": ingest_result.get("toc_structure", []),
-                "markdown_storage_path": md_storage_path,
-            })
+            await toc_repo.upsert_by_file_id(
+                file_id,
+                TocTreeUpsertData(
+                    doc_name=display_name,
+                    doc_description=ingest_result.get("summary", ""),
+                    line_count=ingest_result.get("line_count", 0),
+                    structure=ingest_result.get("toc_structure", []),
+                    markdown_storage_path=md_storage_path,
+                ),
+            )
 
             ready_doc = await self.file_repo.mark_ready(
                 file_id=file_id,
@@ -156,6 +161,9 @@ class FileUploadMixin:
             await _notify("completed", "Upload hoàn tất")
         except Exception as e:
             logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
+            md_path = md_storage_path if 'md_storage_path' in locals() else None
+            t_repo = toc_repo if 'toc_repo' in locals() else FileTocTreeRepository()
+            await self._cleanup_background_artifacts(file_id, md_path, t_repo)
             await self.file_repo.mark_failed(file_id)
             await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
         finally:
@@ -170,19 +178,27 @@ class FileUploadMixin:
     async def _cleanup_background_artifacts(
         self,
         file_id: str,
-        markdown_storage_path: str,
+        markdown_storage_path: Optional[str],
         toc_repo: FileTocTreeRepository,
     ) -> None:
         """Best-effort cleanup for artifacts created before a background failure."""
-        try:
-            await r2_storage.delete_file(markdown_storage_path)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup markdown artifact for failed file {file_id}: {e}")
+        if markdown_storage_path:
+            try:
+                await r2_storage.delete_file(markdown_storage_path)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup markdown artifact for failed file {file_id}: {e}")
 
         try:
             await toc_repo.delete_by_file_id(file_id)
         except Exception as e:
             logger.warning(f"Failed to cleanup TOC for failed file {file_id}: {e}")
+
+        try:
+            indexer = get_qdrant_indexer()
+            await indexer.delete_by_file_id(file_id)
+            logger.info(f"🧹 Cleaned up Qdrant vectors for failed file {file_id}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup Qdrant vectors for failed file {file_id}: {e}")
 
     async def _ingest_to_vector_db(
         self,

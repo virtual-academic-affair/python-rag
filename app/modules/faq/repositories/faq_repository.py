@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from app.core.base_beanie_repository import BeanieRepository
 from app.modules.faq.models.faq import FaqDocument
@@ -16,6 +19,9 @@ class FaqRepository(BeanieRepository[FaqDocument]):
 
     async def find_by_qdrant_point_id(self, point_id: str) -> Optional[FaqDocument]:
         return await FaqDocument.find_one(FaqDocument.qdrant_point_id == point_id)
+
+    async def find_by_candidate_id(self, candidate_id: str) -> Optional[FaqDocument]:
+        return await FaqDocument.find_one(FaqDocument.candidate_id == candidate_id)
 
     async def list_faqs(
         self,
@@ -54,9 +60,12 @@ class FaqRepository(BeanieRepository[FaqDocument]):
         )
 
     async def increment_view_count(self, faq_id: str) -> bool:
-        doc = await self.find_by_id(faq_id)
-        if not doc:
+        try:
+            doc = await self.find_by_id(faq_id)
+            if not doc:
+                return False
+            await doc.update({"$inc": {"view_count": 1}})
+            return True
+        except Exception as e:
+            logger.error(f"[FAQ] Failed to increment view count for FAQ {faq_id}: {e}")
             return False
-        doc.view_count += 1
-        await self.save(doc)
-        return True

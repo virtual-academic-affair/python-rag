@@ -37,11 +37,6 @@ class Database:
         Connect to MongoDB.
         Called during FastAPI startup.
         """
-        if settings.MONGODB_DISABLED:
-            logger.warning("⚠️  MongoDB is disabled via settings. Skipping connection.")
-            cls._client = None
-            cls._db = None
-            return
         try:
             logger.info(f"Connecting to MongoDB: {settings.MONGODB_DB_NAME}")
 

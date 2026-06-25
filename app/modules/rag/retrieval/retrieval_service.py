@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
+from app.modules.files.models.file import FileStatus
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.files.repositories.file_repository import FileRepository
 
@@ -87,16 +88,23 @@ class RetrievalService:
         # 3. Retrieve top documents based on score threshold (at least 1, at most max_files)
         doc_scores.sort(key=lambda x: x["doc_score"], reverse=True)
         
+        # Filter candidate files by database status (must be READY)
+        all_candidate_ids = [d["file_id"] for d in doc_scores]
+        file_docs = await self._file_repo.find_by_ids(all_candidate_ids)
+        ready_file_map = {str(f.id): f for f in file_docs if f.status == FileStatus.READY}
+        
+        ready_doc_scores = [d for d in doc_scores if d["file_id"] in ready_file_map]
+        
         before_filter_log = [
             f"{d['file_name']} (id={d['file_id']}, score={d['doc_score']:.4f})"
-            for d in doc_scores
+            for d in ready_doc_scores
         ]
-        logger.info(f"[Retrieval] Các tài liệu được quét: {before_filter_log}")
+        logger.info(f"[Retrieval] Các tài liệu READY được quét: {before_filter_log}")
         
         threshold = settings.RETRIEVAL_MIN_DOC_SCORE
         filtered_docs = []
-        for i, d in enumerate(doc_scores):
-            if d["doc_score"] >= threshold or i == 0:
+        for i, d in enumerate(ready_doc_scores):
+            if d["doc_score"] >= threshold:
                 filtered_docs.append(d)
                 
         top_docs = filtered_docs[:max_files]
@@ -112,23 +120,34 @@ class RetrievalService:
         toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
         toc_map = {t.file_id: t for t in toc_docs}
         
-        file_docs = await self._file_repo.find_by_ids(top_ids)
-        file_map = {str(f.id): f for f in file_docs}
-
+        valid_top_docs = []
         for d in top_docs:
             fid = d["file_id"]
             toc_doc = toc_map.get(fid)
             d["doc_description"] = toc_doc.doc_description if toc_doc else ""
-            d["structure"] = toc_doc.structure if toc_doc else []
+            d["structure"] = [node.model_dump() for node in toc_doc.structure] if toc_doc else []
             d["markdown_storage_path"] = toc_doc.markdown_storage_path if toc_doc else ""
             
-            f_doc = file_map.get(fid)
+            f_doc = ready_file_map.get(fid)
             if f_doc:
                 d["storage_path"] = f_doc.storage_path or ""
+                # table_of_contents: pre-filtered flat list of headings (blacklist-cleaned)
+                d["table_of_contents"] = f_doc.table_of_contents or []
             else:
                 d["storage_path"] = ""
+                d["table_of_contents"] = []
+                
+            # Filter out stale/incomplete documents
+            if not d.get("storage_path"):
+                logger.warning(f"[Retrieval] Bỏ qua tài liệu stale/không tồn tại storage_path cho file_id={fid}")
+                continue
+            if not d.get("markdown_storage_path"):
+                logger.warning(f"[Retrieval] Bỏ qua tài liệu thiếu TOC/markdown artifact cho file_id={fid}")
+                continue
+                
+            valid_top_docs.append(d)
 
-        return top_docs
+        return valid_top_docs
 
 _retrieval_service_instance: Optional[RetrievalService] = None
 

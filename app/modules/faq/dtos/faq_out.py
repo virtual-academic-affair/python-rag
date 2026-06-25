@@ -4,6 +4,7 @@ from app.core.base_schema import BaseSchema
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.metadata.dtos.metadata_out import FaqMetadataResponse
+from app.modules.metadata.models.value_objects import FaqMetadata
 
 class FaqResponse(BaseSchema):
     id: str = Field(..., alias="faqId")
@@ -18,7 +19,6 @@ class FaqResponse(BaseSchema):
 
     @classmethod
     def from_document(cls, doc: FaqDocument) -> 'FaqResponse':
-        from app.modules.metadata.models.value_objects import FaqMetadata
         raw_meta = doc.metadata_filter or FaqMetadata()
         try:
             if isinstance(raw_meta, dict):
@@ -56,7 +56,6 @@ class FaqCandidateResponse(BaseSchema):
 
     @classmethod
     def from_document(cls, doc: FaqCandidateDocument) -> 'FaqCandidateResponse':
-        from app.modules.metadata.models.value_objects import FaqMetadata
         raw_meta = doc.metadata_filter_suggestion or FaqMetadata()
         try:
             meta_model = FaqMetadata(**raw_meta) if isinstance(raw_meta, dict) else raw_meta

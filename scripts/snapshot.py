@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import logging
+import io
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any
@@ -27,8 +29,10 @@ from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
 from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
+from app.integrations.storage.client import r2_storage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -117,8 +121,6 @@ class SnapshotManager:
         # 3. Download Markdown files from R2
         logger.info("  Downloading Markdown files from R2...")
         try:
-            from app.integrations.storage.client import r2_storage
-            import shutil
             uploads_md_dir = os.path.join(os.path.dirname(__file__), "uploads_md")
             if os.path.exists(uploads_md_dir):
                 shutil.rmtree(uploads_md_dir)
@@ -168,7 +170,6 @@ class SnapshotManager:
             snapshot = json.load(f)
             
         # 1. Import MongoDB
-        from bson import ObjectId
         logger.info("  Restoring MongoDB collections...")
         for coll_name, docs in snapshot.get("mongodb", {}).items():
             if docs:
@@ -186,8 +187,6 @@ class SnapshotManager:
         # 2. Import Qdrant
         points_data = snapshot.get("qdrant")
         if points_data:
-            from qdrant_client.http import models as qm
-            
             # Helper to import a specific qdrant collection
             def import_qdrant_col(import_points_data, target_col):
                 if not import_points_data or not target_col:
@@ -239,9 +238,6 @@ class SnapshotManager:
         if os.path.exists(uploads_md_dir):
             logger.info("  Restoring Markdown and Original files to R2...")
             try:
-                from app.integrations.storage.client import r2_storage
-                import io
-                
                 md_count = 0
                 original_count = 0
                 for md_file in os.listdir(uploads_md_dir):

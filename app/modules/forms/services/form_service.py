@@ -1,7 +1,8 @@
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
+from app.modules.forms.dtos import FormImportRow
 from app.modules.forms.repositories.form_repository import FormRepository
 from app.modules.forms.models.form import FormDocument
 from app.core.pagination import PagedResult
@@ -53,23 +54,23 @@ class FormService:
         items, total = await self._repo.list_forms(skip=(page - 1) * limit, limit=limit, search=search)
         return PagedResult(items=items, total=total, page=page, limit=limit)
 
-    async def upsert_many(self, items: List[Dict[str, Any]]) -> int:
+    async def upsert_many(self, items: List[FormImportRow]) -> int:
         count = 0
         for item in items:
-            existing = await self._repo.find_by_document_type(item["document_type"])
+            existing = await self._repo.find_by_document_type(item.document_type)
             if existing:
                 form_id = str(existing.id)
                 await self.update_form(
                     form_id,
-                    content_link=item.get("content_link"),
-                    notes=item.get("notes")
+                    content_link=item.content_link,
+                    notes=item.notes
                 )
                 count += 1
             else:
                 await self.create_form(
-                    document_type=item["document_type"],
-                    content_link=item["content_link"],
-                    notes=item.get("notes")
+                    document_type=item.document_type,
+                    content_link=item.content_link,
+                    notes=item.notes
                 )
                 count += 1
         return count

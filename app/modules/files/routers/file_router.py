@@ -24,6 +24,7 @@ from app.modules.files.services.file_service import get_file_service
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.files.utils.notifier import get_file_status_notifier
 from app.modules.files.utils.file_helpers import get_download_url
+from app.core.auth import JWTPayload
 from app.core.exceptions import AppException, NotFoundException
 from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.files.models.file import FileStatus
@@ -71,7 +72,7 @@ async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="File to upload"),
     req: FileUploadRequest = Depends(from_form(FileUploadRequest)),
-    _admin: Dict[str, Any] = Depends(require_admin),
+    _admin: JWTPayload = Depends(require_admin),
 ):
     """Upload sync-to-R2 then continue parse/vector steps in background."""
     temp_file_path = None
@@ -152,7 +153,7 @@ async def list_files(
     keywords: Optional[str] = Query(None, description="Search by display name"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    _user: Dict[str, Any] = Depends(require_auth),
+    _user: JWTPayload = Depends(require_auth),
 ):
     try:
         file_svc = get_file_service()
@@ -209,7 +210,7 @@ async def batch_upload_files(
     request: Request,
     files: List[UploadFile] = File(..., description="Files to upload"),
     req: BatchFileUploadRequest = Depends(from_form(BatchFileUploadRequest)),
-    _admin: Dict[str, Any] = Depends(require_admin),
+    _admin: JWTPayload = Depends(require_admin),
 ):
     """Batch upload multiple files to R2 storage and queue background processing."""
     file_svc = get_file_service()
@@ -241,7 +242,11 @@ async def batch_upload_files(
             temp_file_path = None
             try:
                 display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
-                metadata_dict = meta_list[idx] if idx < len(meta_list) and isinstance(meta_list[idx], dict) else {}
+                metadata_dict = {}
+                if idx < len(meta_list) and meta_list[idx] is not None:
+                    if not isinstance(meta_list[idx], dict):
+                        raise ValueError(f"Metadata at index {idx} must be a JSON object (dict)")
+                    metadata_dict = meta_list[idx]
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
                     contents = await file.read()
@@ -305,7 +310,7 @@ async def batch_upload_files(
     response_model=FileDetailResponse,
     summary="Get file details",
 )
-async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
+async def get_file(file_id: str, _user: JWTPayload = Depends(require_auth)):
     try:
         file_svc = get_file_service()
         file_doc = await file_svc.get_file_by_id(file_id)
@@ -328,7 +333,7 @@ async def get_file(file_id: str, _user: Dict[str, Any] = Depends(require_auth)):
 async def download_file_endpoint(
     file_id: str, 
     format: str = Query("original", description="Download format: original | markdown"),
-    _user: Dict[str, Any] = Depends(require_auth)
+    _user: JWTPayload = Depends(require_auth)
 ):
     try:
         allowed_formats = {"original", "markdown"}
@@ -345,9 +350,8 @@ async def download_file_endpoint(
             file_format=requested_format,
         )
         encoded_filename = urllib.parse.quote(filename)
-        file_data = file_obj.read()
         return StreamingResponse(
-            BytesIO(file_data),
+            file_obj,
             media_type=mime_type,
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
         )
@@ -367,14 +371,18 @@ async def download_file_endpoint(
 async def update_file(
     file_id: str,
     request: UpdateFileRequest,
-    _admin: Dict[str, Any] = Depends(require_admin)
+    _admin: JWTPayload = Depends(require_admin)
 ):
     try:
         file_svc = get_file_service()
         file_doc = await file_svc.update_file(
             file_id=file_id, 
             display_name=request.display_name,
-            custom_metadata=request.custom_metadata
+            custom_metadata=(
+                request.custom_metadata.model_dump(exclude_unset=True, by_alias=False)
+                if request.custom_metadata
+                else None
+            )
         )
         if not file_doc:
             raise NotFoundException("File", file_id)
@@ -392,7 +400,7 @@ async def update_file(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete file",
 )
-async def delete_file(file_id: str, _admin: Dict[str, Any] = Depends(require_admin)):
+async def delete_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
     try:
         file_svc = get_file_service()
         await file_svc.delete_file(file_id)

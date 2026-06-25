@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "file_overviews"
     QDRANT_TOP_K: int = 6
     QDRANT_MIN_SCORE: float = 0.2
-    RETRIEVAL_MIN_DOC_SCORE: float = 1.0
+    RETRIEVAL_MIN_DOC_SCORE: float = 0.4
     QDRANT_VECTOR_SIZE: int = 3072
     
     # PageIndex configuration
@@ -100,7 +100,6 @@ class Settings(BaseSettings):
     MONGODB_DB_NAME: str = "ai_service"
     MONGODB_MIN_POOL_SIZE: int = 1
     MONGODB_MAX_POOL_SIZE: int = 20
-    MONGODB_DISABLED: bool = False
 
     # ====================================
     # r2/S3 Configuration
@@ -111,8 +110,6 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = "rag-files"
     R2_USE_SSL: bool = False
     R2_REGION: str = "us-east-1"
-    R2_DISABLED: bool = False
-    R2_BYPASS_ON_INIT_ERROR: bool = False
     R2_PUBLIC_DOMAIN: Optional[str] = None
 
     # ====================================
@@ -139,6 +136,9 @@ class Settings(BaseSettings):
     RABBITMQ_PASSWORD: str = "guest"
     RABBITMQ_VHOST: str = "/"
     RABBITMQ_INGEST_QUEUE: str = "email_ingest_queue"
+    RABBITMQ_EMAIL_DLX: str = "email_ingest_dlx"
+    RABBITMQ_EMAIL_DLQ: str = "email_ingest_dlq"
+    RABBITMQ_EMAIL_MAX_RETRIES: int = 1
 
     # ====================================
     # File Upload Configuration

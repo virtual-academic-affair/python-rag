@@ -7,8 +7,9 @@ from typing import Dict, Any, Optional
 
 from qdrant_client.http import models as qm
 
-from app.modules.metadata.dtos import UnifiedFilterSchema
+from app.modules.metadata.dtos import UnifiedFilterSchema, RelaxedUnifiedFilterSchema
 from app.modules.metadata.models.value_objects import YEAR_MIN, YEAR_MAX
+from app.core.exceptions import ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,15 @@ class FilterBuilder:
             return None
 
         try:
-            # Use UnifiedFilterSchema which has all optional fields and no defaults
-            model = UnifiedFilterSchema.model_validate(metadata_filter)
+            if skip_validation:
+                model = RelaxedUnifiedFilterSchema.model_validate(metadata_filter)
+            else:
+                model = UnifiedFilterSchema.model_validate(metadata_filter)
         except Exception as e:
             logger.warning(f"Invalid metadata filter for Qdrant: {e}")
-            return None
+            if skip_validation:
+                return None
+            raise ValidationException(f"Invalid metadata filter for Qdrant: {e}")
 
         must_conditions = []
 
@@ -112,11 +117,15 @@ class FilterBuilder:
             return {}
 
         try:
-            # Use UnifiedFilterSchema which has all optional fields and no defaults
-            model = UnifiedFilterSchema.model_validate(metadata_filter)
+            if skip_validation:
+                model = RelaxedUnifiedFilterSchema.model_validate(metadata_filter)
+            else:
+                model = UnifiedFilterSchema.model_validate(metadata_filter)
         except Exception as e:
             logger.warning(f"Invalid metadata filter for Mongo: {e}")
-            return {}
+            if skip_validation:
+                return {}
+            raise ValidationException(f"Invalid metadata filter for Mongo: {e}")
 
         mongo_filter = {}
 

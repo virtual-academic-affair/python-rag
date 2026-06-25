@@ -7,7 +7,11 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.core.config import settings
+from app.core.exceptions import ValidationException
 from app.integrations.llm.embedding import get_embedding_service
+from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
+from app.modules.metadata.models.value_objects import YEAR_MIN, YEAR_MAX
+from app.modules.metadata.services.metadata_service import get_metadata_service
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +67,6 @@ class FaqVectorService:
                     ("metadata_filter.enrollment_year_to",   qm.PayloadSchemaType.INTEGER),
                     ("metadata_filter.academic_year_from",   qm.PayloadSchemaType.INTEGER),
                     ("metadata_filter.academic_year_to",     qm.PayloadSchemaType.INTEGER),
-                    ("metadata_filter.type",                 qm.PayloadSchemaType.KEYWORD),
                 ]
                 for field, schema_type in fields:
                     try:
@@ -89,18 +92,12 @@ class FaqVectorService:
         """
         await self.ensure_collection()
         point_id = self._stable_point_id(faq_id)
-        
-        from app.modules.metadata.services.metadata_service import get_metadata_service
-        try:
-            # Always normalize through schema for consistent Qdrant payload
-            _, _, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
-            if meta_model:
-                flat_meta = meta_model.to_qdrant_payload()
-            else:
-                flat_meta = {}
-        except Exception as e:
-            logger.warning(f"Failed to parse FAQ metadata for Qdrant upsert: {e}")
-            flat_meta = {}
+
+        is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
+        if not is_valid or not meta_model:
+            raise ValidationException(f"Invalid FAQ metadata for Qdrant: {', '.join(errors)}")
+            
+        flat_meta = meta_model.to_qdrant_payload()
 
         payload = {
             "faq_id": faq_id,
@@ -141,14 +138,11 @@ class FaqVectorService:
         if not clean_dict:
             return None
 
-        from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
-        from app.modules.metadata.models.value_objects import YEAR_MIN, YEAR_MAX
         try:
             schema = FaqMetadataSchema.model_validate(clean_dict)
             model = schema.to_model()
         except Exception as e:
-            logger.warning(f"Invalid FAQ metadata filter: {e}")
-            return None
+            raise ValidationException(f"Invalid FAQ metadata filter: {e}")
 
         must_conditions = []
 
@@ -172,19 +166,6 @@ class FaqVectorService:
                     qm.FieldCondition(key="metadata_filter.academic_year_from", range=qm.Range(lte=at))
                 ])
 
-        # 3. Type
-        model_type = getattr(model, "type", None)
-        if model_type:
-            # FAQ can apply to all types if it has no type (type="")
-            must_conditions.append(
-                qm.Filter(
-                    should=[
-                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=model_type.value)),
-                        qm.FieldCondition(key="metadata_filter.type", match=qm.MatchValue(value=""))
-                    ]
-                )
-            )
-
         if not must_conditions:
             return None
             
@@ -197,7 +178,7 @@ class FaqVectorService:
         await self.ensure_collection()
         
         qdrant_filter = self._build_filter(metadata_filter_dict)
-        
+            
         query_response = await asyncio.to_thread(
             self.qdrant_client_instance.query_points,
             collection_name=settings.FAQ_QDRANT_COLLECTION,

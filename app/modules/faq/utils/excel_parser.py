@@ -71,33 +71,38 @@ def parse_excel_to_faq_rows(
                 "academic_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX}
             }
             
-            for key, idx in meta_indices.items():
-                clean_val = get_cell_value(row[idx - 1]) if idx <= len(row) else None
-                
-                # Handle both snake_case and camelCase from mapping
-                if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
-                    if not clean_val:
-                        continue
-                    rng = parse_year_range(str(clean_val))
-                    out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
-                    metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
-            
-            # Basic validation
             error = None
             is_valid = True
             
-            # Strip HTML tags for length validation
-            clean_q = re.sub(r'<[^>]+>', '', q_val).strip()
+            try:
+                for key, idx in meta_indices.items():
+                    clean_val = get_cell_value(row[idx - 1]) if idx <= len(row) else None
+                    
+                    # Handle both snake_case and camelCase from mapping
+                    if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
+                        if not clean_val:
+                            continue
+                        rng = parse_year_range(str(clean_val))
+                        out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
+                        metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
+            except ValueError as e:
+                error = f"Metadata error: {str(e)}"
+                is_valid = False
             
-            if not q_val or not clean_q:
-                error = "Question is missing"
-                is_valid = False
-            elif not a_val or not re.sub(r'<[^>]+>', '', a_val).strip():
-                error = "Answer is missing"
-                is_valid = False
-            elif len(clean_q) < 5:
-                error = "Question too short (min 5 chars)"
-                is_valid = False
+            # Basic validation
+            if is_valid:
+                # Strip HTML tags for length validation
+                clean_q = re.sub(r'<[^>]+>', '', q_val).strip()
+                
+                if not q_val or not clean_q:
+                    error = "Question is missing"
+                    is_valid = False
+                elif not a_val or not re.sub(r'<[^>]+>', '', a_val).strip():
+                    error = "Answer is missing"
+                    is_valid = False
+                elif len(clean_q) < 5:
+                    error = "Question too short (min 5 chars)"
+                    is_valid = False
                 
             row_data = {
                 "row_index": i,
@@ -175,29 +180,35 @@ def parse_csv_to_faq_rows(
                 "academic_year": {"from_year": YEAR_MIN, "to_year": YEAR_MAX}
             }
             
-            for key, idx in meta_indices.items():
-                clean_val = row[idx].strip() if idx < len(row) else None
-                if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
-                    if not clean_val:
-                        continue
-                    rng = parse_year_range(clean_val)
-                    out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
-                    metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
-            
             error = None
             is_valid = True
             
-            clean_q = re.sub(r'<[^>]+>', '', q_val).strip()
+            try:
+                for key, idx in meta_indices.items():
+                    clean_val = row[idx].strip() if idx < len(row) else None
+                    if key in ["enrollment_year", "enrollmentYear", "academic_year", "academicYear"]:
+                        if not clean_val:
+                            continue
+                        rng = parse_year_range(clean_val)
+                        out_key = "enrollment_year" if key in ["enrollment_year", "enrollmentYear"] else "academic_year"
+                        metadata[out_key] = {"from_year": rng.from_year, "to_year": rng.to_year}
+            except ValueError as e:
+                error = f"Metadata error: {str(e)}"
+                is_valid = False
             
-            if not q_val or not clean_q:
-                error = "Question is missing"
-                is_valid = False
-            elif not a_val or not re.sub(r'<[^>]+>', '', a_val).strip():
-                error = "Answer is missing"
-                is_valid = False
-            elif len(clean_q) < 5:
-                error = "Question too short (min 5 chars)"
-                is_valid = False
+            # Basic validation
+            if is_valid:
+                clean_q = re.sub(r'<[^>]+>', '', q_val).strip()
+                
+                if not q_val or not clean_q:
+                    error = "Question is missing"
+                    is_valid = False
+                elif not a_val or not re.sub(r'<[^>]+>', '', a_val).strip():
+                    error = "Answer is missing"
+                    is_valid = False
+                elif len(clean_q) < 5:
+                    error = "Question too short (min 5 chars)"
+                    is_valid = False
                 
             row_data = {
                 "row_index": i,

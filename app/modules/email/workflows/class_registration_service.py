@@ -2,6 +2,7 @@
 import logging
 
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.integrations.llm.gemini import (
@@ -10,6 +11,7 @@ from app.integrations.llm.gemini import (
     env_thinking_level,
 )
 from app.utils.retry import async_retry
+from app.modules.email.exceptions import PermanentEmailError, RetryableEmailError
 from app.modules.email.models.email_types import ClassRegistrationPayload
 from app.utils.json_utils import parse_json_safely
 
@@ -142,6 +144,13 @@ Output constraints (must follow):
             payload.note = ""
             return payload
         except Exception as e:
-            logger.error("ClassRegistration extraction failed: %s", str(e), exc_info=True)
-            return ClassRegistrationPayload(messageId=message_id)
-
+            if isinstance(e, (ValueError, KeyError, TypeError, ValidationError)):
+                logger.error("ClassRegistration permanent parsing/validation failed: %s", str(e), exc_info=True)
+                raise PermanentEmailError(
+                    f"ClassRegistration validation failed for message_id={message_id}: {e}"
+                ) from e
+            else:
+                logger.error("ClassRegistration transient/external extraction failed: %s", str(e), exc_info=True)
+                raise RetryableEmailError(
+                    f"ClassRegistration extraction failed for message_id={message_id}: {e}"
+                ) from e
