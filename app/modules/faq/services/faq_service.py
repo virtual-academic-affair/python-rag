@@ -9,6 +9,7 @@ from app.core.config import settings
 from pymongo.errors import DuplicateKeyError
 from app.core.exceptions import ValidationException, ConflictException, ExternalServiceException
 from app.core.pagination import PagedResult
+from app.modules.faq.dtos.create_faq import FaqBulkCreateItem
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.faq.repositories.faq_candidate_repository import FaqCandidateRepository
@@ -108,7 +109,7 @@ class FaqService:
 
     async def bulk_create_faqs(
         self,
-        items: List[Dict[str, Any]],
+        items: List[FaqBulkCreateItem],
         skip_duplicates: bool = True,
     ) -> Dict[str, Any]:
         total = len(items)
@@ -120,7 +121,7 @@ class FaqService:
         to_process = []
         processed_unaccented_questions = set()
         for i, item in enumerate(items):
-            question = item.get("question")
+            question = item.question
             if not question or not str(question).strip():
                 failed_count += 1
                 errors.append({"row_index": i + 1, "question": "", "error": "Field 'question' is missing or empty."})
@@ -141,7 +142,7 @@ class FaqService:
         if not to_process:
             return {"total": total, "created": 0, "skipped": skipped_count, "failed": failed_count, "errors": errors}
 
-        questions = [item["question"] for _, item in to_process]
+        questions = [item.question for _, item in to_process]
         sem = asyncio.Semaphore(15)
 
         async def sem_embed(q: str):
@@ -162,14 +163,14 @@ class FaqService:
 
         for idx, (original_idx, item) in enumerate(to_process):
             try:
-                answer_rich_text = item.get("answer_rich_text") or item.get("answer")
+                answer_rich_text = item.answer_rich_text
                 if not answer_rich_text:
-                    raise ValueError(f"Item at row {original_idx + 1} is missing 'answer_rich_text' or 'answer' field.")
+                    raise ValueError(f"Item at row {original_idx + 1} is missing 'answer_rich_text' field.")
 
                 await self.create_faq(
-                    question=item["question"],
+                    question=item.question,
                     answer_rich_text=answer_rich_text,
-                    metadata_filter=item.get("metadata_filter", {}),
+                    metadata_filter=item.metadata_filter.model_dump(by_alias=False),
                     source="bulk_import",
                     question_vector=embeddings[idx],
                 )
@@ -179,7 +180,7 @@ class FaqService:
             except Exception as e:
                 logger.error(f"Failed to create FAQ in bulk at row {original_idx}: {e}")
                 failed_count += 1
-                errors.append({"row_index": original_idx + 1, "question": item["question"], "error": str(e)})
+                errors.append({"row_index": original_idx + 1, "question": item.question, "error": str(e)})
 
         return {"total": total, "created": created_count, "skipped": skipped_count, "failed": failed_count, "errors": errors}
 

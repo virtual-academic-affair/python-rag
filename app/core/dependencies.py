@@ -1,7 +1,6 @@
 import logging
-from typing import Dict, Any
 from fastapi import Depends, Header, HTTPException, status, Request
-from app.core.auth import verify_token_local
+from app.core.auth import JWTPayload, verify_token_local
 from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -45,13 +44,13 @@ async def _extract_token(authorization: str = Header(None, alias="Authorization"
     return token
 
 
-async def require_auth(token: str = Depends(_extract_token)) -> Dict[str, Any]:
+async def require_auth(token: str = Depends(_extract_token)) -> JWTPayload:
     # Thực hiện xác thực JWT cục bộ không phụ thuộc vào gRPC
     return verify_token_local(token)
 
 
-async def require_admin(user: Dict[str, Any] = Depends(require_auth)) -> Dict[str, Any]:
-    if user.get("role") != "admin":
+async def require_admin(user: JWTPayload = Depends(require_auth)) -> JWTPayload:
+    if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required",

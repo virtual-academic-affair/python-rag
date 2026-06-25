@@ -125,7 +125,7 @@ class RetrievalService:
             fid = d["file_id"]
             toc_doc = toc_map.get(fid)
             d["doc_description"] = toc_doc.doc_description if toc_doc else ""
-            d["structure"] = toc_doc.structure if toc_doc else []
+            d["structure"] = [node.model_dump() for node in toc_doc.structure] if toc_doc else []
             d["markdown_storage_path"] = toc_doc.markdown_storage_path if toc_doc else ""
             
             f_doc = ready_file_map.get(fid)

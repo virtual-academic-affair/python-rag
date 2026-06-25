@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
-from typing import Dict, Any
 
+from app.core.auth import JWTPayload
 from app.modules.metadata.dtos import MetadataSchemaResponse
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.core.dependencies import require_auth
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/metadata", tags=["Metadata"])
     ),
 )
 async def get_metadata_schema(
-    _user: Dict[str, Any] = Depends(require_auth),
+    _user: JWTPayload = Depends(require_auth),
 ):
     """Return the static metadata schema (no DB access)."""
     validator = get_metadata_service()

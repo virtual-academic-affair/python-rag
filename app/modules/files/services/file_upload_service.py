@@ -17,6 +17,7 @@ from app.modules.files.utils.file_helpers import (
     cleanup_temp_file,
 )
 from app.modules.files.utils.upload_state import UploadStep, UploadState
+from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.utils.text_utils import remove_accents
 from app.modules.metadata.services.metadata_service import get_metadata_service
@@ -134,13 +135,16 @@ class FileUploadMixin:
 
             # Update TOC Tree with markdown storage path
             toc_repo = FileTocTreeRepository()
-            await toc_repo.upsert_by_file_id(file_id, {
-                "doc_name": display_name,
-                "doc_description": ingest_result.get("summary", ""),
-                "line_count": ingest_result.get("line_count", 0),
-                "structure": ingest_result.get("toc_structure", []),
-                "markdown_storage_path": md_storage_path,
-            })
+            await toc_repo.upsert_by_file_id(
+                file_id,
+                TocTreeUpsertData(
+                    doc_name=display_name,
+                    doc_description=ingest_result.get("summary", ""),
+                    line_count=ingest_result.get("line_count", 0),
+                    structure=ingest_result.get("toc_structure", []),
+                    markdown_storage_path=md_storage_path,
+                ),
+            )
 
             ready_doc = await self.file_repo.mark_ready(
                 file_id=file_id,

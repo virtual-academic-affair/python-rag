@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
-from typing import Dict, Any, Optional
+from typing import Optional
 
+from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin, require_auth
 from app.modules.forms.dtos import (
     FormCreateRequest,
@@ -20,7 +21,7 @@ async def list_forms(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None),
-    user: Dict[str, Any] = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
     form_svc: FormService = Depends(get_form_service)
 ):
     result = await form_svc.list_forms(page=page, limit=limit, search=search)
@@ -37,7 +38,7 @@ async def list_forms(
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form(
     form_id: str,
-    user: Dict[str, Any] = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
     form_svc: FormService = Depends(get_form_service)
 ):
     form = await form_svc.get_form_by_id(form_id)
@@ -48,7 +49,7 @@ async def get_form(
 @router.post("", response_model=FormResponse, status_code=status.HTTP_201_CREATED)
 async def create_form(
     request: FormCreateRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     form_svc: FormService = Depends(get_form_service)
 ):
     result = await form_svc.create_form(
@@ -62,7 +63,7 @@ async def create_form(
 async def update_form(
     form_id: str,
     request: FormUpdateRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     form_svc: FormService = Depends(get_form_service)
 ):
     result = await form_svc.update_form(
@@ -78,7 +79,7 @@ async def update_form(
 @router.delete("/{form_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_form(
     form_id: str,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     form_svc: FormService = Depends(get_form_service)
 ):
     deleted = await form_svc.delete_form(form_id)
@@ -92,7 +93,7 @@ async def import_preview(
     document_type_col: str = Form("1"),
     content_link_col: str = Form("2"),
     notes_col: Optional[str] = Form("3"),
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
@@ -128,7 +129,7 @@ async def import_forms(
     document_type_col: str = Form("1"),
     content_link_col: str = Form("2"),
     notes_col: Optional[str] = Form("3"),
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
@@ -151,7 +152,7 @@ async def import_forms(
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     
-    count = await form_svc.upsert_many([item.model_dump(by_alias=False) for item in result["rows"]])
+    count = await form_svc.upsert_many(result["rows"])
     return FormBulkCreateResponse(
         message=f"Imported/updated {count} form templates successfully.",
         count=count,

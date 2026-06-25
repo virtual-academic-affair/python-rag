@@ -4,6 +4,7 @@ import time
 
 from app.integrations.grpc.client import get_grpc_client
 from app.core.config import settings
+from app.core.exceptions import RetryableGrpcError
 from app.utils.retry import async_retry
 from app.modules.email.exceptions import DownstreamCommitError, PermanentEmailError
 from app.modules.email.classification.label_classifier_service import (
@@ -76,6 +77,7 @@ class EmailWorkflowOrchestrator:
                 grpc_ok = await async_retry(
                     self.grpc_client.create_class_registration,
                     payload=extracted,
+                    retryable_exceptions=(RetryableGrpcError,),
                 )
                 if not grpc_ok:
                     if raise_on_grpc_fail:
@@ -127,6 +129,7 @@ class EmailWorkflowOrchestrator:
                     answer=draft_result["answer"],
                     extracted_question=draft_result.get("question"),
                     inquiry_types=draft_result.get("types", []),
+                    retryable_exceptions=(RetryableGrpcError,),
                 )
                 if not grpc_ok:
                     if raise_on_grpc_fail:

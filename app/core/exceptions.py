@@ -130,6 +130,16 @@ class GrpcServerException(ExternalServiceException):
     pass
 
 
+class RetryableGrpcError(GrpcServerException):
+    """Transient gRPC failure that is worth retrying."""
+    pass
+
+
+class NonRetryableGrpcError(GrpcServerException):
+    """Permanent gRPC failure that should not be retried blindly."""
+    pass
+
+
 
 
 def handle_google_api_error(e: APIError, prefix: str = "") -> HTTPException:

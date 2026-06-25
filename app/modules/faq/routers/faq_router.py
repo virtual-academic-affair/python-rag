@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile
-from typing import Dict, Any, Optional
+from typing import Optional
 import json
 import re
 
+from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin, require_auth, from_form
 from app.modules.faq.dtos import (
     FaqCreateRequest,
@@ -18,6 +19,7 @@ from app.modules.faq.dtos import (
     FaqImportPreviewResponse,
     FaqBulkCreateRequest,
     FaqBulkCreateResponse,
+    FaqBulkCreateItem,
     FaqImportExcelRequest
 )
 from app.modules.faq.services.faq_service import get_faq_service, FaqService
@@ -41,7 +43,7 @@ async def list_faqs(
     limit: int = Query(20, ge=1, le=100),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="Filter by metadata (JSON string), e.g. {'academic_year': ['2024-2025']}"),
     search: Optional[str] = Query(None, description="Search by question text"),
-    user: Dict[str, Any] = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """List FAQs with optional filtering."""
@@ -77,7 +79,7 @@ async def list_faqs(
 @router.post("", response_model=FaqResponse, status_code=status.HTTP_201_CREATED)
 async def create_faq(
     request: FaqCreateRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Create a new FAQ manually."""
@@ -93,7 +95,7 @@ async def create_faq(
 @router.post("/match", response_model=FaqResponse)
 async def debug_match_faq(
     request: FaqMatchRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Debug endpoint to test semantic matching."""
@@ -115,7 +117,7 @@ async def list_candidates(
     search: Optional[str] = Query(None, description="Search keyword for candidates"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """List FAQ candidates from synthesis."""
@@ -131,7 +133,7 @@ async def list_candidates(
 @router.get("/candidates/{candidate_id}", response_model=FaqCandidateResponse)
 async def get_candidate(
     candidate_id: str,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Get a specific FAQ candidate by ID."""
@@ -145,7 +147,7 @@ async def get_candidate(
 async def review_candidate(
     candidate_id: str,
     request: FaqReviewRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Approve or reject an FAQ candidate."""
@@ -153,7 +155,7 @@ async def review_candidate(
         result = await faq_svc.review_candidate(
             candidate_id=candidate_id,
             action=request.action,
-            reviewer_id=admin.get("user_id", "admin"),
+            reviewer_id=admin.user_id,
             question_override=request.question_override,
             answer_rich_text_override=request.answer_rich_text_override,
             metadata_filter_override=request.metadata_filter_override.model_dump(by_alias=False) if request.metadata_filter_override else None,
@@ -167,7 +169,7 @@ async def review_candidate(
 @router.post("/synthesis", response_model=FaqSynthesisResponse)
 async def trigger_synthesis(
     request: FaqSynthesisRequest,
-    admin: Dict[str, Any] = Depends(require_admin)
+    admin: JWTPayload = Depends(require_admin)
 ):
     """Manually trigger FAQ synthesis background job."""
     synth_svc = await get_faq_synthesis_service()
@@ -190,7 +192,7 @@ async def trigger_synthesis(
 async def update_faq(
     faq_id: str,
     request: FaqUpdateRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Update an existing FAQ."""
@@ -207,7 +209,7 @@ async def update_faq(
 @router.delete("/{faq_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_faq(
     faq_id: str,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Delete an FAQ."""
@@ -219,7 +221,7 @@ async def delete_faq(
 @router.get("/{faq_id}", response_model=FaqResponse)
 async def get_faq(
     faq_id: str,
-    user: Dict[str, Any] = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Get a specific FAQ by ID."""
@@ -235,7 +237,7 @@ async def get_faq(
 async def preview_faq_import(
     file: UploadFile = File(...),
     req: FaqImportExcelRequest = Depends(from_form(FaqImportExcelRequest)),
-    admin: Dict[str, Any] = Depends(require_admin)
+    admin: JWTPayload = Depends(require_admin)
 ):
     """
     Upload Excel and preview extracted FAQ rows.
@@ -290,7 +292,7 @@ async def preview_faq_import(
 async def import_faqs_from_excel(
     file: UploadFile = File(...),
     req: FaqImportExcelRequest = Depends(from_form(FaqImportExcelRequest)),
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """
@@ -339,11 +341,11 @@ async def import_faqs_from_excel(
             )
         
         valid_items = [
-            {
-                "question": r["question"],
-                "answer_rich_text": r["answer_rich_text"],
-                "metadata_filter": r["metadata"]
-            }
+            FaqBulkCreateItem(
+                question=r["question"],
+                answer_rich_text=r["answer_rich_text"],
+                metadata_filter=r["metadata"],
+            )
             for r in parsed["rows"] if r["is_valid"]
         ]
         
@@ -364,11 +366,10 @@ async def import_faqs_from_excel(
 @router.post("/bulk", response_model=FaqBulkCreateResponse)
 async def bulk_create_faqs_json(
     request: FaqBulkCreateRequest,
-    admin: Dict[str, Any] = Depends(require_admin),
+    admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """
     Bulk create FAQs from JSON data.
     """
-    items = [item.model_dump(by_alias=False) for item in request.items]
-    return await faq_svc.bulk_create_faqs(items, skip_duplicates=request.skip_duplicates)
+    return await faq_svc.bulk_create_faqs(request.items, skip_duplicates=request.skip_duplicates)
