@@ -1,8 +1,9 @@
 {
   "files": [
     {
-      "filename": "CTĐT_CLC-khóa-2020.pdf",
+      "filename": "CTĐT_CLC-khóa-2020.pdf",
       "displayName": "CTĐT CLC Khóa 2020",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -12,6 +13,7 @@
     {
       "filename": "CTDT_CLC-khoa-2021.pdf",
       "displayName": "CTĐT CLC Khóa 2021",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -21,6 +23,7 @@
     {
       "filename": "CTDT_CLC_Khoa-2022.pdf",
       "displayName": "CTĐT CLC Khóa 2022",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -30,6 +33,7 @@
     {
       "filename": "CTDT_CLC_Khoa-2023.pdf",
       "displayName": "CTĐT CLC Khóa 2023",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -39,6 +43,7 @@
     {
       "filename": "CTDT_CLC_Khoa-2024.pdf",
       "displayName": "CTĐT CLC Khóa 2024",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -48,6 +53,7 @@
     {
       "filename": "CTDT_TCTA_Khoa-2025.pdf",
       "displayName": "CTĐT & TCTA Khóa 2025",
+      "lecturerOnly": false,
       "metadata": {
         "type": "ctdt",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -57,6 +63,7 @@
     {
       "filename": "CV_cong-nhan-tin-chi-bat-buoc-chuyen-nganh-lam-tu-chon-chuyen-nganh-tu-khoa-2020-den-khoa-2022.pdf",
       "displayName": "Công văn công nhận tín chỉ chuyên ngành",
+      "lecturerOnly": true,
       "metadata": {
         "type": "cong_van",
         "academic_year": { "from_year": 0, "to_year": 9999 },
@@ -66,6 +73,7 @@
     {
       "filename": "QD-1175_Quy-che-dao-tao-trinh-do-DH-2021.pdf",
       "displayName": "Quy chế đào tạo ĐH 2021",
+      "lecturerOnly": true,
       "metadata": {
         "type": "quyet_dinh",
         "academic_year": { "from_year": 2021, "to_year": 9999 },
@@ -75,6 +83,7 @@
     {
       "filename": "QD1984_QD-chuan-NN-2024_-CNTT-CLC.pdf",
       "displayName": "QĐ chuẩn ngoại ngữ 2024 (CLC)",
+      "lecturerOnly": false,
       "metadata": {
         "type": "quyet_dinh",
         "academic_year": { "from_year": 0, "to_year": 9999 },

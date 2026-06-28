@@ -193,6 +193,7 @@ async def upload_files(files_config: list) -> list[str]:
             filename = file_config["filename"]
             display_name = file_config["displayName"]
             metadata = file_config.get("metadata", {})
+            lecturer_only = file_config.get("lecturerOnly", False)
 
             file_path = UPLOADS_DIR / filename
 
@@ -207,6 +208,7 @@ async def upload_files(files_config: list) -> list[str]:
                     data = {
                         "displayName": display_name,
                         "customMetadata": json.dumps(metadata),
+                        "lecturerOnly": str(lecturer_only).lower(),
                     }
 
                     response = await client.post(

@@ -32,6 +32,7 @@ class FileDocument(BaseDocument):
     
     table_of_contents: List[str] = Field(default_factory=list, description="Flat list of headings")
     status: FileStatus = Field(default=FileStatus.UPLOADING)
+    lecturer_only: bool = Field(default=False, description="Nếu True, chỉ admin/lecture mới xem được")
 
     class Settings:
         name = "files"

@@ -112,35 +112,38 @@ class FileService(FileUploadMixin):
         self,
         file_id: str,
         display_name: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None
+        custom_metadata: Optional[Dict[str, Any]] = None,
+        lecturer_only: Optional[bool] = None,
     ) -> Optional[FileDocument]:
-        """Update file details (display name and/or metadata)."""
+        """Update file details (display name, metadata, and/or lecturer_only flag)."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        old_display_name = file_doc.display_name
-        old_metadata = file_doc.custom_metadata
-        new_display_name = file_doc.display_name
-        new_metadata = file_doc.custom_metadata
+        changed = False
 
-        if display_name is not None:
-            new_display_name = display_name
+        if display_name is not None and display_name != file_doc.display_name:
+            file_doc.display_name = display_name
+            file_doc.display_name_unaccented = remove_accents(display_name)
+            changed = True
 
         if custom_metadata is not None:
             validator = get_metadata_service()
             is_valid, errors, meta_model = validator.merge_file_metadata_update(
-                existing=old_metadata,
+                existing=file_doc.custom_metadata,
                 incoming_update=custom_metadata,
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
-            new_metadata = meta_model
+            if meta_model != file_doc.custom_metadata:
+                file_doc.custom_metadata = meta_model
+                changed = True
 
-        if new_display_name != old_display_name or new_metadata != old_metadata:
-            file_doc.display_name = new_display_name
-            file_doc.display_name_unaccented = remove_accents(new_display_name)
-            file_doc.custom_metadata = new_metadata
+        if lecturer_only is not None and lecturer_only != file_doc.lecturer_only:
+            file_doc.lecturer_only = lecturer_only
+            changed = True
+
+        if changed:
             try:
                 await self.file_repo.save(file_doc)
             except Exception as e:
@@ -153,13 +156,17 @@ class FileService(FileUploadMixin):
         status: Optional[FileStatus] = None,
         custom_metadata_filter: Optional[Dict[str, Any]] = None,
         keywords: Optional[str] = None,
+        role_filter: Optional[Dict[str, Any]] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[FileDocument], int]:
-        """List files with optional status, keyword, and metadata filters."""
+        """List files with optional status, keyword, metadata, and role-based filters."""
         filters = {}
         if status:
             filters["status"] = status
+
+        if role_filter:
+            filters.update(role_filter)
 
         if keywords:
             unaccented_kw = remove_accents(keywords)
