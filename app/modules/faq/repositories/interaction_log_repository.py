@@ -25,11 +25,12 @@ class InteractionLogRepository(BeanieRepository[InteractionLogDocument]):
         self,
         question: str,
         answer_markdown: str,
-        question_vector: Optional[List[float]] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
         source_type: str = "chat",
         email_message_id: Optional[int] = None,
         processing_time_ms: int = 0,
+        # question_vector kept as ignored kwarg for transition safety
+        question_vector: Optional[List[float]] = None,
     ) -> InteractionLogDocument:
         question_unaccented = remove_accents(question)
         now = datetime.now(timezone.utc)
@@ -39,7 +40,6 @@ class InteractionLogRepository(BeanieRepository[InteractionLogDocument]):
             question=question,
             question_unaccented=question_unaccented,
             answer_markdown=answer_markdown,
-            question_vector=question_vector,
             metadata_filter=FaqMetadata(**(metadata_filter or {})),
             source_type=source_type,
             email_message_id=email_message_id,

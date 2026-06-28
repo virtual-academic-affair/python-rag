@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any, Callable, Awaitable, Tuple
 
 from app.core.config import settings
 from app.core.exceptions import NotFoundException, ConflictException, ValidationException
-from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.models.file import FileDocument, FileStatus
 from app.integrations.storage.client import r2_storage
 from app.modules.files.utils.file_helpers import (
@@ -193,12 +192,6 @@ class FileUploadMixin:
         except Exception as e:
             logger.warning(f"Failed to cleanup TOC for failed file {file_id}: {e}")
 
-        try:
-            indexer = get_qdrant_indexer()
-            await indexer.delete_by_file_id(file_id)
-            logger.info(f"🧹 Cleaned up Qdrant vectors for failed file {file_id}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup Qdrant vectors for failed file {file_id}: {e}")
 
     async def _ingest_to_vector_db(
         self,

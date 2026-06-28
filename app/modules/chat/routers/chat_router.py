@@ -469,28 +469,24 @@ async def delete_chat_session(
 @router.post(
     "/retrieve-preview",
     response_model=ChatRetrievePreviewResponse,
-    summary="Preview Qdrant retrieval results",
-    description="Debug endpoint to inspect retrieved chunks and ranking before generation.",
+    summary="Preview navigator retrieval results",
+    description="Debug endpoint to inspect candidate documents selected by the navigator before generation.",
 )
 async def chat_retrieve_preview(
     request: ChatRetrievePreviewRequest,
     user: JWTPayload = Depends(require_admin),
 ):
-    """Preview semantic retrieval result list for relevance tuning."""
+    """Preview navigator-based document retrieval for relevance tuning."""
     try:
         retrieval = get_retrieval_service()
 
         meta_dict = request.metadata_filter.model_dump() if request.metadata_filter else {}
+        max_files = request.top_k or 5
 
-        qdrant_meta_filter = await retrieval._filter_builder.build_qdrant_filter(
-            metadata_filter=meta_dict
-        )
-
-        chunks = await retrieval._qdrant.retrieve(
+        candidates = await retrieval.retrieve_candidate_files(
             query=request.question,
-            top_k=request.top_k,
-            min_score=request.min_score,
-            metadata_filter=qdrant_meta_filter,
+            metadata_filter=meta_dict,
+            max_files=max_files,
         )
 
         items = [
@@ -498,22 +494,18 @@ async def chat_retrieve_preview(
                 rank=i,
                 file_id=c.get("file_id"),
                 file_name=c.get("file_name"),
-                section_path=c.get("section_path"),
-                score=c.get("_retrieval_score"),
-                explain=c.get("_retrieval_explain") if request.include_explain else None,
-                text=c.get("text") or "",
+                section_path=None,
+                score=c.get("doc_score"),
+                explain={"reason": c.get("nav_reason")} if request.include_explain else None,
+                text=c.get("doc_description") or "",
             )
-            for i, c in enumerate(chunks, start=1)
+            for i, c in enumerate(candidates, start=1)
         ]
 
         return ChatRetrievePreviewResponse(
             query=request.question,
-            top_k=request.top_k or settings.QDRANT_TOP_K,
-            min_score=(
-                float(request.min_score)
-                if request.min_score is not None
-                else float(settings.QDRANT_MIN_SCORE)
-            ),
+            top_k=max_files,
+            min_score=0.0,
             count=len(items),
             cache_stats=None,
             items=items,
@@ -524,11 +516,11 @@ async def chat_retrieve_preview(
             detail=str(e),
         )
     except APIError as e:
-        raise handle_google_api_error(e, prefix="Failed to preview Qdrant retrieval: ")
+        raise handle_google_api_error(e, prefix="Failed to preview retrieval: ")
     except AppException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview Qdrant retrieval: {str(e)}",
+            detail=f"Failed to preview retrieval: {str(e)}",
         )

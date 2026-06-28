@@ -40,9 +40,6 @@ class ChatService:
             self._faq_svc = await get_faq_service()
         return self._faq_svc
 
-    async def _embed(self, text: str) -> list[float]:
-        return await self._retrieval._qdrant._get_embedding(text)
-
     async def _prepare_chat_state(
         self,
         question: str,
@@ -157,14 +154,11 @@ class ChatService:
                 "processing_time_ms": processing_time_ms,
             }
 
-        # [3] Embed rewritten question
-        question_vector = await self._embed(effective_question)
-
-        # [4] FAQ Pre-check
+        # [3] FAQ Pre-check (vectorless — single LLM pass over active FAQ catalog)
         faq_svc = await self._get_faq_svc()
         # Omit 'type' filter from FAQ search query filter
         faq_metadata_filter = {k: v for k, v in metadata_filter.items() if k != "type"} if metadata_filter else {}
-        faq = await faq_svc.find_best_match(question_vector, faq_metadata_filter)
+        faq = await faq_svc.find_best_match(effective_question, faq_metadata_filter)
         if faq:
             pipeline_steps.append({
                 "type": "faq_check",
@@ -254,7 +248,6 @@ class ChatService:
             faq_svc = await self._get_faq_svc()
             fire_and_forget(faq_svc.log_interaction(
                 question=effective_question,
-                question_vector=question_vector,
                 answer_markdown=answer_markdown,
                 metadata_filter=metadata_filter,
                 source_type="chat",

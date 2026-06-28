@@ -4,7 +4,6 @@ from typing import Optional, BinaryIO, Dict, Any, Literal
 
 from app.core.exceptions import (
     AppException,
-    ExternalServiceException,
     NotFoundException,
     StorageException,
     ValidationException,
@@ -15,7 +14,6 @@ from app.integrations.storage.client import r2_storage
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.utils.text_utils import remove_accents
-from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.services.file_upload_service import FileUploadMixin
@@ -78,10 +76,7 @@ class FileService(FileUploadMixin):
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        # 1. Delete from Qdrant index, TOC, and PageIndex cache first
-        indexer = get_qdrant_indexer()
-        await indexer.delete_by_file_id(file_id)
-
+        # 1. Delete from TOC and PageIndex cache first
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
 
@@ -119,7 +114,7 @@ class FileService(FileUploadMixin):
         display_name: Optional[str] = None,
         custom_metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[FileDocument]:
-        """Update file details (display name and/or metadata) and syncs to Qdrant."""
+        """Update file details (display name and/or metadata)."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
@@ -140,48 +135,17 @@ class FileService(FileUploadMixin):
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
-
             new_metadata = meta_model
 
-        display_name_changed = new_display_name != old_display_name
-        metadata_changed = new_metadata != old_metadata
-
-        if display_name_changed or metadata_changed:
-            indexer = get_qdrant_indexer()
-            new_metadata_payload = new_metadata.model_dump(mode="json") if metadata_changed and new_metadata else None
-            new_qdrant_name = new_display_name if display_name_changed else None
-            try:
-                await indexer.update_payload_by_file_id(
-                    file_id=file_id,
-                    new_metadata=new_metadata_payload,
-                    file_name=new_qdrant_name
-                )
-                logger.info(f"[FileService] Synced update to Qdrant for file {file_id}")
-            except Exception as e:
-                logger.error(f"[FileService] Failed to sync update to Qdrant for file {file_id}: {e}", exc_info=True)
-                raise ExternalServiceException(
-                    f"Failed to sync file update to vector index: {str(e)}"
-                ) from e
-
+        if new_display_name != old_display_name or new_metadata != old_metadata:
             file_doc.display_name = new_display_name
             file_doc.display_name_unaccented = remove_accents(new_display_name)
             file_doc.custom_metadata = new_metadata
-
             try:
                 await self.file_repo.save(file_doc)
             except Exception as e:
-                try:
-                    await indexer.update_payload_by_file_id(
-                        file_id=file_id,
-                        new_metadata=old_metadata.model_dump(mode="json") if metadata_changed and old_metadata else None,
-                        file_name=old_display_name if display_name_changed else None
-                    )
-                except Exception as rollback_error:
-                    logger.warning(f"[FileService] Failed to rollback Qdrant update for file {file_id}: {rollback_error}")
                 raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
-            return file_doc
-            
         return file_doc
 
     async def list_files(

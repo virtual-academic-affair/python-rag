@@ -17,9 +17,6 @@ class FaqRepository(BeanieRepository[FaqDocument]):
     async def find_by_unaccented_question(self, question_unaccented: str) -> Optional[FaqDocument]:
         return await FaqDocument.find_one(FaqDocument.question_unaccented == question_unaccented)
 
-    async def find_by_qdrant_point_id(self, point_id: str) -> Optional[FaqDocument]:
-        return await FaqDocument.find_one(FaqDocument.qdrant_point_id == point_id)
-
     async def find_by_candidate_id(self, candidate_id: str) -> Optional[FaqDocument]:
         return await FaqDocument.find_one(FaqDocument.candidate_id == candidate_id)
 

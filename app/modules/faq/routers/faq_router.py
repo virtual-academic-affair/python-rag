@@ -98,11 +98,9 @@ async def debug_match_faq(
     admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
-    """Debug endpoint to test semantic matching."""
-    vector = await faq_svc.embed(request.question)
+    """Debug endpoint to test vectorless FAQ matching."""
     meta = request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {}
-    
-    faq = await faq_svc.find_best_match(vector, meta, threshold=request.threshold)
+    faq = await faq_svc.find_best_match(request.question, meta, threshold=request.threshold)
     if not faq:
         raise HTTPException(status_code=404, detail="No matching FAQ found above threshold")
     return FaqResponse.from_document(faq)

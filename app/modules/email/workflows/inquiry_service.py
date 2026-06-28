@@ -123,10 +123,9 @@ class InquiryService:
         rag_query = extracted_question or f"{title}\n{content}"
         faq_svc = await get_faq_service()
         
-        # [NEW] FAQ Pre-check: Semantic search before full RAG
-        logger.info(f"[Inquiry] Performing FAQ pre-check semantic search...")
-        question_vector = await faq_svc.embed(rag_query)
-        faq = await faq_svc.find_best_match(question_vector, metadata_filter)
+        # FAQ Pre-check (vectorless — single LLM pass over active FAQ catalog)
+        logger.info(f"[Inquiry] Performing FAQ pre-check...")
+        faq = await faq_svc.find_best_match(rag_query, metadata_filter)
         
         if faq:
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -203,7 +202,6 @@ class InquiryService:
         if not faq: # Only log if it wasn't already an FAQ hit to avoid duplicate logs if needed, or always log for analytics
             asyncio.create_task(faq_svc.log_interaction(
                 question=rag_query,
-                question_vector=question_vector,
                 answer_markdown=rag_result["answer"],
                 metadata_filter=metadata_filter,
                 source_type="inquiry_email",

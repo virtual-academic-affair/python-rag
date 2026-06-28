@@ -31,7 +31,6 @@ from app.integrations.llm.gemini import gemini_client
 from app.integrations.redis.client import get_redis_client
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
-from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
 import uvicorn
 from google.genai.errors import APIError
@@ -429,18 +428,17 @@ async def health_check(request: Request):
     gemini_connected = False
     mongodb_connected = False
     redis_connected = False
-    qdrant_connected = False
     email_consumer_running = None
 
     if settings.RABBITMQ_ENABLED:
         consumer_thread = getattr(request.app.state, "email_consumer_thread", None)
         email_consumer_running = consumer_thread.is_alive() if consumer_thread is not None else False
-    
+
     try:
         gemini_connected = gemini_client.client is not None
     except Exception as e:
         logger.debug(f"Health check: gemini probe failed: {e}")
-    
+
     try:
         mongodb_connected = Database._db is not None
     except Exception as e:
@@ -450,13 +448,8 @@ async def health_check(request: Request):
         redis_connected = get_redis_client()._redis is not None
     except Exception as e:
         logger.debug(f"Health check: redis probe failed: {e}")
-    
-    try:
-        qdrant_connected = get_qdrant_indexer()._qdrant_client is not None
-    except Exception as e:
-        logger.debug(f"Health check: qdrant probe failed: {e}")
-    
-    dependencies_ok = (gemini_connected and mongodb_connected and redis_connected and qdrant_connected)
+
+    dependencies_ok = gemini_connected and mongodb_connected and redis_connected
     if settings.RABBITMQ_ENABLED and not email_consumer_running:
         dependencies_ok = False
 
@@ -467,7 +460,6 @@ async def health_check(request: Request):
         gemini_api_connected=gemini_connected,
         mongodb_connected=mongodb_connected,
         redis_connected=redis_connected,
-        qdrant_connected=qdrant_connected,
         email_consumer_running=email_consumer_running,
     )
 

@@ -38,8 +38,6 @@ logger = logging.getLogger(__name__)
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, TEXT
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qm
 
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
@@ -115,72 +113,6 @@ async def clear_r2_bucket():
         logger.warning(f"  R2 error (continuing): {e}")
 
     logger.info("✅ R2 bucket cleared")
-
-
-async def clear_qdrant_collections():
-    """Delete all points from Qdrant collection and recreate using current settings."""
-    logger.info("Clearing Qdrant collection...")
-
-    if not settings.QDRANT_URL:
-        logger.info("  QDRANT_URL not set, skipping.")
-        return
-
-    try:
-        client = QdrantClient(
-            url=settings.QDRANT_URL,
-            api_key=settings.QDRANT_API_KEY
-        )
-        collection_name = settings.QDRANT_COLLECTION_NAME
-        
-        # Check if collection exists
-        collections = client.get_collections().collections
-        exists = any(c.name == collection_name for c in collections)
-        
-        if exists:
-            client.delete_collection(collection_name=collection_name)
-            logger.info(f"  ✓ Deleted collection: {collection_name}")
-            
-        # Check and delete FAQ collection
-        faq_collection_name = settings.FAQ_QDRANT_COLLECTION
-        faq_exists = any(c.name == faq_collection_name for c in collections)
-        if faq_exists:
-            client.delete_collection(collection_name=faq_collection_name)
-            logger.info(f"  ✓ Deleted FAQ collection: {faq_collection_name}")
-            
-        # Recreate using STRICT .env settings
-        vector_size = settings.QDRANT_VECTOR_SIZE
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=qm.VectorParams(
-                size=vector_size,
-                distance=qm.Distance.COSINE
-            )
-        )
-        logger.info(f"  ✓ Recreated collection: {collection_name} (size={vector_size})")
-
-        # Create payload indexes for efficient filtering
-        logger.info("  Creating Qdrant payload indexes...")
-        fields_to_index = [
-            ("file_id", qm.PayloadSchemaType.KEYWORD),
-            ("metadata.enrollment_year_from", qm.PayloadSchemaType.INTEGER),
-            ("metadata.enrollment_year_to", qm.PayloadSchemaType.INTEGER),
-            ("metadata.academic_year_from", qm.PayloadSchemaType.INTEGER),
-            ("metadata.academic_year_to", qm.PayloadSchemaType.INTEGER),
-            ("metadata.type", qm.PayloadSchemaType.KEYWORD),
-        ]
-        
-        for field_name, field_type in fields_to_index:
-            client.create_payload_index(
-                collection_name=collection_name,
-                field_name=field_name,
-                field_schema=field_type
-            )
-            logger.info(f"    ✓ Created index for {field_name}")
-
-    except Exception as e:
-        logger.warning(f"  Qdrant error (continuing): {e}")
-
-    logger.info("✅ Qdrant cleared")
 
 
 async def clear_pageindex_workspace():
@@ -419,7 +351,6 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
 
         await drop_mongodb_database()
         await clear_r2_bucket()
-        await clear_qdrant_collections()
         await clear_pageindex_workspace()
 
         # Phase 2: Initialize

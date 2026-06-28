@@ -5,21 +5,25 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.core.config import settings
+from google.genai import types
 from pymongo.errors import DuplicateKeyError
-from app.core.exceptions import ValidationException, ConflictException, ExternalServiceException
+
+from app.core.config import settings
+from app.core.exceptions import ValidationException, ConflictException
 from app.core.pagination import PagedResult
+from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.dtos.create_faq import FaqBulkCreateItem
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.faq.repositories.faq_candidate_repository import FaqCandidateRepository
 from app.modules.faq.repositories.faq_repository import FaqRepository
 from app.modules.faq.repositories.interaction_log_repository import InteractionLogRepository
-from app.modules.faq.services.faq_vector_service import FaqVectorService, get_faq_vector_service
+from app.modules.faq.services.faq_matcher import FaqMatchEntry, FaqMatcher
 from app.modules.metadata.models.value_objects import FaqMetadata
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.utils.format_utils import markdown_to_rich_text, rich_text_to_markdown
+from app.utils.retry import async_retry
 from app.utils.text_utils import remove_accents
 
 
@@ -34,10 +38,28 @@ class FaqService:
         self._faq_repo = FaqRepository()
         self._candidate_repo = FaqCandidateRepository()
         self._log_repo = InteractionLogRepository()
-        self._qdrant: Optional[FaqVectorService] = None
 
-    async def embed(self, text: str) -> List[float]:
-        return await self._qdrant.embed_question(text)
+    # ------------------------------------------------------------------
+    # LLM adapter
+    # ------------------------------------------------------------------
+
+    async def _gemini_match(self, prompt: str) -> str:
+        """Adapter: run the FAQ matcher prompt through Gemini, return raw JSON text."""
+        model = settings.FAQ_MATCHER_MODEL or settings.GEMINI_MODEL
+        resp = await async_retry(
+            gemini_client.client.aio.models.generate_content,
+            model=model,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+        )
+        return resp.text or "{}"
+
+    # ------------------------------------------------------------------
+    # CRUD
+    # ------------------------------------------------------------------
 
     async def create_faq(
         self,
@@ -46,11 +68,10 @@ class FaqService:
         metadata_filter: Dict[str, Any],
         source: str = "manual",
         candidate_id: Optional[str] = None,
+        # question_vector kept as ignored kwarg for caller backward-compat during migration
         question_vector: Optional[List[float]] = None,
     ) -> FaqDocument:
         question_unaccented = remove_accents(question)
-        if not question_vector:
-            question_vector = await self.embed(question)
         answer_markdown = rich_text_to_markdown(answer_rich_text)
 
         is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
@@ -69,40 +90,11 @@ class FaqService:
             candidate_id=candidate_id,
             is_active=True,
             view_count=0,
-            qdrant_point_id=None,
         )
         try:
-            created = await self._faq_repo.create(doc)
+            return await self._faq_repo.create(doc)
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{question}' already exists.")
-            
-        faq_id = str(created.id)
-
-        try:
-            qdrant_point_id = await self._qdrant.upsert_faq(
-                faq_id=faq_id,
-                question_vector=question_vector,
-                metadata_filter=metadata_model.model_dump(),
-            )
-            created.qdrant_point_id = qdrant_point_id
-            await self._faq_repo.save(created)
-        except Exception as e:
-            logger.error(
-                f"[FAQ] Failed to upsert to Qdrant for FAQ {faq_id}: {e}. "
-                "Rolling back MongoDB FAQ creation..."
-            )
-            try:
-                await self._faq_repo.delete(created)
-            except Exception as rollback_err:
-                logger.error(f"[FAQ] Rollback failed to delete FAQ {faq_id} from Mongo: {rollback_err}")
-            try:
-                point_id = self._qdrant._stable_point_id(faq_id)
-                await self._qdrant.delete_faq(point_id)
-            except Exception:
-                pass
-            raise ExternalServiceException(f"Qdrant vector registration failed: {e}")
-
-        return created
 
     async def check_duplicate_question(self, question: str) -> Optional[FaqDocument]:
         return await self._faq_repo.find_by_unaccented_question(remove_accents(question))
@@ -118,8 +110,7 @@ class FaqService:
         failed_count = 0
         errors = []
 
-        to_process = []
-        processed_unaccented_questions = set()
+        processed_unaccented_questions: set[str] = set()
         for i, item in enumerate(items):
             question = item.question
             if not question or not str(question).strip():
@@ -137,50 +128,25 @@ class FaqService:
                 continue
 
             processed_unaccented_questions.add(unaccented)
-            to_process.append((i, item))
 
-        if not to_process:
-            return {"total": total, "created": 0, "skipped": skipped_count, "failed": failed_count, "errors": errors}
-
-        questions = [item.question for _, item in to_process]
-        sem = asyncio.Semaphore(15)
-
-        async def sem_embed(q: str):
-            async with sem:
-                return await self.embed(q)
-
-        try:
-            embeddings = await asyncio.gather(*[sem_embed(q) for q in questions])
-        except Exception as e:
-            logger.error(f"Failed to generate embeddings for bulk create: {e}")
-            return {
-                "total": total,
-                "created": 0,
-                "skipped": skipped_count,
-                "failed": failed_count + len(to_process),
-                "errors": errors + [{"question": "ALL", "error": f"Embedding failure: {str(e)}"}],
-            }
-
-        for idx, (original_idx, item) in enumerate(to_process):
             try:
                 answer_rich_text = item.answer_rich_text
                 if not answer_rich_text:
-                    raise ValueError(f"Item at row {original_idx + 1} is missing 'answer_rich_text' field.")
+                    raise ValueError(f"Item at row {i + 1} is missing 'answer_rich_text' field.")
 
                 await self.create_faq(
                     question=item.question,
                     answer_rich_text=answer_rich_text,
                     metadata_filter=item.metadata_filter.model_dump(by_alias=False),
                     source="bulk_import",
-                    question_vector=embeddings[idx],
                 )
                 created_count += 1
             except ConflictException:
                 skipped_count += 1
             except Exception as e:
-                logger.error(f"Failed to create FAQ in bulk at row {original_idx}: {e}")
+                logger.error(f"Failed to create FAQ in bulk at row {i}: {e}")
                 failed_count += 1
-                errors.append({"row_index": original_idx + 1, "question": item.question, "error": str(e)})
+                errors.append({"row_index": i + 1, "question": item.question, "error": str(e)})
 
         return {"total": total, "created": created_count, "skipped": skipped_count, "failed": failed_count, "errors": errors}
 
@@ -189,65 +155,12 @@ class FaqService:
         if not doc:
             return None
 
-        original_state = {
-            "question": doc.question,
-            "question_unaccented": doc.question_unaccented,
-            "answer_markdown": doc.answer_markdown,
-            "answer_rich_text": doc.answer_rich_text,
-            "answer_unaccented": doc.answer_unaccented,
-            "metadata_filter": doc.metadata_filter.model_copy(deep=True),
-            "is_active": doc.is_active,
-            "qdrant_point_id": doc.qdrant_point_id,
-        }
-
-        async def rollback_mongo_state() -> None:
-            rollback_doc = await self._faq_repo.find_by_id(faq_id)
-            if not rollback_doc:
-                logger.error(f"[FAQ] Rollback could not find FAQ {faq_id} in Mongo.")
-                return
-            for key, value in original_state.items():
-                setattr(rollback_doc, key, value)
-            await self._faq_repo.save(rollback_doc)
-
-        async def rollback_qdrant_state() -> None:
-            if original_state["is_active"]:
-                question_vector = await self.embed(original_state["question"])
-                point_id = await self._qdrant.upsert_faq(
-                    faq_id=faq_id,
-                    question_vector=question_vector,
-                    metadata_filter=original_state["metadata_filter"].model_dump(),
-                )
-                original_state["qdrant_point_id"] = point_id
-            else:
-                point_id = original_state["qdrant_point_id"] or self._qdrant._stable_point_id(faq_id)
-                await self._qdrant.delete_faq(point_id)
-
-        async def rollback_after_qdrant_failure() -> None:
-            try:
-                await rollback_qdrant_state()
-            except Exception as rollback_err:
-                logger.error(f"[FAQ] Qdrant rollback failed for FAQ {faq_id}: {rollback_err}")
-            try:
-                await rollback_mongo_state()
-            except Exception as rollback_err:
-                logger.error(f"[FAQ] Mongo rollback failed for FAQ {faq_id}: {rollback_err}")
-
-        need_qdrant_update = False
-        deleting_qdrant = False
-
         if "is_active" in data:
-            new_active = data["is_active"]
-            if not new_active and doc.is_active:
-                deleting_qdrant = True
-            elif new_active and not doc.is_active:
-                need_qdrant_update = True
-            doc.is_active = new_active
+            doc.is_active = data["is_active"]
 
         if "question" in data and data["question"] != doc.question:
             doc.question = data["question"]
             doc.question_unaccented = remove_accents(data["question"])
-            if doc.is_active:
-                need_qdrant_update = True
 
         if "answer_rich_text" in data:
             answer_markdown = rich_text_to_markdown(data["answer_rich_text"])
@@ -266,62 +179,17 @@ class FaqService:
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged FAQ metadata: {', '.join(errors)}")
-
             doc.metadata_filter = meta_model or FaqMetadata()
-            if doc.is_active:
-                need_qdrant_update = True
 
-        old_qdrant_point_id = original_state["qdrant_point_id"]
-
-        # Qdrant mutation intent: determine what to do before touching Mongo
-        if deleting_qdrant:
-            doc.qdrant_point_id = None  # optimistically clear before save
-
-        # --- Save Mongo first ---
         try:
-            saved = await self._faq_repo.save(doc)
+            return await self._faq_repo.save(doc)
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
-
-        # --- Then sync Qdrant ---
-        if deleting_qdrant:
-            point_to_delete = old_qdrant_point_id or self._qdrant._stable_point_id(faq_id)
-            try:
-                await self._qdrant.delete_faq(point_to_delete)
-            except Exception as e:
-                logger.error(f"[FAQ] Qdrant delete failed after Mongo save for FAQ {faq_id}: {e}. Rolling back Mongo.")
-                await rollback_after_qdrant_failure()
-                raise ExternalServiceException(f"Qdrant deletion failed: {e}")
-        elif need_qdrant_update:
-            try:
-                question_vector = await self.embed(saved.question)
-                qdrant_point_id = await self._qdrant.upsert_faq(
-                    faq_id=faq_id,
-                    question_vector=question_vector,
-                    metadata_filter=saved.metadata_filter.model_dump()
-                )
-                saved.qdrant_point_id = qdrant_point_id
-                await self._faq_repo.save(saved)
-            except Exception as e:
-                logger.error(f"[FAQ] Qdrant upsert failed after Mongo save for FAQ {faq_id}: {e}. Rolling back Mongo.")
-                await rollback_after_qdrant_failure()
-                raise ExternalServiceException(f"Qdrant upsert failed: {e}")
-
-        return saved
 
     async def delete_faq(self, faq_id: str) -> bool:
         doc = await self._faq_repo.find_by_id(faq_id)
         if not doc:
             return False
-
-        point_id = doc.qdrant_point_id or self._qdrant._stable_point_id(faq_id)
-        try:
-            await self._qdrant.delete_faq(point_id)
-        except Exception as e:
-            # Fail-closed regardless of whether qdrant_point_id was set or using stable ID
-            logger.error(f"[FAQ] Failed to delete Qdrant point {point_id} for FAQ {faq_id}: {e}")
-            raise ExternalServiceException(f"Failed to delete vector from Qdrant: {e}")
-
         await self._faq_repo.delete(doc)
         return True
 
@@ -350,40 +218,91 @@ class FaqService:
         )
         return PagedResult(items=items, total=total, page=page, limit=limit)
 
+    # ------------------------------------------------------------------
+    # Vectorless FAQ matching
+    # ------------------------------------------------------------------
+
     async def find_best_match(
         self,
-        question_vector: List[float],
+        question: str,
         metadata_filter: Dict[str, Any],
         threshold: Optional[float] = None,
         top_k: int = 5,
     ) -> Optional[FaqDocument]:
-        th = threshold or settings.FAQ_SEMANTIC_THRESHOLD
-        results = await self._qdrant.search(question_vector, metadata_filter, th, top_k=top_k)
-        if not results:
+        """Find the best matching active FAQ for *question* via one LLM pass.
+
+        Replaces Qdrant cosine similarity search. Flow:
+        1. MongoDB query: fetch active FAQs filtered by metadata (the "folder" layer).
+        2. Build a compact catalog of FAQ questions.
+        3. One LLM call: relevance classification → best match or null.
+        4. Return the matching FaqDocument (or None) and bump view_count.
+        """
+        # 1. Build metadata-based MongoDB filter
+        mongo_filter: Optional[dict] = None
+        if metadata_filter:
+            builder = get_filter_builder()
+            mongo_filter = await builder.build_mongo_filter(
+                metadata_filter, mongo_prefix="metadata_filter"
+            )
+
+        faqs, _ = await self._faq_repo.list_faqs(
+            is_active=True,
+            metadata_filter=mongo_filter,
+            skip=0,
+            limit=settings.FAQ_MATCHER_MAX_CATALOG,
+        )
+        if not faqs:
+            logger.info(f"[FAQ] No active FAQs in catalog for metadata {metadata_filter}")
             return None
 
-        for res in results:
-            faq_id = res["faq_id"]
-            faq = await self._faq_repo.find_by_id(faq_id)
-            if faq and faq.is_active:
-                asyncio.create_task(self._faq_repo.increment_view_count(faq_id))
-                return faq
-            if not faq:
-                logger.warning(f"[FAQ] Stale Qdrant point found: faq_id {faq_id} not in Mongo.")
-            elif not faq.is_active:
-                logger.debug(f"[FAQ] Matched inactive FAQ {faq_id}, skipping.")
+        # 2. Build catalog entries
+        entries: List[FaqMatchEntry] = []
+        faq_by_index: Dict[int, FaqDocument] = {}
+        for i, faq in enumerate(faqs, 1):
+            meta = faq.metadata_filter
+            ey = meta.enrollment_year.model_dump() if meta.enrollment_year else None
+            ay = meta.academic_year.model_dump() if meta.academic_year else None
+            entries.append(FaqMatchEntry(
+                faq_id=str(faq.id),
+                question=faq.question,
+                enrollment_year=ey,
+                academic_year=ay,
+            ))
+            faq_by_index[i] = faq
 
-        return None
+        # 3. One LLM pass
+        matcher = FaqMatcher(self._gemini_match)
+        result = await matcher.match(question, entries)
+        if not result:
+            logger.info(f"[FAQ] LLM found no match for: '{question[:80]}'")
+            return None
+
+        matched_faq_id = result["entry"].faq_id
+        matched_faq = next((f for f in faqs if str(f.id) == matched_faq_id), None)
+        if not matched_faq or not matched_faq.is_active:
+            return None
+
+        logger.info(
+            f"[FAQ] Match: '{matched_faq.question}' (score={result['score']}) "
+            f"reason={result['reason']}"
+        )
+        asyncio.create_task(self._faq_repo.increment_view_count(matched_faq_id))
+        return matched_faq
+
+    # ------------------------------------------------------------------
+    # Interaction logging
+    # ------------------------------------------------------------------
 
     async def log_interaction(
         self,
         question: str,
-        question_vector: List[float],
         answer_markdown: str,
         metadata_filter: Dict[str, Any],
         source_type: str,
         processing_time_ms: int = 0,
         email_message_id: Optional[int] = None,
+        # question_vector kept as ignored kwarg during transition (synthesis still reads old logs)
+        question_vector: Optional[List[float]] = None,
     ) -> None:
         is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
         if not is_valid:
@@ -391,13 +310,17 @@ class FaqService:
 
         await self._log_repo.log(
             question=question,
-            question_vector=question_vector,
             answer_markdown=answer_markdown,
+            question_vector=None,
             metadata_filter=(meta_model or FaqMetadata()).model_dump(),
             source_type=source_type,
             processing_time_ms=processing_time_ms,
             email_message_id=email_message_id,
         )
+
+    # ------------------------------------------------------------------
+    # Candidate review
+    # ------------------------------------------------------------------
 
     async def list_candidates(
         self,
@@ -481,5 +404,4 @@ async def get_faq_service() -> FaqService:
         async with _faq_service_lock:
             if _faq_service_instance is None:
                 _faq_service_instance = FaqService()
-                _faq_service_instance._qdrant = await get_faq_vector_service()
     return _faq_service_instance

@@ -118,19 +118,13 @@ class ChatStreamService(ChatService):
             })
             return
 
-        # [3] Embed rewritten question
+        # [3] FAQ Pre-check (vectorless — single LLM pass over active FAQ catalog)
         yield json.dumps({"type": "faq_check", "content": "Tìm kiếm câu hỏi tương tự trong bộ câu hỏi FAQ...", "done": False})
-        start_embed = time.perf_counter()
-        question_vector = await self._embed(effective_question)
-        dur_embed = time.perf_counter() - start_embed
-        logger.info(f"[Chat-Stream] Embed done in {dur_embed:.2f}s")
-
-        # [4] FAQ Pre-check
         start_faq = time.perf_counter()
         faq_svc = await self._get_faq_svc()
         # Omit 'type' filter from FAQ search query filter
         faq_metadata_filter = {k: v for k, v in metadata_filter.items() if k != "type"} if metadata_filter else {}
-        faq = await faq_svc.find_best_match(question_vector, faq_metadata_filter)
+        faq = await faq_svc.find_best_match(effective_question, faq_metadata_filter)
         dur_faq = time.perf_counter() - start_faq
         logger.info(f"[Chat-Stream] FAQ Check done in {dur_faq:.2f}s | hit={faq is not None}")
 
@@ -409,7 +403,6 @@ class ChatStreamService(ChatService):
             faq_svc = await self._get_faq_svc()
             fire_and_forget(faq_svc.log_interaction(
                 question=effective_question,
-                question_vector=question_vector,
                 answer_markdown=final_answer_accumulated,
                 metadata_filter=metadata_filter,
                 source_type="chat",

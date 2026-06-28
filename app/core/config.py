@@ -44,7 +44,6 @@ class Settings(BaseSettings):
 
     # RAG settings (from rag-service)
     GEMINI_MODEL: str = "gemini-2.5-flash"
-    GEMINI_EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     GEMINI_TEMPERATURE: float = 0.7
     GEMINI_TOP_P: float = 0.95
     GEMINI_TOP_K: int = 40
@@ -57,14 +56,10 @@ class Settings(BaseSettings):
     LLAMA_PARSE_LANGUAGE: str = "vi"
     LLAMA_PARSE_USE_PREMIUM: bool = False
 
-    # Qdrant retrieval tuning
-    QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_API_KEY: Optional[str] = None
-    QDRANT_COLLECTION_NAME: str = "file_overviews"
-    QDRANT_TOP_K: int = 6
-    QDRANT_MIN_SCORE: float = 0.2
-    RETRIEVAL_MIN_DOC_SCORE: float = 0.4
-    QDRANT_VECTOR_SIZE: int = 3072
+    # Vectorless navigator (LLM catalog navigation for file retrieval).
+    RETRIEVAL_NAVIGATOR_MAX_CATALOG: int = 500
+    # None -> falls back to GEMINI_MODEL.
+    RETRIEVAL_NAVIGATOR_MODEL: Optional[str] = None
     
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
@@ -82,8 +77,9 @@ class Settings(BaseSettings):
     # ====================================
     # FAQ Configuration
     # ====================================
-    FAQ_QDRANT_COLLECTION: str = "faqs"
-    FAQ_SEMANTIC_THRESHOLD: float = 0.90
+    # FAQ_MATCHER_MODEL: None -> falls back to GEMINI_MODEL.
+    FAQ_MATCHER_MAX_CATALOG: int = 200
+    FAQ_MATCHER_MODEL: Optional[str] = None
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
     FAQ_SYNTHESIS_ENABLED: bool = False
     FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7

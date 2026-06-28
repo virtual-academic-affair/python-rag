@@ -1,6 +1,5 @@
 from app.modules.faq.services.faq_service import get_faq_service, FaqService
 from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service, FaqSynthesisService
-from app.modules.faq.services.faq_vector_service import get_faq_vector_service, FaqVectorService
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.faq.models.interaction_log import InteractionLogDocument
@@ -13,8 +12,6 @@ __all__ = [
     "FaqService",
     "get_faq_synthesis_service",
     "FaqSynthesisService",
-    "get_faq_vector_service",
-    "FaqVectorService",
     "FaqDocument",
     "FaqCandidateDocument",
     "InteractionLogDocument",

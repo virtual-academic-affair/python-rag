@@ -1,30 +1,35 @@
 """
-Retrieval Service - Layered RAG logic.
-Combines Qdrant semantic search with PageIndex structural context.
+Retrieval Service - Vectorless RAG logic.
+Uses PageIndex structural context and LLM-based document navigation.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import time
-from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from google.genai import types
+
 from app.core.config import settings
-from app.integrations.qdrant.client import get_qdrant_retrieval_service
 from app.integrations.pageindex.client import get_page_index_client
+from app.integrations.llm.gemini import gemini_client
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.files.models.file import FileStatus
 from app.modules.files.toc_tree.models.toc_tree import serialize_toc_structure
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.files.repositories.file_repository import FileRepository
+from app.modules.rag.retrieval.navigator import (
+    CatalogEntry,
+    DocumentNavigator,
+    build_candidate_files,
+)
+from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
 class RetrievalService:
     def __init__(self):
-        self._qdrant = get_qdrant_retrieval_service()
         self._filter_builder = get_filter_builder()
         self._page_index = get_page_index_client()
         self._toc_repo = FileTocTreeRepository()
@@ -39,116 +44,101 @@ class RetrievalService:
         self,
         query: str,
         metadata_filter: Optional[Dict[str, Any]] = None,
-        top_k_chunks: int = 30, # Increased for better document scoring
         max_files: int = 5,
     ) -> List[Dict[str, Any]]:
-        """Unified helper to fetch relevant files using PageIndex Semantic Document Search algorithm."""
-        qdrant_meta_filter = await self._filter_builder.build_qdrant_filter(
-            metadata_filter=metadata_filter or {}
-        )
-
-        logger.info(f"[Retrieval] Bắt đầu semantic search cho query: '{query[:50]}...', filter: {qdrant_meta_filter}")
-        
-        start_qdrant = time.perf_counter()
-        hits = await self._qdrant.retrieve(
+        """Fetch relevant files using LLM-based document navigation over the metadata catalog."""
+        return await self.retrieve_candidate_files_via_navigator(
             query=query,
-            top_k=top_k_chunks,
-            metadata_filter=qdrant_meta_filter,
+            metadata_filter=metadata_filter,
+            max_files=max_files,
         )
-        qdrant_dur = time.perf_counter() - start_qdrant
 
-        if not hits:
-            logger.info(f"[Retrieval] Không tìm thấy dữ liệu vector nào cho query '{query}' (Qdrant duration: {qdrant_dur:.2f}s)")
+    async def _gemini_navigate(self, prompt: str) -> str:
+        """Adapter: run the navigator prompt through Gemini, return raw JSON text."""
+        model = settings.RETRIEVAL_NAVIGATOR_MODEL or settings.GEMINI_MODEL
+        resp = await async_retry(
+            gemini_client.client.aio.models.generate_content,
+            model=model,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+        )
+        return resp.text or "{}"
+
+    async def retrieve_candidate_files_via_navigator(
+        self,
+        query: str,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        max_files: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Vectorless candidate finder: metadata folder filter -> LLM catalog navigation.
+
+        Output shape matches retrieve_candidate_files so the agent loop is untouched.
+        """
+        # 1. Metadata acts as the deterministic "folder" layer (Mongo query, no vectors).
+        mongo_filter = await self._filter_builder.build_mongo_filter(
+            metadata_filter or {},
+            mongo_prefix="custom_metadata",
+            skip_validation=True,
+        )
+        mongo_filter["status"] = FileStatus.READY.value
+
+        files, _ = await self._file_repo.list_files(
+            mongo_filter, skip=0, limit=settings.RETRIEVAL_NAVIGATOR_MAX_CATALOG
+        )
+        if not files:
+            logger.info(f"[Navigator] Không có file READY nào khớp folder/metadata cho query '{query[:50]}...'")
             return []
-            
-        logger.info(f"[Retrieval] Đã quét được {len(hits)} chunks từ Qdrant trong {qdrant_dur:.2f}s. Đang tính điểm DocScore...")
 
-        doc_info = {}
-        doc_chunks = defaultdict(list)
-
-        # 1. Group chunks by file_id
-        for hit in hits:
-            fid = hit["file_id"]
-            if fid not in doc_info:
-                doc_info[fid] = hit.get("file_name", "")
-            doc_chunks[fid].append(hit.get("_retrieval_score", 0.0))
-
-        # 2. Compute Document Score
-        doc_scores = []
-        for fid, scores in doc_chunks.items():
-            N = len(scores)
-            total_score = sum(scores)
-            # PageIndex DocScore formula: sum(ChunkScore) / sqrt(N + 1)
-            doc_score = total_score / math.sqrt(N + 1)
-            doc_scores.append({
-                "file_id": fid,
-                "file_name": doc_info[fid],
-                "doc_score": doc_score
-            })
-
-        # 3. Retrieve top documents based on score threshold (at least 1, at most max_files)
-        doc_scores.sort(key=lambda x: x["doc_score"], reverse=True)
-        
-        # Filter candidate files by database status (must be READY)
-        all_candidate_ids = [d["file_id"] for d in doc_scores]
-        file_docs = await self._file_repo.find_by_ids(all_candidate_ids)
-        ready_file_map = {str(f.id): f for f in file_docs if f.status == FileStatus.READY}
-        
-        ready_doc_scores = [d for d in doc_scores if d["file_id"] in ready_file_map]
-        
-        before_filter_log = [
-            f"{d['file_name']} (id={d['file_id']}, score={d['doc_score']:.4f})"
-            for d in ready_doc_scores
-        ]
-        logger.info(f"[Retrieval] Các tài liệu READY được quét: {before_filter_log}")
-        
-        threshold = settings.RETRIEVAL_MIN_DOC_SCORE
-        filtered_docs = []
-        for i, d in enumerate(ready_doc_scores):
-            if d["doc_score"] >= threshold:
-                filtered_docs.append(d)
-                
-        top_docs = filtered_docs[:max_files]
-        
-        after_filter_log = [
-            f"{d['file_name']} (id={d['file_id']}, score={d['doc_score']:.4f})"
-            for d in top_docs
-        ]
-        logger.info(f"[Retrieval] Lọc ra {len(top_docs)} tài liệu tốt nhất (Ngưỡng điểm >= {threshold}): {after_filter_log}")
-
-        # 4. Enrich with descriptions and structure (Batch query)
-        top_ids = [d["file_id"] for d in top_docs]
-        toc_docs = await self._toc_repo.find_by_file_ids(top_ids)
+        file_ids = [str(f.id) for f in files]
+        toc_docs = await self._toc_repo.find_by_file_ids(file_ids)
         toc_map = {t.file_id: t for t in toc_docs}
-        
-        valid_top_docs = []
-        for d in top_docs:
-            fid = d["file_id"]
-            toc_doc = toc_map.get(fid)
-            d["doc_description"] = toc_doc.doc_description if toc_doc else ""
-            d["structure"] = serialize_toc_structure(toc_doc.structure) if toc_doc else []
-            d["markdown_storage_path"] = toc_doc.markdown_storage_path if toc_doc else ""
-            
-            f_doc = ready_file_map.get(fid)
-            if f_doc:
-                d["storage_path"] = f_doc.storage_path or ""
-                # table_of_contents: pre-filtered flat list of headings (blacklist-cleaned)
-                d["table_of_contents"] = f_doc.table_of_contents or []
-            else:
-                d["storage_path"] = ""
-                d["table_of_contents"] = []
-                
-            # Filter out stale/incomplete documents
-            if not d.get("storage_path"):
-                logger.warning(f"[Retrieval] Bỏ qua tài liệu stale/không tồn tại storage_path cho file_id={fid}")
-                continue
-            if not d.get("markdown_storage_path"):
-                logger.warning(f"[Retrieval] Bỏ qua tài liệu thiếu TOC/markdown artifact cho file_id={fid}")
-                continue
-                
-            valid_top_docs.append(d)
 
-        return valid_top_docs
+        # 2. Build the compact catalog the LLM will reason over.
+        entries: List[CatalogEntry] = []
+        for f in files:
+            fid = str(f.id)
+            meta = f.custom_metadata
+            toc = toc_map.get(fid)
+            entries.append(CatalogEntry(
+                file_id=fid,
+                file_name=f.display_name,
+                type=meta.type.value if meta else None,
+                enrollment_year=meta.enrollment_year.model_dump() if meta else None,
+                academic_year=meta.academic_year.model_dump() if meta else None,
+                doc_description=(toc.doc_description if toc else "") or "",
+                headings=f.table_of_contents or [],
+            ))
+
+        # 3. One LLM pass: relevance classification over the catalog.
+        start = time.perf_counter()
+        navigator = DocumentNavigator(self._gemini_navigate)
+        nav_results = await navigator.navigate(query, entries, top_k=max_files)
+        dur = time.perf_counter() - start
+        logger.info(
+            f"[Navigator] Quét catalog {len(entries)} tài liệu trong {dur:.2f}s "
+            f"-> chọn {len(nav_results)}: "
+            + ", ".join(f"{r['entry'].file_name}(score={r['score']}): {r['reason']}" for r in nav_results)
+        )
+        if not nav_results:
+            return []
+
+        # 4. Enrich selected docs with structure/artifacts; drop stale ones.
+        doc_data_by_id: Dict[str, dict] = {}
+        for f in files:
+            fid = str(f.id)
+            toc = toc_map.get(fid)
+            doc_data_by_id[fid] = {
+                "storage_path": f.storage_path or "",
+                "markdown_storage_path": (toc.markdown_storage_path if toc else "") or "",
+                "table_of_contents": f.table_of_contents or [],
+                "doc_description": (toc.doc_description if toc else "") or "",
+                "structure": serialize_toc_structure(toc.structure) if toc else [],
+            }
+
+        return build_candidate_files(nav_results, doc_data_by_id)
 
 _retrieval_service_instance: Optional[RetrievalService] = None
 
