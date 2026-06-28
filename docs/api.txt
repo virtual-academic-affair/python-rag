@@ -10,15 +10,24 @@ REDOC: http://localhost:8000/redoc
 XÁC THỰC (AUTHENTICATION)
 ════════════════════════════════════════════════════════════════════════════════
 
-Hệ thống bảo vệ API bằng JWT Token và phân quyền vai trò (RBAC). 
+Hệ thống bảo vệ API bằng JWT Token và phân quyền vai trò (RBAC).
 Việc xác thực được thực hiện thông qua gRPC call tới NestJS Backend.
 
 ROLE LEVELS:
-  - 🔒 admin: Toàn quyền truy cập, quản lý Metadata và Tệp tin.
-  - 🔒 auth: Mọi người dùng đã xác thực (Student/Lecture) đều có quyền xem toàn bộ tài liệu công khai và metadata tags. Phân quyền chỉ áp dụng ở tầng bảo mật Auth chung, không lọc theo file scope.
+  - 🔒 admin   : Toàn quyền truy cập, quản lý Metadata và Tệp tin.
+                 Thấy tất cả tệp tin (kể cả lecturerOnly=true).
+  - 🔒 lecture : Tương đương admin về quyền xem tài liệu.
+                 Thấy tất cả tệp tin (kể cả lecturerOnly=true).
+  - 🔒 auth    : Sinh viên đã xác thực (role=student).
+                 Chỉ thấy tệp tin có lecturerOnly=false.
+                 Nếu JWT có enrollmentYear: chỉ thấy file không có metadata
+                 năm học HOẶC file có enrollment_year_from ≤ year ≤ enrollment_year_to.
 
 HEADER BẮT BUỘC:
   Authorization: Bearer <jwt_token>
+
+JWT PAYLOAD (student):
+  { "sub": 5, "role": "student", "enrollmentYear": 2022, ... }
 
 LỖI THƯỜNG GẶP:
   - 401 Unauthorized: Thiếu token hoặc token hết hạn.
@@ -34,11 +43,11 @@ MỤC LỤC
  5. Chat & RAG Tooling         (9 endpoints) [🔒 auth]
  6. FAQ MODULE APIs            (12 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (8 endpoints)  [🔒 admin / 🔒 auth]
- 8. Debug & Preview APIs       (2 endpoints) [🔒 admin]
+ 8. Debug & Preview APIs       (1 endpoint)  [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 44 ENDPOINTS
+ TỔNG: 43 ENDPOINTS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -55,17 +64,17 @@ MỤC LỤC
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "5.5.0",                                                      │
+│     "version": "3.0.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
-│     "qdrantConnected": true,                                                 │
 │     "redisConnected": true                                                   │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Thử gọi lệnh ping tới MongoDB.                                          │
 │   2. Thử khởi tạo Gemini client để kiểm tra API Key.                         │
-│   3. Trả về trạng thái "healthy" nếu tất cả kết nối OK.                      │
+│   3. Kiểm tra kết nối Redis.                                                 │
+│   4. Trả về trạng thái "healthy" nếu tất cả kết nối OK.                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -110,8 +119,9 @@ MỤC LỤC
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
-│   2. FAQ Pre-check: Tìm kiếm ngữ nghĩa trong kho FAQ. Nếu trúng -> Dùng luôn. │
-│   3. RAG Retrieval: Nếu không có FAQ, tìm kiếm tài liệu quy chế liên quan.    │
+│   2. FAQ Pre-check: Tìm kiếm ngữ nghĩa trong kho FAQ qua FaqMatcher.         │
+│      Nếu trúng -> Dùng luôn.                                                 │
+│   3. RAG Retrieval: Nếu không có FAQ, Navigator tìm kiếm tài liệu liên quan. │
 │   4. LLM Synthesis: Soạn thảo email phản hồi dựa trên bối cảnh tìm được.     │
 │   5. gRPC Call: Lưu thắc mắc và bản thảo email vào NestJS qua gRPC.          │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -156,6 +166,24 @@ MỤC LỤC
                         4. FILE MANAGEMENT APIs
 ════════════════════════════════════════════════════════════════════════════════
 
+FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
+  {
+    "fileId": "67...",
+    "originalFilename": "quy_che.pdf",
+    "displayName": "Quy chế đào tạo ĐH 2021",
+    "fileSize": 1048576,
+    "mimeType": "application/pdf",
+    "storagePath": "...",
+    "status": "ready",
+    "lecturerOnly": false,       ← true: chỉ admin/lecturer được thấy
+    "customMetadata": { ... },
+    "fileUrl": "https://...",
+    "markdownFileUrl": "https://...",
+    "tableOfContents": [ ... ],
+    "createdAt": "ISO Date",
+    "updatedAt": "ISO Date"
+  }
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/files                  [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -163,15 +191,19 @@ MỤC LỤC
 │                                                                              │
 │ REQUEST (Multipart):                                                         │
 │   - file: <binary>                                                           │
-│   - displayName: "Văn bản A"                                  │
-│   - customMetadata: JSON string                            │
-│     (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020}, "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}') │
-│   - clientId: <string> (Dùng cho WebSocket progress)             │
+│   - displayName: "Văn bản A"                                                 │
+│   - lecturerOnly: bool (mặc định: false)                                     │
+│     true = chỉ admin/lecturer thấy tệp này khi gọi GET /api/files            │
+│   - customMetadata: JSON string                                              │
+│     (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020},                 │
+│            "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}')│
+│   - clientId: <string> (Dùng cho WebSocket progress)                        │
 │                                                                              │
 │ RESPONSE 201:                                                                │
 │   {                                                                          │
 │     "fileId": "67...",                                                       │
 │     "status": "uploading",                                                   │
+│     "lecturerOnly": false,                                                   │
 │     "customMetadata": {                                                      │
 │        "enrollmentYear": {"fromYear": 2020, "toYear": 2020},                 │
 │        "academicYear": {"fromYear": 2025, "toYear": 2026},                   │
@@ -184,7 +216,7 @@ MỤC LỤC
 │   1. FileService.upload_file_quick: Lưu tạm -> Upload R2 -> Tạo Mongo record.│
 │   2. Trả về kết quả ngay lập tức kèm trạng thái "uploading".                 │
 │   3. Kích hoạt BackgroundTask chạy process_file_background.                  │
-│   4. Background: LlamaParse bóc tách -> PageIndex sinh Tree -> Qdrant Embed. │
+│   4. Background: LlamaParse bóc tách -> PageIndex sinh TOC Tree.             │
 │   5. Hoàn tất: Sử dụng `find_one_and_update` để chuyển status sang "ready"    │
 │      nguyên tử. Chỉ khi transition thành công mới tăng bộ đếm Metadata.      │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -192,7 +224,7 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/files                   [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Liệt kê tệp tin đính kèm bộ lọc (Dành cho Student/Lecture).           │
+│ MÔ TẢ: Liệt kê tệp tin với bộ lọc. Kết quả được lọc tự động theo role.       │
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
 │   - fileStatus: string (ready|processing|failed)                             │
@@ -200,33 +232,48 @@ MỤC LỤC
 │   - keywords: string (Tìm theo tên tệp)                                      │
 │   - page/limit: Phân trang (mặc định 1/50)                                   │
 │                                                                              │
-│ RESPONSE 200 OK: { "files": [FileDetailResponse], "total": 120 }             │
+│ PHÂN QUYỀN THEO ROLE (tự động — không cần tham số):                          │
+│   - admin / lecture : Thấy toàn bộ tệp tin (kể cả lecturerOnly=true).        │
+│   - student         : Tự động lọc:                                           │
+│     (a) Ẩn tất cả tệp có lecturerOnly=true.                                  │
+│     (b) Nếu JWT có enrollmentYear=Y:                                         │
+│         • Các file không có metadata năm học → vẫn hiện.                     │
+│         • Các file có enrollment_year_from/to → chỉ hiện nếu                 │
+│           enrollment_year_from ≤ Y ≤ enrollment_year_to.                     │
+│                                                                              │
+│ RESPONSE 200 OK:                                                             │
+│   { "files": [FileDetailResponse], "total": 22, "page": 1, "limit": 50 }    │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
-│   2. Truy vấn MongoDB trả về danh sách tệp tin.                              │
+│   1. Decode JWT → xác định role và enrollmentYear.                           │
+│   2. Nếu student: xây dựng role_filter (lecturerOnly + năm học).             │
+│   3. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
+│   4. Gộp role_filter vào query và truy vấn MongoDB.                          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ PATCH /api/files/{file_id}        [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Cập nhật thông tin tệp tin (Tên hiển thị, Metadata).                  │
+│ MÔ TẢ: Cập nhật thông tin tệp tin (Tên hiển thị, Metadata, lecturerOnly).    │
 │                                                                              │
 │ REQUEST EXAMPLE:                                                             │
 │   {                                                                          │
 │     "displayName": "Tên mới.pdf",                                            │
+│     "lecturerOnly": true,                                                    │
 │     "customMetadata": {                                                      │
 │       "academicYear": {"fromYear": 2025, "toYear": 2026},                    │
 │       "type": "cong_van"                                                     │
 │     }                                                                        │
 │   }                                                                          │
 │                                                                              │
+│ GHI CHÚ: Tất cả các trường đều optional. Ít nhất một trường phải có giá trị. │
+│                                                                              │
 │ RESPONSE: FileDetailResponse                                                 │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. MongoDB: Cập nhật thông tin record file.                                │
-│   2. Qdrant Sync: Nếu có cập nhật `customMetadata`, hệ thống tự động đồng bộ │
-│      lại payload của tất cả các vector points thuộc file này trên Qdrant.    │
+│   1. Validate: ít nhất một trường thay đổi phải được cung cấp.               │
+│   2. MongoDB: Cập nhật các trường displayName, lecturerOnly, customMetadata. │
+│   3. Trả về FileDetailResponse đã cập nhật.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -235,7 +282,7 @@ MỤC LỤC
 │ MÔ TẢ: Upload đồng thời nhiều tệp tin.                                       │
 │ REQUEST (Multipart):                                                         │
 │   - files: [binary]                                                          │
-│   - displayNames: JSON string (VD: ["File 1", "File 2"])      │
+│   - displayNames: JSON string (VD: ["File 1", "File 2"])                     │
 │   - metadataList: JSON string (VD: [{"type":"ctdt"}, {"type":"quyet_dinh"}]) │
 │ RESPONSE: { "total": 5, "successful": 4, "failed": 1, "results": [...] }     │
 │ LUỒNG XỬ LÝ: Chạy vòng lặp gọi hàm upload đơn lẻ cho từng thành phần.        │
@@ -271,11 +318,10 @@ MỤC LỤC
 │ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
 │ RESPONSE 204: No Content.                                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Qdrant: Xóa toàn bộ Vector points mang file_id tương ứng.               │
-│   2. R2: Xóa binary file gốc và binary file markdown bóc tách.                │
-│   3. Metadata Service: Sử dụng `find_one_and_delete` nguyên tử. Nếu tệp bị xóa│
+│   1. R2: Xóa binary file gốc và binary file markdown bóc tách.                │
+│   2. Metadata Service: Sử dụng `find_one_and_delete` nguyên tử. Nếu tệp bị xóa│
 │      đang ở trạng thái "ready", hệ thống mới thực hiện trừ bộ đếm Metadata.  │
-│   4. MongoDB: Xóa bản ghi tệp và bản ghi TOC Tree.                           │
+│   3. MongoDB: Xóa bản ghi tệp và bản ghi TOC Tree.                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -346,7 +392,7 @@ MỤC LỤC
 │      "faq_question": "Học phí CLC?"  ← chỉ có khi hit=true                 │
 │    }                                                                         │
 │                                                                              │
-│ 3. RETRIEVAL — Kết quả tra cứu tài liệu từ Qdrant                           │
+│ 3. RETRIEVAL — Kết quả tra cứu tài liệu qua Navigator                       │
 │    {                                                                         │
 │      "type": "retrieval",                                                    │
 │      "candidate_files": [                                                    │
@@ -595,23 +641,35 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/chat/retrieve-preview  [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xem trước các đoạn văn bản (Chunks) mà RAG tìm được cho câu hỏi.      │
+│ MÔ TẢ: Xem trước danh sách tài liệu mà RAG Navigator chọn cho câu hỏi.       │
 │                                                                              │
-│ REQUEST: { "question": "...", "topK": 5, "minScore": 0.3 }                   │
+│ REQUEST:                                                                     │
+│   {                                                                          │
+│     "question": "...",                                                       │
+│     "topK": 5,                                                               │
+│     "metadataFilter": { "type": ["ctdt"] }  ← optional                      │
+│   }                                                                          │
 │                                                                              │
 │ RESPONSE:                                                                    │
 │   {                                                                          │
 │     "query": "...",                                                          │
 │     "topK": 5,                                                               │
-│     "count": 5,                                                              │
+│     "count": 3,                                                              │
 │     "items": [                                                               │
-│        { "rank": 1, "score": 0.85, "text": "...", "fileName": "..." }        │
+│        {                                                                     │
+│          "rank": 1,                                                          │
+│          "fileId": "abc123",                                                 │
+│          "fileName": "Quy chế ĐT",                                           │
+│          "score": 0.85,                                                      │
+│          "text": "...",          ← doc_description từ TOC                    │
+│          "explain": { "reason": "..." }  ← lý do Navigator chọn file        │
+│        }                                                                     │
 │     ]                                                                        │
 │   }                                                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Tạo embedding cho câu hỏi đầu vào.                                      │
-│   2. Thực thi Vector Search (Coarse Search) trên Qdrant collection chính.    │
-│   3. Trả về nội dung thô của các Chunks tìm được kèm metadata của từng tệp.  │
+│   1. Gọi RetrievalService.retrieve_candidate_files() qua Navigator.          │
+│   2. Navigator dùng LLM đọc catalog tóm tắt tài liệu và chọn file phù hợp.  │
+│   3. Trả về danh sách tài liệu ứng viên kèm lý do chọn.                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -656,8 +714,7 @@ MỤC LỤC
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs                   [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Tạo một FAQ thủ công. Hệ thống sẽ tự động tạo embedding vector lưu    │
-│        vào Qdrant faqs collection.                                           │
+│ MÔ TẢ: Tạo một FAQ thủ công.                                                 │
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "question": "...",                                                       │
@@ -667,8 +724,7 @@ MỤC LỤC
 │ RESPONSE: FaqResponse object                                                 │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Lưu document vào MongoDB collection `faqs`.                             │
-│   2. Gọi LLM Service để tạo Embedding Vector cho nội dung câu hỏi.           │
-│   3. Upsert vector và metadata vào Qdrant collection `faqs` để search.       │
+│   2. Trả về FaqResponse.                                                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -685,30 +741,27 @@ MỤC LỤC
 │ RESPONSE: FaqResponse object đã cập nhật.                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Cập nhật các trường dữ liệu mới vào MongoDB.                            │
-│   2. Nếu câu hỏi thay đổi, re-generate embedding và cập nhật lại Qdrant.     │
-│   3. Nếu chỉ thay đổi metadata, đồng bộ lại payload trên Qdrant.             │
+│   2. Trả về FaqResponse đã cập nhật.                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ DELETE /api/faqs/{faq_id}             [🔒 ADMIN]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xóa hoàn toàn một FAQ khỏi MongoDB và Qdrant collection.              │
+│ MÔ TẢ: Xóa hoàn toàn một FAQ khỏi MongoDB.                                   │
 │ RESPONSE 204: No Content.                                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xóa bản ghi trong MongoDB collection `faqs`.                            │
-│   2. Xóa vector tương ứng trong Qdrant collection `faqs`.                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/match             [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Đầu API Debug để thử nghiệm thuật toán Semantic Search trên kho FAQ.  │
+│ MÔ TẢ: Debug endpoint để thử nghiệm thuật toán FaqMatcher trên kho FAQ.      │
 │ REQUEST BODY: { "question": "...", "threshold": 0.85, "metadataFilter": {} } │
 │ RESPONSE: FaqResponse object (câu hỏi khớp nhất) hoặc 404 (Không tìm thấy).  │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Chuyển đổi câu hỏi đầu vào thành vector embedding.                      │
-│   2. Tìm kiếm trên Qdrant collection `faqs` kèm filter và threshold.         │
-│   3. Trả về FAQ có độ tương đồng cao nhất nếu vượt qua ngưỡng.               │
+│   1. FaqMatcher dùng LLM đọc catalog FAQ và chấm điểm tương đồng.            │
+│   2. Trả về FAQ có độ tương đồng cao nhất nếu vượt qua ngưỡng threshold.     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -732,7 +785,7 @@ MỤC LỤC
 │   }                                                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Truy vấn Interaction Logs trong khoảng thời gian yêu cầu.               │
-│   2. Gom cụm (Clustering) các câu hỏi tương đồng dựa trên vector.            │
+│   2. Gom cụm (Clustering) các câu hỏi tương đồng dựa trên nội dung.          │
 │   3. Với mỗi cụm, gọi LLM tổng hợp câu trả lời chung. Hệ thống truyền thêm   │
 │      Top 5 FAQ hiện có gần nhất làm tham chiếu để đảm bảo tính nhất quán.    │
 │   4. Lưu các ứng viên vào collection `faq_candidates` để chờ Admin duyệt.    │
@@ -759,7 +812,6 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/faqs/candidates/{candidate_id} [🔒 ADMIN]                           │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy chi tiết một ứng viên FAQ.                                        │
@@ -783,7 +835,7 @@ MỤC LỤC
 │ RESPONSE: FaqCandidateResponse (ID alias: candidateId)                       │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Cập nhật trạng thái của Candidate trong MongoDB.                         │
-│   2. Nếu `action=approve`: Gọi logic tạo FAQ chính thức (Mongo + Qdrant).    │
+│   2. Nếu `action=approve`: Gọi logic tạo FAQ chính thức (Mongo).             │
 │   3. Trả về dữ liệu ứng viên sau khi xử lý.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -833,7 +885,7 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Thực hiện bóc tách dữ liệu tương tự endpoint preview.                   │
 │   2. Lọc danh sách câu hỏi hợp lệ.                                           │
-│   3. Thực hiện Bulk Insert vào MongoDB và Bulk Upsert vào Qdrant.            │
+│   3. Thực hiện Bulk Insert vào MongoDB.                                       │
 │   4. Trả về báo cáo chi tiết số lượng thành công/thất bại/trùng lặp.         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -851,7 +903,7 @@ MỤC LỤC
 │ RESPONSE: Tương tự endpoint import.                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Nhận mảng dữ liệu FAQ dưới dạng JSON.                                   │
-│   2. Thực hiện quy trình Bulk Create (Lưu Mongo + Embed + Qdrant).           │
+│   2. Thực hiện Bulk Create vào MongoDB.                                       │
 │   3. Trả về kết quả xử lý hàng loạt.                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -895,7 +947,6 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ: Lưu dữ liệu vào MongoDB collection `forms`.                     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────────────────────┐
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/forms/{form_id}              [🔒 AUTH]                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -959,14 +1010,6 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ: Gửi tệp tới LlamaParse API và trả về kết quả thô ngay lập tức.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/debug/files/chunk-preview [🔒 ADMIN]                               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Thử nghiệm bóc tách kèm chia mảnh (Markdown + Semantic Chunks).       │
-│ RESPONSE: { "chunkCount": 25, "chunks": [...] }                              │
-│ LUỒNG XỬ LÝ: Gọi LlamaParse sau đó chạy logic ChunkingService cục bộ.        │
-└──────────────────────────────────────────────────────────────────────────────┘
-
 
 ════════════════════════════════════════════════════════════════════════════════
                         9. REAL-TIME NOTIFICATIONS
@@ -997,7 +1040,7 @@ MỤC LỤC
 - 403 Forbidden: Sai Role người dùng (ForbiddenException).
 - 404 Not Found: Dữ liệu không tồn tại trong DB.
 - 409 Conflict: Dữ liệu đã tồn tại hoặc đang bị ràng buộc (Metadata in use).
-- 500 Internal Error: Lỗi hạ tầng (Qdrant, MongoDB, R2).
+- 500 Internal Error: Lỗi hạ tầng (MongoDB, R2).
 - 429 Too Many Requests: Lỗi Rate Limit từ Gemini API (Tự động retry ở client).
 
 --------------------------------------------------------------------------------
@@ -1009,5 +1052,11 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-Hoàn tất bản Đặc tả API chi tiết v5.5.0 (Full Compliance).
+LƯU Ý VỀ RETRIEVAL (VECTORLESS ARCHITECTURE):
+- File retrieval dùng Navigator: LLM đọc catalog tóm tắt tài liệu và chọn file phù hợp.
+  Không dùng vector embedding hay Qdrant. Tuning qua RETRIEVAL_NAVIGATOR_MAX_CATALOG.
+- FAQ matching dùng FaqMatcher: LLM đọc catalog FAQ và chấm điểm tương đồng ngữ nghĩa.
+  Không dùng vector embedding hay Qdrant. Tuning qua FAQ_MATCHER_MAX_CATALOG.
+
+Hoàn tất bản Đặc tả API chi tiết v3.0.0 (Vectorless Edition).
 --------------------------------------------------------------------------------
