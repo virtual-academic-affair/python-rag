@@ -43,6 +43,7 @@ def _to_file_detail_response(file_doc) -> FileDetailResponse:
         mime_type=file_doc.mime_type,
         storage_path=file_doc.storage_path,
         status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+        lecturer_only=file_doc.lecturer_only,
         custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
         file_url=get_download_url(file_doc.storage_path),
         markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
@@ -104,6 +105,7 @@ async def upload_file(
             original_filename=file.filename,
             display_name=req.display_name,
             custom_metadata=metadata_dict,
+            lecturer_only=req.lecturer_only,
             progress_callback=_progress_callback,
         )
 
@@ -176,11 +178,28 @@ async def list_files(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid metadataFilter JSON format")
 
+        # Role-based access: student không thấy file lecturer_only và bị filter theo enrollmentYear
+        role_filter: Optional[Dict[str, Any]] = None
+        if _user.role == "student":
+            role_filter = {"lecturer_only": {"$ne": True}}
+            if _user.enrollment_year:
+                ey = _user.enrollment_year
+                # Files without year metadata are visible to all students;
+                # files with year metadata must include the student's enrollment year
+                role_filter["$and"] = [{"$or": [
+                    {"custom_metadata.enrollment_year_from": {"$exists": False}},
+                    {
+                        "custom_metadata.enrollment_year_from": {"$lte": ey},
+                        "custom_metadata.enrollment_year_to": {"$gte": ey},
+                    },
+                ]}]
+
         skip = (page - 1) * limit
         files, total = await file_svc.list_files(
             status=status_enum,
             custom_metadata_filter=custom_metadata_filter,
             keywords=keywords,
+            role_filter=role_filter,
             skip=skip,
             limit=limit,
         )
@@ -376,13 +395,14 @@ async def update_file(
     try:
         file_svc = get_file_service()
         file_doc = await file_svc.update_file(
-            file_id=file_id, 
+            file_id=file_id,
             display_name=request.display_name,
             custom_metadata=(
                 request.custom_metadata.model_dump(exclude_unset=True, by_alias=False)
                 if request.custom_metadata
                 else None
-            )
+            ),
+            lecturer_only=request.lecturer_only,
         )
         if not file_doc:
             raise NotFoundException("File", file_id)

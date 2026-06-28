@@ -117,71 +117,71 @@ class FileService(FileUploadMixin):
         self,
         file_id: str,
         display_name: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None
+        custom_metadata: Optional[Dict[str, Any]] = None,
+        lecturer_only: Optional[bool] = None,
     ) -> Optional[FileDocument]:
-        """Update file details (display name and/or metadata) and syncs to Qdrant."""
+        """Update file details (display name, metadata, lecturer_only) and syncs to Qdrant."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
         old_display_name = file_doc.display_name
         old_metadata = file_doc.custom_metadata
-        new_display_name = file_doc.display_name
-        new_metadata = file_doc.custom_metadata
 
-        if display_name is not None:
-            new_display_name = display_name
+        display_name_changed = False
+        metadata_changed = False
+        lecturer_only_changed = False
+
+        if display_name is not None and display_name != file_doc.display_name:
+            file_doc.display_name = display_name
+            file_doc.display_name_unaccented = remove_accents(display_name)
+            display_name_changed = True
 
         if custom_metadata is not None:
             validator = get_metadata_service()
             is_valid, errors, meta_model = validator.merge_file_metadata_update(
-                existing=old_metadata,
+                existing=file_doc.custom_metadata,
                 incoming_update=custom_metadata,
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
+            file_doc.custom_metadata = meta_model
+            metadata_changed = True
 
-            new_metadata = meta_model
+        if lecturer_only is not None and lecturer_only != file_doc.lecturer_only:
+            file_doc.lecturer_only = lecturer_only
+            lecturer_only_changed = True
 
-        display_name_changed = new_display_name != old_display_name
-        metadata_changed = new_metadata != old_metadata
+        if not (display_name_changed or metadata_changed or lecturer_only_changed):
+            return file_doc
+
+        indexer = get_qdrant_indexer()
 
         if display_name_changed or metadata_changed:
-            indexer = get_qdrant_indexer()
-            new_metadata_payload = new_metadata.model_dump(mode="json") if metadata_changed and new_metadata else None
-            new_qdrant_name = new_display_name if display_name_changed else None
             try:
                 await indexer.update_payload_by_file_id(
                     file_id=file_id,
-                    new_metadata=new_metadata_payload,
-                    file_name=new_qdrant_name
+                    new_metadata=file_doc.custom_metadata.model_dump(mode="json") if metadata_changed else None,
+                    file_name=file_doc.display_name if display_name_changed else None,
                 )
-                logger.info(f"[FileService] Synced update to Qdrant for file {file_id}")
             except Exception as e:
-                logger.error(f"[FileService] Failed to sync update to Qdrant for file {file_id}: {e}", exc_info=True)
-                raise ExternalServiceException(
-                    f"Failed to sync file update to vector index: {str(e)}"
-                ) from e
+                logger.error(f"[FileService] Failed to update Qdrant for file {file_id}: {e}")
+                raise ExternalServiceException(f"Failed to update search index: {str(e)}")
 
-            file_doc.display_name = new_display_name
-            file_doc.display_name_unaccented = remove_accents(new_display_name)
-            file_doc.custom_metadata = new_metadata
-
-            try:
-                await self.file_repo.save(file_doc)
-            except Exception as e:
+        try:
+            await self.file_repo.save(file_doc)
+        except Exception as e:
+            if display_name_changed or metadata_changed:
                 try:
                     await indexer.update_payload_by_file_id(
                         file_id=file_id,
                         new_metadata=old_metadata.model_dump(mode="json") if metadata_changed and old_metadata else None,
-                        file_name=old_display_name if display_name_changed else None
+                        file_name=old_display_name if display_name_changed else None,
                     )
                 except Exception as rollback_error:
                     logger.warning(f"[FileService] Failed to rollback Qdrant update for file {file_id}: {rollback_error}")
-                raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
+            raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
-            return file_doc
-            
         return file_doc
 
     async def list_files(
@@ -189,13 +189,17 @@ class FileService(FileUploadMixin):
         status: Optional[FileStatus] = None,
         custom_metadata_filter: Optional[Dict[str, Any]] = None,
         keywords: Optional[str] = None,
+        role_filter: Optional[Dict[str, Any]] = None,
         skip: int = 0,
         limit: int = 50,
     ) -> tuple[list[FileDocument], int]:
-        """List files with optional status, keyword, and metadata filters."""
+        """List files with optional status, keyword, metadata, and role-based filters."""
         filters = {}
         if status:
             filters["status"] = status
+
+        if role_filter:
+            filters.update(role_filter)
 
         if keywords:
             unaccented_kw = remove_accents(keywords)

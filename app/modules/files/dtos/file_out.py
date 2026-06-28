@@ -11,6 +11,7 @@ class FileDetailResponse(BaseSchema):
     mime_type: str
     storage_path: str
     status: str
+    lecturer_only: bool = False
     custom_metadata: Optional[FileMetadataResponse] = Field(default=None)
     file_url: Optional[str] = None
     markdown_file_url: Optional[str] = None

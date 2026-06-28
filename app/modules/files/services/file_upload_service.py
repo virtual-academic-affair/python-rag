@@ -36,6 +36,7 @@ class FileUploadMixin:
         original_filename: str,
         display_name: Optional[str] = None,
         custom_metadata: Optional[dict] = None,
+        lecturer_only: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> tuple[FileDocument, dict[str, Any]]:
         """Create DB record + upload original to R2, then return immediately with pending status."""
@@ -63,6 +64,7 @@ class FileUploadMixin:
                 mime_type=file_info["mime_type"],
                 custom_metadata=state.custom_metadata or {},
                 status=FileStatus.UPLOADING,
+                lecturer_only=lecturer_only,
             )
             await self.file_repo.create(file_doc)
             state.file_id = str(file_doc.id)

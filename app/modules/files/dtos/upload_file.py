@@ -6,6 +6,7 @@ from app.modules.metadata.dtos.metadata_out import FileMetadataResponse
 class FileUploadRequest(BaseSchema):
     display_name: Optional[str] = None
     custom_metadata: Optional[str] = None
+    lecturer_only: bool = False
     client_id: Optional[str] = None
 
 class FileUploadResponse(BaseSchema):
