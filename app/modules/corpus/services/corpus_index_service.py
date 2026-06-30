@@ -48,10 +48,13 @@ class CorpusIndexService:
         ntype = NodeType.FILE if leaf_kind == "file" else NodeType.FAQ
         await self.repo.upsert_node(leaf_key, node_type=ntype, title=leaf_id)
 
-        # sync parent_keys on leaf
+        # Apply diff to parent_keys (preserve non-metadata parents for Phase B compatibility)
         node = await self.repo.get_by_key(leaf_key)
         if node:
-            node.parent_keys = parent_keys
+            merged = set(node.parent_keys)
+            merged.update(add)
+            merged.difference_update(remove)
+            node.parent_keys = list(merged)
             await node.save()
 
         for pk in add:

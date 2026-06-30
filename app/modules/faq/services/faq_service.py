@@ -190,12 +190,13 @@ class FaqService:
 
         try:
             saved = await self._faq_repo.save(doc)
-            # Re-index in corpus — best-effort
-            try:
-                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                await get_corpus_index_service().index_faq(faq_id, saved.metadata_filter.model_dump(mode="json"))
-            except Exception as _corpus_err:
-                logger.warning(f"[Corpus] re-index faq skipped for {faq_id}: {_corpus_err}")
+            # Re-index in corpus only when metadata changed — best-effort
+            if "metadata_filter" in data:
+                try:
+                    from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                    await get_corpus_index_service().index_faq(faq_id, saved.metadata_filter.model_dump(mode="json"))
+                except Exception as _corpus_err:
+                    logger.warning(f"[Corpus] re-index faq skipped for {faq_id}: {_corpus_err}")
             return saved
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")

@@ -65,7 +65,8 @@ class CorpusNodeRepository(BeanieRepository[CorpusNodeDocument]):
     async def add_leaf_link(self, parent_key: str, leaf_kind: str, leaf_id: str) -> None:
         field = "file_ids" if leaf_kind == "file" else "faq_ids"
         count_field = "doc_count" if leaf_kind == "file" else "faq_count"
-        await CorpusNodeDocument.find_one(
+        # Use find() (FindMany) — find_one() returns FindOne which has no .update()
+        await CorpusNodeDocument.find(
             CorpusNodeDocument.node_key == parent_key
         ).update({"$addToSet": {field: leaf_id}})
         node = await self.get_by_key(parent_key)
@@ -77,7 +78,7 @@ class CorpusNodeRepository(BeanieRepository[CorpusNodeDocument]):
     async def remove_leaf_link(self, parent_key: str, leaf_kind: str, leaf_id: str) -> None:
         field = "file_ids" if leaf_kind == "file" else "faq_ids"
         count_field = "doc_count" if leaf_kind == "file" else "faq_count"
-        await CorpusNodeDocument.find_one(
+        await CorpusNodeDocument.find(
             CorpusNodeDocument.node_key == parent_key
         ).update({"$pull": {field: leaf_id}})
         node = await self.get_by_key(parent_key)
