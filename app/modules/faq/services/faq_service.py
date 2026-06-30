@@ -92,7 +92,14 @@ class FaqService:
             view_count=0,
         )
         try:
-            return await self._faq_repo.create(doc)
+            created = await self._faq_repo.create(doc)
+            # Corpus graph index — best-effort
+            try:
+                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                await get_corpus_index_service().index_faq(str(created.id), metadata_model.model_dump(mode="json"))
+            except Exception as _corpus_err:
+                logger.warning(f"[Corpus] index_faq skipped for {created.id}: {_corpus_err}")
+            return created
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{question}' already exists.")
 
@@ -182,7 +189,14 @@ class FaqService:
             doc.metadata_filter = meta_model or FaqMetadata()
 
         try:
-            return await self._faq_repo.save(doc)
+            saved = await self._faq_repo.save(doc)
+            # Re-index in corpus — best-effort
+            try:
+                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                await get_corpus_index_service().index_faq(faq_id, saved.metadata_filter.model_dump(mode="json"))
+            except Exception as _corpus_err:
+                logger.warning(f"[Corpus] re-index faq skipped for {faq_id}: {_corpus_err}")
+            return saved
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
 
@@ -190,6 +204,12 @@ class FaqService:
         doc = await self._faq_repo.find_by_id(faq_id)
         if not doc:
             return False
+        # Corpus graph unindex — best-effort
+        try:
+            from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+            await get_corpus_index_service().unindex_faq(faq_id)
+        except Exception as _corpus_err:
+            logger.warning(f"[Corpus] unindex_faq skipped for {faq_id}: {_corpus_err}")
         await self._faq_repo.delete(doc)
         return True
 

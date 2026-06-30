@@ -156,7 +156,14 @@ class FileUploadMixin:
             if not ready_doc:
                 await self._cleanup_background_artifacts(file_id, md_storage_path, toc_repo)
                 raise NotFoundException("File", file_id)
-            
+
+            # Corpus graph index — best-effort; does not affect upload outcome
+            try:
+                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                await get_corpus_index_service().index_file(file_id, custom_metadata or {})
+            except Exception as _corpus_err:
+                logger.warning(f"[Corpus] index_file skipped for {file_id}: {_corpus_err}")
+
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")
             await _notify("completed", "Upload hoàn tất")

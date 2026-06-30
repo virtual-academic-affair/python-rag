@@ -83,6 +83,13 @@ class FileService(FileUploadMixin):
         page_index_client = get_page_index_client()
         await page_index_client.evict_doc(file_id)
 
+        # Corpus graph unindex — best-effort
+        try:
+            from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+            await get_corpus_index_service().unindex_file(file_id)
+        except Exception as _corpus_err:
+            logger.warning(f"[Corpus] unindex_file skipped for {file_id}: {_corpus_err}")
+
         # 2. Delete DB record — after this point the file is logically gone
         await self.file_repo.delete(file_doc)
         logger.info(f"File {file_id} deleted from MongoDB")
@@ -148,6 +155,14 @@ class FileService(FileUploadMixin):
                 await self.file_repo.save(file_doc)
             except Exception as e:
                 raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
+
+            # Re-index in corpus if metadata changed
+            if custom_metadata is not None:
+                try:
+                    from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                    await get_corpus_index_service().index_file(file_id, file_doc.custom_metadata or {})
+                except Exception as _corpus_err:
+                    logger.warning(f"[Corpus] re-index file skipped for {file_id}: {_corpus_err}")
 
         return file_doc
 
