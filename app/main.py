@@ -21,6 +21,7 @@ from app.modules.faq.models.interaction_log import InteractionLogDocument
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
 from app.modules.forms.models.form import FormDocument
+from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.modules.email import EmailWorkflowOrchestrator
@@ -170,6 +171,7 @@ async def lifespan(_: FastAPI):
                 ChatSessionDocument,
                 ChatMessageDocument,
                 FormDocument,
+                CorpusNodeDocument,
             ]
         )
         logger.info("✅ Beanie ODM initialized")

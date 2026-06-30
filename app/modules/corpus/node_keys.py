@@ -30,7 +30,13 @@ def _is_all_years(yr: dict | None) -> bool:
     return lo in (None, 0) and hi in (None, 9999)
 
 def _year_key(prefix: str, yr: dict) -> str:
-    lo, hi = yr.get("from_year"), yr.get("to_year")
+    lo = yr.get("from_year")
+    hi = yr.get("to_year")
+    # Treat missing keys as open-ended sentinels (same as _is_all_years)
+    if lo is None:
+        lo = 0
+    if hi is None:
+        hi = 9999
     return f"{prefix}:{lo}" if lo == hi else f"{prefix}:{lo}-{hi}"
 
 def metadata_node_specs(metadata: dict) -> list[NodeSpec]:
