@@ -40,9 +40,6 @@ class IngestionService:
         file_name: str,
         file_path: str,
         metadata: Optional[dict[str, Any]] = None,
-        # kept for backward-compat with callers that still pass these
-        chunk_size_chars: int = 1800,
-        chunk_overlap_chars: int = 250,
     ) -> dict[str, Any]:
         """Ingest a file: parse to Markdown then build TOC/summary via PageIndex."""
         start_total = time.perf_counter()
@@ -64,8 +61,6 @@ class IngestionService:
         return {
             "file_id": file_id,
             "page_count": len(pages),
-            "chunk_count": 0,
-            "indexed_count": 0,
             "markdown_content": markdown_content,
             "table_of_contents": toc_result["table_of_contents"],
             "summary": toc_result["summary"],

@@ -118,59 +118,8 @@ class ChatStreamService(ChatService):
             })
             return
 
-        # [3] FAQ Pre-check (vectorless — single LLM pass over active FAQ catalog)
-        yield json.dumps({"type": "faq_check", "content": "Tìm kiếm câu hỏi tương tự trong bộ câu hỏi FAQ...", "done": False})
-        start_faq = time.perf_counter()
-        faq_svc = await self._get_faq_svc()
-        # Omit 'type' filter from FAQ search query filter
-        faq_metadata_filter = {k: v for k, v in metadata_filter.items() if k != "type"} if metadata_filter else {}
-        faq = await faq_svc.find_best_match(effective_question, faq_metadata_filter)
-        dur_faq = time.perf_counter() - start_faq
-        logger.info(f"[Chat-Stream] FAQ Check done in {dur_faq:.2f}s | hit={faq is not None}")
-
-        if faq:
-            faq_check_step = {
-                "type": "faq_check",
-                "hit": True,
-                "faq_question": faq.question,
-            }
-            pipeline_steps.append(faq_check_step)
-            yield json.dumps({**simplify_step(faq_check_step), "done": False})
-
-            logger.info("[Chat-Stream] FAQ hit. Sending direct answer.")
-            yield json.dumps({"type": "text", "content": faq.answer_markdown, "done": False})
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat-Stream] FAQ hit for user {user_context.name}: '{faq.question}' (Completed in {processing_time_ms / 1000:.2f}s)")
-            analysis_usage = analysis.get("usage")
-            token_usage_obj = None
-            if analysis_usage:
-                token_usage_obj = TokenUsage(
-                    prompt_tokens=analysis_usage.get("prompt_tokens", 0),
-                    completion_tokens=analysis_usage.get("completion_tokens", 0),
-                    total_tokens=analysis_usage.get("total_tokens", 0) or (
-                        analysis_usage.get("prompt_tokens", 0) + analysis_usage.get("completion_tokens", 0)
-                    )
-                )
-
-            yield json.dumps({
-                "done": True, 
-                "source": "faq",
-                "sources": [], 
-                "steps": [simplify_step(s) for s in pipeline_steps],
-                "tokenUsage": token_usage_obj.model_dump(by_alias=True) if token_usage_obj else None,
-                "processingTimeMs": processing_time_ms
-            })
-            return
-
-        faq_check_step = {
-            "type": "faq_check",
-            "hit": False,
-        }
-        pipeline_steps.append(faq_check_step)
-        yield json.dumps({**simplify_step(faq_check_step), "done": False})
-
-        # [5] Prepare Chat State using effective_question
-        yield json.dumps({"type": "retrieval", "content": "Tìm kiếm tài liệu học vụ liên quan...", "done": False})
+        # [3] Corpus traversal retrieval
+        yield json.dumps({"type": "retrieval", "content": "Tìm kiếm tài liệu và câu hỏi liên quan...", "done": False})
         start_retrieval = time.perf_counter()
         state = await self._prepare_chat_state(effective_question, user_context, chat_history, metadata_filter)
         candidate_files = state["candidate_files"]
@@ -193,12 +142,33 @@ class ChatStreamService(ChatService):
         pipeline_steps.append(retrieval_step)
         yield json.dumps({**simplify_step(retrieval_step, candidate_files), "done": False})
 
+        # [4] Stage 3 — Fast-Path Resolution: ưu tiên trả lời từ FAQ
+        faq_docs = state.get("faq_docs") or []
+        if faq_docs:
+            yield json.dumps({"type": "faq_check", "content": "Kiểm tra câu hỏi thường gặp...", "done": False})
+            faq_answer = await self._try_faq_fast_path(effective_question, faq_docs)
+            if faq_answer:
+                faq_step = {"type": "faq_check", "matched": True}
+                pipeline_steps.append(faq_step)
+                yield json.dumps({"type": "text", "content": faq_answer, "done": False})
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                logger.info(f"[Chat-Stream] FAQ fast-path answer for user {user_context.name} ({processing_time_ms}ms)")
+                yield json.dumps({
+                    "done": True,
+                    "source": "faq",
+                    "sources": [],
+                    "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
+                    "processingTimeMs": processing_time_ms,
+                })
+                return
+
+        # [5] Stage 4 — Page Index: đọc tài liệu qua agent loop
         if not candidate_files:
             yield json.dumps({"type": "text", "content": "Không tìm thấy tài liệu phù hợp.", "done": False})
             yield json.dumps({
-                "done": True, 
-                "sources": [], 
-                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps], 
+                "done": True,
+                "sources": [],
+                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
                 "processingTimeMs": int((time.time() - start_time) * 1000)
             })
             return

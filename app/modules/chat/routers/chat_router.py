@@ -119,15 +119,23 @@ async def chat_query(
         return ChatQueryResponse(session_id=session_id, **result)
 
     except ValueError as e:
+        logger.error(f"[Chat] ValueError during chat_query: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except APIError as e:
+        ai_code = getattr(e, "code", 500)
+        if ai_code == 429:
+            logger.warning(f"[Chat] Rate limit exceeded (429) for user {user.user_id}")
+        else:
+            logger.error(f"[Chat] Gemini APIError ({ai_code}) for user {user.user_id}: {e}")
         raise handle_google_api_error(e)
-    except AppException:
+    except AppException as e:
+        logger.error(f"[Chat] AppException during chat_query for user {user.user_id}: {e}")
         raise
     except Exception as e:
+        logger.error(f"[Chat] Unexpected error during chat_query for user {user.user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate chat response: {str(e)}",

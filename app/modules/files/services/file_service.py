@@ -160,7 +160,13 @@ class FileService(FileUploadMixin):
             if custom_metadata is not None:
                 try:
                     from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                    await get_corpus_index_service().index_file(file_id, file_doc.custom_metadata or {})
+                    meta_dict = file_doc.custom_metadata.model_dump(mode="json") if file_doc.custom_metadata else {}
+                    await get_corpus_index_service().index_file(
+                        file_id,
+                        meta_dict,
+                        display_name=file_doc.display_name or "",
+                        toc_headings=file_doc.table_of_contents or [],
+                    )
                 except Exception as _corpus_err:
                     logger.warning(f"[Corpus] re-index file skipped for {file_id}: {_corpus_err}")
 

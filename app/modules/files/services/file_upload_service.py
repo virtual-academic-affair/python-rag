@@ -160,7 +160,12 @@ class FileUploadMixin:
             # Corpus graph index — best-effort; does not affect upload outcome
             try:
                 from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                await get_corpus_index_service().index_file(file_id, custom_metadata or {})
+                await get_corpus_index_service().index_file(
+                    file_id,
+                    custom_metadata or {},
+                    display_name=ready_doc.display_name or "",
+                    toc_headings=ready_doc.table_of_contents or [],
+                )
             except Exception as _corpus_err:
                 logger.warning(f"[Corpus] index_file skipped for {file_id}: {_corpus_err}")
 

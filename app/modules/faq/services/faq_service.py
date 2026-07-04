@@ -96,7 +96,12 @@ class FaqService:
             # Corpus graph index — best-effort
             try:
                 from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                await get_corpus_index_service().index_faq(str(created.id), metadata_model.model_dump(mode="json"))
+                await get_corpus_index_service().index_faq(
+                    str(created.id),
+                    metadata_model.model_dump(mode="json"),
+                    question=question,
+                    answer_markdown=answer_markdown,
+                )
             except Exception as _corpus_err:
                 logger.warning(f"[Corpus] index_faq skipped for {created.id}: {_corpus_err}")
             return created
@@ -194,7 +199,12 @@ class FaqService:
             if "metadata_filter" in data:
                 try:
                     from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                    await get_corpus_index_service().index_faq(faq_id, saved.metadata_filter.model_dump(mode="json"))
+                    await get_corpus_index_service().index_faq(
+                        faq_id,
+                        saved.metadata_filter.model_dump(mode="json"),
+                        question=saved.question or "",
+                        answer_markdown=saved.answer_markdown or "",
+                    )
                 except Exception as _corpus_err:
                     logger.warning(f"[Corpus] re-index faq skipped for {faq_id}: {_corpus_err}")
             return saved

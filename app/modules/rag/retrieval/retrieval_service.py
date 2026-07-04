@@ -140,6 +140,91 @@ class RetrievalService:
 
         return build_candidate_files(nav_results, doc_data_by_id)
 
+    async def enrich_corpus_candidates(
+        self,
+        candidates: list,  # list of Candidate dataclass instances from corpus.dtos.traversal
+        max_files: int = 5,
+        user_role: Optional[str] = None,
+    ) -> list[dict]:
+        """
+        Convert corpus TraversalResult.file_candidates to candidate_files format
+        expected by run_agent_loop.
+        Looks up FileDocument (status=ready) and FileTocTree for each candidate.
+        Student role không thấy file lecturer_only (đồng bộ với file_router).
+        Drops candidates where storage paths are missing.
+        Returns list sorted by doc_score descending.
+        """
+        from bson import ObjectId
+
+        if not candidates:
+            return []
+
+        # candidates arrives sorted by score descending (deterministic tie-break
+        # on leaf_id, see corpus_traversal_service.resolve_candidates). A hard
+        # cut at max_files can silently drop a candidate that ties the score of
+        # the boundary item — include the whole tied group instead of guessing.
+        if len(candidates) > max_files:
+            cutoff_score = candidates[max_files - 1].score
+            top = [c for c in candidates if c.score >= cutoff_score]
+        else:
+            top = candidates
+        score_map = {c.leaf_id: c.score for c in top}
+
+        valid_ids = []
+        for c in top:
+            try:
+                valid_ids.append(ObjectId(c.leaf_id))
+            except Exception:
+                pass
+
+        if not valid_ids:
+            return []
+
+        query: dict = {"_id": {"$in": valid_ids}, "status": FileStatus.READY.value}
+        if user_role == "student":
+            query["lecturer_only"] = {"$ne": True}
+
+        files, _ = await self._file_repo.list_files(
+            query,
+            skip=0,
+            limit=len(valid_ids) + 1,
+        )
+        if not files:
+            return []
+
+        file_ids_str = [str(f.id) for f in files]
+        toc_docs = await self._toc_repo.find_by_file_ids(file_ids_str)
+        toc_map = {t.file_id: t for t in toc_docs}
+
+        result = []
+        for f in files:
+            fid = str(f.id)
+            toc = toc_map.get(fid)
+            storage_path = f.storage_path or ""
+            markdown_storage_path = (toc.markdown_storage_path if toc else "") or ""
+            if not storage_path or not markdown_storage_path:
+                continue
+            result.append({
+                "file_id": fid,
+                "file_name": f.display_name or "",
+                "doc_score": score_map.get(fid, 0.0),
+                "nav_reason": "corpus_traversal",
+                "doc_description": (toc.doc_description if toc else "") or "",
+                "structure": serialize_toc_structure(toc.structure) if toc else [],
+                "markdown_storage_path": markdown_storage_path,
+                "storage_path": storage_path,
+                "table_of_contents": f.table_of_contents or [],
+            })
+
+        result.sort(key=lambda x: x["doc_score"], reverse=True)
+        dropped = len(top) - len(result)
+        logger.info(
+            f"[Corpus] enrich_corpus_candidates: {len(result)} enriched, "
+            f"{dropped} dropped (missing storage_path)"
+        )
+        return result
+
+
 _retrieval_service_instance: Optional[RetrievalService] = None
 
 def get_retrieval_service() -> RetrievalService:

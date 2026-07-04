@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     # FAQ_MATCHER_MODEL: None -> falls back to GEMINI_MODEL.
     FAQ_MATCHER_MAX_CATALOG: int = 200
     FAQ_MATCHER_MODEL: Optional[str] = None
+    # None -> falls back to GEMINI_MODEL.
+    CORPUS_TOPIC_MODEL: Optional[str] = None
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
     FAQ_SYNTHESIS_ENABLED: bool = False
     FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7
