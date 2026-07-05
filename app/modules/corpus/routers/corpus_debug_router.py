@@ -19,6 +19,7 @@ class TopicCreateRequest(BaseModel):
     slug: str
     title: str
     summary: str = ""
+    parent_key: Optional[str] = None  # "topic:<slug>" cha; None → top-level dưới axis:topics
 
 
 class TraverseRequest(BaseModel):
@@ -366,15 +367,24 @@ async def create_topic(
     if existing:
         raise HTTPException(status_code=409, detail=f"Topic '{node_key}' already exists")
 
+    parent_key = "axis:topics"
+    if body.parent_key:
+        if not body.parent_key.startswith("topic:"):
+            raise HTTPException(status_code=400, detail="parent_key must be a 'topic:...' node")
+        parent = await repo.get_by_key(body.parent_key)
+        if not parent:
+            raise HTTPException(status_code=404, detail=f"Parent '{body.parent_key}' not found")
+        parent_key = body.parent_key
+
     node = await repo.upsert_node(
         node_key,
         node_type=NodeType.TOPIC,
         title=body.title,
         summary=body.summary,
-        axis_parent_key="axis:topics",
+        axis_parent_key=parent_key,
     )
-    logger.info(f"[Corpus] admin created topic: {node_key}")
-    return {"node_key": node.node_key, "title": node.title, "status": node.status}
+    logger.info(f"[Corpus] admin created topic: {node_key} (parent={parent_key})")
+    return {"node_key": node.node_key, "title": node.title, "parent_key": parent_key, "status": node.status}
 
 
 @router.post(

@@ -148,7 +148,7 @@ class CorpusTraversalService:
         )
         return TraversalResult(file_candidates=file_candidates, supporting_faqs=supporting_faqs)
 
-    async def _traverse_topics(self, question: str, max_depth: int = 3) -> list[str]:
+    async def _traverse_topics(self, question: str, max_depth: int = 4) -> list[str]:
         """
         Stage 2 — Corpus Traversal: duyệt lặp cây topic từ axis:topics.
 

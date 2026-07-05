@@ -84,15 +84,17 @@ class CorpusIndexService:
         new_topic_keys = []
         for t in new_topics:
             node_key = f"topic:{t['slug']}"
+            # LLM đề xuất cha trong cây topic; không có cha hợp lệ → top-level
+            parent_key = t.get("parent") or "axis:topics"
             await self.repo.upsert_node(
                 node_key,
                 node_type=NodeType.TOPIC,
                 title=t["title"],
                 summary=t.get("summary", ""),
-                axis_parent_key="axis:topics",
+                axis_parent_key=parent_key,
             )
             new_topic_keys.append(node_key)
-            logger.info(f"[Corpus] auto-created topic node: {node_key}")
+            logger.info(f"[Corpus] auto-created topic node: {node_key} (parent={parent_key})")
 
         all_keys = selected_keys + new_topic_keys
         logger.info(f"[Corpus] topic assignment for '{display_name[:60]}': {all_keys}")

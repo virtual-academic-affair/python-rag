@@ -68,3 +68,31 @@ async def test_assign_topics_empty_catalog_skips_llm():
 async def test_assign_topics_empty_content_uses_name_only():
     selected, new = await assign_topics("QĐ ngoại ngữ", "", ACTIVE, _llm_select_first)
     assert selected == ["topic:chuan-dau-ra-ngoai-ngu"]
+
+
+async def test_assign_topics_new_topic_with_valid_parent():
+    async def _llm(prompt: str) -> str:
+        return json.dumps({
+            "selected": [],
+            "new_topics": [{
+                "slug": "hoc-bong-doanh-nghiep", "title": "Học bổng doanh nghiệp",
+                "summary": "Mô tả", "parent": "topic:hoc-phi-mien-giam",
+            }],
+        })
+
+    _, new = await assign_topics("QĐ học bổng", "Nội dung", ACTIVE, _llm)
+    assert new[0]["parent"] == "topic:hoc-phi-mien-giam"
+
+
+async def test_assign_topics_new_topic_invalid_parent_becomes_none():
+    async def _llm(prompt: str) -> str:
+        return json.dumps({
+            "selected": [],
+            "new_topics": [{
+                "slug": "chu-de-moi", "title": "Chủ đề mới",
+                "summary": "Mô tả", "parent": "topic:khong-ton-tai",
+            }],
+        })
+
+    _, new = await assign_topics("Tài liệu", "Nội dung", ACTIVE, _llm)
+    assert new[0]["parent"] is None
