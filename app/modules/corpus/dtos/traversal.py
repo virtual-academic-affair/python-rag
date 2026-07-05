@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 class Candidate:
     leaf_kind: str          # "file" or "faq"
     leaf_id: str
-    score: float
-    title: str = ""
 
 
 @dataclass

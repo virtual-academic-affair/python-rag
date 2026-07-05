@@ -162,7 +162,6 @@ class FileUploadMixin:
                 from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
                 await get_corpus_index_service().index_file(
                     file_id,
-                    custom_metadata or {},
                     display_name=ready_doc.display_name or "",
                     toc_headings=ready_doc.table_of_contents or [],
                 )

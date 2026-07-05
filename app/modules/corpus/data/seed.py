@@ -1,25 +1,14 @@
 from __future__ import annotations
 import logging
-from app.modules.corpus.models.corpus_node import NodeType
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 
 logger = logging.getLogger(__name__)
 
-ROOT_AND_AXES = [
-    {"node_key": "root", "title": "Corpus", "summary": "Gốc kho dữ liệu", "parent": None},
-    {"node_key": "axis:documents", "title": "Tài liệu", "summary": "Trục tài liệu", "parent": "root"},
-    {"node_key": "axis:faqs", "title": "FAQ", "summary": "Trục FAQ", "parent": "root"},
-    {"node_key": "axis:topics", "title": "Chủ đề", "summary": "Trục chủ đề", "parent": "root"},
-    {"node_key": "axis:document_types", "title": "Loại văn bản", "summary": "Trục loại văn bản", "parent": "root"},
-    {"node_key": "axis:enrollment_years", "title": "Khóa tuyển sinh", "summary": "Trục khóa", "parent": "root"},
-    {"node_key": "axis:academic_years", "title": "Năm học", "summary": "Trục năm học", "parent": "root"},
-]
-
 # (slug, title, summary, parent_slug) — slug becomes node_key "topic:<slug>".
-# parent_slug=None → con trực tiếp của axis:topics (topic cha / nhóm chủ đề).
-# parent_slug="x"  → con của "topic:x" (phải khai báo cha TRƯỚC con trong list).
+# parent_slug=None → topic gốc (tầng 1 của cây).
+# parent_slug="x"  → con của "topic:x" (cha phải khai báo TRƯỚC con trong list).
 SEED_TOPICS: list[tuple[str, str, str, str | None]] = [
-    # ── Nhóm cha (tầng 1) ─────────────────────────────────────────────
+    # ── Topic gốc (tầng 1) ────────────────────────────────────────────
     ("chuan-dau-ra",          "Chuẩn đầu ra",                    "Các chuẩn đầu ra bắt buộc để tốt nghiệp: ngoại ngữ, tin học, chuẩn chương trình", None),
     ("tot-nghiep",            "Tốt nghiệp & văn bằng",           "Điều kiện tốt nghiệp, xét tốt nghiệp, đồ án, văn bằng chứng chỉ", None),
     ("to-chuc-dao-tao",       "Tổ chức đào tạo & học tập",       "Chương trình đào tạo, đăng ký học phần, thời khóa biểu, lớp học phần", None),
@@ -52,36 +41,19 @@ SEED_TOPICS: list[tuple[str, str, str, str | None]] = [
 
 
 async def seed_corpus(repo: CorpusNodeRepository) -> int:
+    """Seed cây topic. Idempotent — node đã tồn tại thì bỏ qua."""
     created = 0
-
-    # Root + axes
-    for n in ROOT_AND_AXES:
-        if await repo.get_by_key(n["node_key"]):
-            continue
-        ntype = NodeType.ROOT if n["node_key"] == "root" else NodeType.AXIS
-        await repo.upsert_node(
-            n["node_key"],
-            node_type=ntype,
-            title=n["title"],
-            summary=n["summary"],
-            axis_parent_key=n["parent"],
-        )
-        created += 1
-
-    # Topics — cha khai báo trước con, con link vào "topic:<parent_slug>"
     for slug, title, summary, parent_slug in SEED_TOPICS:
         node_key = f"topic:{slug}"
         if await repo.get_by_key(node_key):
             continue
-        parent_key = f"topic:{parent_slug}" if parent_slug else "axis:topics"
         await repo.upsert_node(
             node_key,
-            node_type=NodeType.TOPIC,
             title=title,
             summary=summary,
-            axis_parent_key=parent_key,
+            parent_key=f"topic:{parent_slug}" if parent_slug else None,
         )
         created += 1
 
-    logger.info(f"[Corpus] seed_corpus: tạo {created} node (root/axis/topic)")
+    logger.info(f"[Corpus] seed_corpus: tạo {created} topic node")
     return created

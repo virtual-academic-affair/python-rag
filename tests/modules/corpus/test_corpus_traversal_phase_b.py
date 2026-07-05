@@ -1,113 +1,79 @@
 import json
-import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from app.modules.corpus.services.corpus_traversal_service import CorpusTraversalService
-from app.modules.corpus.models.corpus_node import CorpusNodeDocument, NodeStatus, NodeType
-from app.modules.corpus.dtos.traversal import TraversalResult
+from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 
 
-def _make_node(node_key, node_type, file_ids=None, faq_ids=None, metadata_filter=None,
-               title="", summary="", child_keys=None, status=NodeStatus.ACTIVE):
+def _make_node(node_key, file_ids=None, faq_ids=None, title="", summary="",
+               child_keys=None, parent_keys=None):
     n = MagicMock(spec=CorpusNodeDocument)
     n.node_key = node_key
-    n.node_type = node_type
     n.file_ids = file_ids or []
     n.faq_ids = faq_ids or []
-    n.metadata_filter = metadata_filter or {}
     n.title = title or node_key
     n.summary = summary or ""
     n.child_keys = child_keys or []
-    n.status = status
+    n.parent_keys = parent_keys or []
     return n
 
 
-async def test_traverse_with_topics_boosts_score():
-    """Files under a selected topic + metadata node score higher than metadata-only."""
-    svc = CorpusTraversalService()
-
-    meta_node = _make_node(
-        "type:quyet_dinh", NodeType.METADATA,
-        file_ids=["file1"], metadata_filter={"type": "quyet_dinh"}
-    )
-    topic_node = _make_node(
-        "topic:dieu-kien-tot-nghiep", NodeType.TOPIC,
-        file_ids=["file1", "file2"],
-        child_keys=["file:file1", "file:file2"],
-    )
-
-    async def mock_get_by_type(node_type, **_):
-        if node_type == NodeType.METADATA:
-            return [meta_node]
-        return []
-
-    async def mock_get_children(parent_key):
-        if parent_key == "axis:topics":
-            return [topic_node]
-        return []
+def _wire(svc, nodes):
+    """Gắn repo mock: get_all trả toàn bộ nodes, get_by_keys lọc theo key."""
+    async def mock_get_all():
+        return nodes
 
     async def mock_get_by_keys(keys):
-        return [n for n in [meta_node, topic_node] if n.node_key in keys]
+        return [n for n in nodes if n.node_key in keys]
+
+    svc._repo = MagicMock()
+    svc._repo.get_all = mock_get_all
+    svc._repo.get_by_keys = mock_get_by_keys
+
+
+async def test_traverse_unions_files_and_faqs_from_selected_topics():
+    """Candidates = gộp file_ids/faq_ids từ các topic được LLM chọn."""
+    svc = CorpusTraversalService()
+
+    topic = _make_node(
+        "topic:dieu-kien-tot-nghiep",
+        file_ids=["file1", "file2"],
+        faq_ids=["faqA"],
+    )
+    _wire(svc, [topic])
 
     async def mock_call_llm(prompt):
         return json.dumps({"selected_topics": ["topic:dieu-kien-tot-nghiep"]})
 
-    svc._repo = MagicMock()
-    svc._repo.get_by_type = mock_get_by_type
-    svc._repo.get_children = mock_get_children
-    svc._repo.get_by_keys = mock_get_by_keys
     svc._call_llm = mock_call_llm
 
-    result = await svc.traverse("Điều kiện tốt nghiệp", {"type": "quyet_dinh"})
+    result = await svc.traverse("Điều kiện tốt nghiệp")
 
-    file1 = next(c for c in result.file_candidates if c.leaf_id == "file1")
-    file2 = next(c for c in result.file_candidates if c.leaf_id == "file2")
-
-    # file1: metadata "keep" (0.6) + topic_match (+0.3) = 0.9
-    assert file1.score == 0.9, f"Expected 0.9 for file1, got {file1.score}"
-    # file2: topic only → classify({}, {"type":...}) = "low" (0.3) + topic_match (+0.3) = 0.6
-    assert file2.score == 0.6, f"Expected 0.6 for file2, got {file2.score}"
+    assert [c.leaf_id for c in result.file_candidates] == ["file1", "file2"]
+    assert [c.leaf_id for c in result.supporting_faqs] == ["faqA"]
 
 
-async def test_traverse_no_topics_falls_back_to_metadata_only():
-    """When no topic nodes exist, traverse behaves like Phase A."""
+async def test_traverse_dedupes_across_topics():
+    """File nằm trong nhiều topic chỉ xuất hiện 1 lần."""
     svc = CorpusTraversalService()
 
-    meta_node = _make_node(
-        "enrollment_year:2020-2024", NodeType.METADATA,
-        file_ids=["fileA"],
-        metadata_filter={"enrollment_year": {"from_year": 2020, "to_year": 2024}}
-    )
+    t1 = _make_node("topic:a", file_ids=["file1", "file2"])
+    t2 = _make_node("topic:b", file_ids=["file2", "file3"])
+    _wire(svc, [t1, t2])
 
-    async def mock_get_by_type(node_type, **_):
-        if node_type == NodeType.METADATA:
-            return [meta_node]
-        return []
+    async def mock_call_llm(prompt):
+        return json.dumps({"selected_topics": ["topic:a", "topic:b"]})
 
-    async def mock_get_children(parent_key):
-        return []
+    svc._call_llm = mock_call_llm
 
-    async def mock_get_by_keys(keys):
-        return [meta_node] if meta_node.node_key in keys else []
-
-    svc._repo = MagicMock()
-    svc._repo.get_by_type = mock_get_by_type
-    svc._repo.get_children = mock_get_children
-    svc._repo.get_by_keys = mock_get_by_keys
-
-    result = await svc.traverse("Câu hỏi", {"enrollment_year": {"from_year": 2022, "to_year": 2022}})
-
-    assert len(result.file_candidates) == 1
-    assert result.file_candidates[0].leaf_id == "fileA"
-    assert result.file_candidates[0].score == 0.6  # "keep" with no topic
+    result = await svc.traverse("Câu hỏi")
+    assert [c.leaf_id for c in result.file_candidates] == ["file1", "file2", "file3"]
 
 
 async def test_select_topics_filters_invalid_keys():
     """_select_topics drops keys not in topic node list."""
     svc = CorpusTraversalService()
 
-    topic_nodes = [
-        _make_node("topic:hoc-phi-mien-giam", NodeType.TOPIC),
-    ]
+    topic_nodes = [_make_node("topic:hoc-phi-mien-giam")]
 
     async def mock_llm(prompt):
         return json.dumps({"selected_topics": ["topic:hoc-phi-mien-giam", "topic:does-not-exist"]})
@@ -118,142 +84,143 @@ async def test_select_topics_filters_invalid_keys():
     assert selected == ["topic:hoc-phi-mien-giam"]
 
 
-async def test_traverse_empty_result_when_no_nodes():
-    """traverse returns empty TraversalResult when no metadata nodes match."""
+async def test_traverse_empty_result_when_no_topics():
+    """traverse returns empty TraversalResult when tree is empty."""
     svc = CorpusTraversalService()
+    _wire(svc, [])
 
-    async def mock_get_by_type(node_type, **_):
-        return []
-
-    async def mock_get_children(parent_key):
-        return []
-
-    svc._repo = MagicMock()
-    svc._repo.get_by_type = mock_get_by_type
-    svc._repo.get_children = mock_get_children
-
-    result = await svc.traverse("Câu hỏi", {})
+    result = await svc.traverse("Câu hỏi")
     assert result.file_candidates == []
     assert result.supporting_faqs == []
 
 
-async def test_traverse_metadata_drop_excludes_file():
-    """Files from metadata nodes with conflicting metadata are excluded (drop)."""
-    svc = CorpusTraversalService()
-
-    # Node says K20-22 but query is for K25 — should be dropped
-    meta_node = _make_node(
-        "enrollment_year:2020-2022", NodeType.METADATA,
-        file_ids=["fileX"],
-        metadata_filter={"enrollment_year": {"from_year": 2020, "to_year": 2022}}
-    )
-
-    async def mock_get_by_type(node_type, **_):
-        if node_type == NodeType.METADATA:
-            return [meta_node]
-        return []
-
-    async def mock_get_children(parent_key):
-        return []
-
-    async def mock_get_by_keys(keys):
-        return [meta_node] if meta_node.node_key in keys else []
-
-    svc._repo = MagicMock()
-    svc._repo.get_by_type = mock_get_by_type
-    svc._repo.get_children = mock_get_children
-    svc._repo.get_by_keys = mock_get_by_keys
-
-    result = await svc.traverse("Câu hỏi K25", {"enrollment_year": {"from_year": 2025, "to_year": 2025}})
-
-    assert result.file_candidates == []
-
-
 async def test_traverse_topics_drills_down_into_nested_topics():
-    """Stage 2: selected topic with topic children is expanded one more level."""
+    """Topic cha được chọn và có con → mở rộng thêm 1 tầng."""
     svc = CorpusTraversalService()
 
     child_topic = _make_node(
-        "topic:hoc-bong-khuyen-khich", NodeType.TOPIC,
-        file_ids=["file-child"],
-        child_keys=["file:file-child"],
+        "topic:hoc-bong-khuyen-khich", file_ids=["file-child"],
+        parent_keys=["topic:hoc-bong"],
     )
     parent_topic = _make_node(
-        "topic:hoc-bong", NodeType.TOPIC,
+        "topic:hoc-bong",
         file_ids=["file-parent"],
-        child_keys=["topic:hoc-bong-khuyen-khich", "file:file-parent"],
+        child_keys=["topic:hoc-bong-khuyen-khich"],
     )
-
-    async def mock_get_children(parent_key):
-        if parent_key == "axis:topics":
-            return [parent_topic]
-        if parent_key == "topic:hoc-bong":
-            return [child_topic]
-        return []
+    _wire(svc, [parent_topic, child_topic])
 
     call_count = {"n": 0}
 
-    async def mock_select_topics(question, nodes):
+    async def mock_select_topics(question, nodes, descendant_titles=None):
         call_count["n"] += 1
-        # Round 1 sees parent, round 2 sees child — select whatever is offered
         return [n.node_key for n in nodes]
 
-    svc._repo = MagicMock()
-    svc._repo.get_children = mock_get_children
     svc._select_topics = mock_select_topics
 
     collected = await svc._traverse_topics("Học bổng khuyến khích học tập?")
 
     assert collected == ["topic:hoc-bong", "topic:hoc-bong-khuyen-khich"]
-    assert call_count["n"] == 2  # two LLM selection rounds (drill-down happened)
+    assert call_count["n"] == 2  # hai vòng chọn (đã drill-down)
+
+
+async def test_traverse_topics_no_depth_cap_reaches_level_four():
+    """Không còn trần độ sâu — cây 4 tầng được duyệt hết khi LLM chọn liên tục."""
+    svc = CorpusTraversalService()
+
+    l4 = _make_node("topic:l4", file_ids=["f4"], parent_keys=["topic:l3"])
+    l3 = _make_node("topic:l3", child_keys=["topic:l4"], parent_keys=["topic:l2"])
+    l2 = _make_node("topic:l2", child_keys=["topic:l3"], parent_keys=["topic:l1"])
+    l1 = _make_node("topic:l1", child_keys=["topic:l2"])
+    _wire(svc, [l1, l2, l3, l4])
+
+    async def mock_select_topics(question, nodes, descendant_titles=None):
+        return [n.node_key for n in nodes]
+
+    svc._select_topics = mock_select_topics
+
+    collected = await svc._traverse_topics("Câu hỏi")
+    assert collected == ["topic:l1", "topic:l2", "topic:l3", "topic:l4"]
+
+
+async def test_traverse_topics_terminates_on_cyclic_data():
+    """Data lỗi có vòng cha-con (A→B→A) vẫn kết thúc, không lặp vô hạn."""
+    svc = CorpusTraversalService()
+
+    a = _make_node("topic:a", child_keys=["topic:b"])
+    b = _make_node("topic:b", child_keys=["topic:a"], parent_keys=["topic:a"])
+    _wire(svc, [a, b])
+
+    async def mock_select_topics(question, nodes, descendant_titles=None):
+        return [n.node_key for n in nodes]
+
+    svc._select_topics = mock_select_topics
+
+    collected = await svc._traverse_topics("Câu hỏi")
+    assert collected == ["topic:a", "topic:b"]  # mỗi node đúng 1 lần
 
 
 async def test_traverse_topics_stops_when_llm_selects_nothing():
-    """Stage 2 termination: no relevant topics → stop without drilling down."""
+    """Termination: LLM không chọn topic nào → dừng, không drill-down."""
     svc = CorpusTraversalService()
 
-    topic_node = _make_node(
-        "topic:hoc-phi", NodeType.TOPIC,
-        child_keys=["topic:hoc-phi-tra-gop"],
-    )
+    topic_node = _make_node("topic:hoc-phi", child_keys=["topic:hoc-phi-tra-gop"])
+    _wire(svc, [topic_node])
 
-    async def mock_get_children(parent_key):
-        if parent_key == "axis:topics":
-            return [topic_node]
+    async def mock_select_topics(question, nodes, descendant_titles=None):
         return []
 
-    async def mock_select_topics(question, nodes):
-        return []
-
-    svc._repo = MagicMock()
-    svc._repo.get_children = mock_get_children
     svc._select_topics = mock_select_topics
 
     collected = await svc._traverse_topics("Thời tiết hôm nay?")
     assert collected == []
 
 
-async def test_traverse_topics_skips_archived_nodes():
-    """Archived topic nodes are excluded from LLM selection."""
+async def test_traverse_llm_failure_returns_empty_best_effort():
+    """LLM lỗi hoàn toàn → traverse trả rỗng thay vì raise (best-effort)."""
     svc = CorpusTraversalService()
 
-    active_node = _make_node("topic:con-hoat-dong", NodeType.TOPIC)
-    archived_node = _make_node("topic:da-luu-tru", NodeType.TOPIC, status=NodeStatus.ARCHIVED)
+    topic_node = _make_node("topic:hoc-phi")
+    _wire(svc, [topic_node])
 
-    async def mock_get_children(parent_key):
-        if parent_key == "axis:topics":
-            return [active_node, archived_node]
-        return []
+    async def mock_call_llm(prompt):
+        raise RuntimeError("LLM down")
 
-    offered = []
+    svc._call_llm = mock_call_llm
 
-    async def mock_select_topics(question, nodes):
-        offered.extend(n.node_key for n in nodes)
-        return []
+    result = await svc.traverse("Câu hỏi")
+    assert result.file_candidates == []
+    assert result.supporting_faqs == []
 
-    svc._repo = MagicMock()
-    svc._repo.get_children = mock_get_children
-    svc._select_topics = mock_select_topics
 
-    await svc._traverse_topics("Câu hỏi")
-    assert offered == ["topic:con-hoat-dong"]
+async def test_catalog_advertises_deep_descendants():
+    """Node gốc phải kèm tên toàn bộ con cháu (kể cả tầng 3) trong catalog LLM."""
+    svc = CorpusTraversalService()
+
+    grandchild = _make_node(
+        "topic:co-hoi-nghe-nghiep", title="Cơ hội nghề nghiệp",
+        parent_keys=["topic:muc-tieu"],
+    )
+    child = _make_node(
+        "topic:muc-tieu", title="Mục tiêu đào tạo",
+        child_keys=["topic:co-hoi-nghe-nghiep"], parent_keys=["topic:goc"],
+    )
+    root = _make_node(
+        "topic:goc", title="Tổ chức đào tạo",
+        child_keys=["topic:muc-tieu"],
+    )
+    _wire(svc, [root, child, grandchild])
+
+    prompts: list[str] = []
+
+    async def mock_call_llm(prompt):
+        prompts.append(prompt)
+        return json.dumps({"selected_topics": []})
+
+    svc._call_llm = mock_call_llm
+
+    await svc._traverse_topics("Ra trường làm nghề gì?")
+
+    # Catalog tầng gốc phải "quảng bá" cả con (Mục tiêu đào tạo) lẫn cháu (Cơ hội nghề nghiệp)
+    assert len(prompts) == 1
+    assert "Mục tiêu đào tạo" in prompts[0]
+    assert "Cơ hội nghề nghiệp" in prompts[0]

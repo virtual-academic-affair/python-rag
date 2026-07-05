@@ -140,9 +140,33 @@ class RetrievalService:
 
         return build_candidate_files(nav_results, doc_data_by_id)
 
+    @staticmethod
+    def _metadata_conditions(metadata_filter: Optional[dict]) -> list[dict]:
+        """
+        Điều kiện Mongo cho lọc metadata (Stage 1 pruning, áp ở mức file).
+        File KHÔNG có metadata năm vẫn được giữ (áp dụng chung mọi khóa);
+        file có năm nhưng không giao với filter thì bị loại.
+        """
+        conds: list[dict] = []
+        for dim in ("enrollment_year", "academic_year"):
+            yr = (metadata_filter or {}).get(dim)
+            if not yr:
+                continue
+            lo = yr.get("from_year") or 0
+            hi = yr.get("to_year") or 9999
+            conds.append({"$or": [
+                {f"custom_metadata.{dim}": None},
+                {
+                    f"custom_metadata.{dim}.from_year": {"$lte": hi},
+                    f"custom_metadata.{dim}.to_year": {"$gte": lo},
+                },
+            ]})
+        return conds
+
     async def enrich_corpus_candidates(
         self,
         candidates: list,  # list of Candidate dataclass instances from corpus.dtos.traversal
+        metadata_filter: Optional[dict] = None,
         max_files: int = 5,
         user_role: Optional[str] = None,
     ) -> list[dict]:
@@ -150,28 +174,19 @@ class RetrievalService:
         Convert corpus TraversalResult.file_candidates to candidate_files format
         expected by run_agent_loop.
         Looks up FileDocument (status=ready) and FileTocTree for each candidate.
+        Áp metadata_filter (khóa/năm học) trực tiếp bằng Mongo query.
         Student role không thấy file lecturer_only (đồng bộ với file_router).
         Drops candidates where storage paths are missing.
-        Returns list sorted by doc_score descending.
+        Giữ thứ tự candidates từ traversal, cắt tại max_files sau khi lọc.
         """
         from bson import ObjectId
 
         if not candidates:
             return []
 
-        # candidates arrives sorted by score descending (deterministic tie-break
-        # on leaf_id, see corpus_traversal_service.resolve_candidates). A hard
-        # cut at max_files can silently drop a candidate that ties the score of
-        # the boundary item — include the whole tied group instead of guessing.
-        if len(candidates) > max_files:
-            cutoff_score = candidates[max_files - 1].score
-            top = [c for c in candidates if c.score >= cutoff_score]
-        else:
-            top = candidates
-        score_map = {c.leaf_id: c.score for c in top}
-
+        id_order = [c.leaf_id for c in candidates]
         valid_ids = []
-        for c in top:
+        for c in candidates:
             try:
                 valid_ids.append(ObjectId(c.leaf_id))
             except Exception:
@@ -183,6 +198,9 @@ class RetrievalService:
         query: dict = {"_id": {"$in": valid_ids}, "status": FileStatus.READY.value}
         if user_role == "student":
             query["lecturer_only"] = {"$ne": True}
+        meta_conds = self._metadata_conditions(metadata_filter)
+        if meta_conds:
+            query["$and"] = meta_conds
 
         files, _ = await self._file_repo.list_files(
             query,
@@ -207,7 +225,6 @@ class RetrievalService:
             result.append({
                 "file_id": fid,
                 "file_name": f.display_name or "",
-                "doc_score": score_map.get(fid, 0.0),
                 "nav_reason": "corpus_traversal",
                 "doc_description": (toc.doc_description if toc else "") or "",
                 "structure": serialize_toc_structure(toc.structure) if toc else [],
@@ -216,11 +233,14 @@ class RetrievalService:
                 "table_of_contents": f.table_of_contents or [],
             })
 
-        result.sort(key=lambda x: x["doc_score"], reverse=True)
-        dropped = len(top) - len(result)
+        # Giữ thứ tự candidates từ traversal (ổn định), cắt tại max_files
+        order = {fid: i for i, fid in enumerate(id_order)}
+        result.sort(key=lambda x: order.get(x["file_id"], len(order)))
+        dropped = len(candidates) - len(result)
+        result = result[:max_files]
         logger.info(
             f"[Corpus] enrich_corpus_candidates: {len(result)} enriched, "
-            f"{dropped} dropped (missing storage_path)"
+            f"{dropped} dropped (filtered/missing storage_path)"
         )
         return result
 

@@ -131,7 +131,6 @@ class ChatStreamService(ChatService):
             {
                 "file_id": f.get("file_id"),
                 "file_name": f.get("file_name"),
-                "doc_score": f.get("doc_score"),
             }
             for f in candidate_files
         ]

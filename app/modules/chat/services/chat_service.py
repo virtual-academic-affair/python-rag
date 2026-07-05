@@ -55,15 +55,17 @@ class ChatService:
 
         traversal_svc = get_corpus_traversal_service()
         try:
-            result = await traversal_svc.traverse(question, metadata_filter or {})
+            result = await traversal_svc.traverse(question)
         except Exception as e:
             logger.warning(f"[Corpus] traverse failed (best-effort): {e}")
             from app.modules.corpus.dtos.traversal import TraversalResult
             result = TraversalResult()
 
-        # Enrich file candidates with storage paths, TOC, etc. (student không thấy lecturer_only)
+        # Enrich + lọc metadata (khóa/năm học) và quyền (student không thấy lecturer_only)
         candidate_files = await self._retrieval.enrich_corpus_candidates(
-            result.file_candidates, user_role=user_context.role
+            result.file_candidates,
+            metadata_filter=metadata_filter,
+            user_role=user_context.role,
         )
 
         # Fetch supporting FAQ documents (dùng cho Stage 3 fast-path và ngữ cảnh Stage 4)
@@ -250,7 +252,6 @@ class ChatService:
             {
                 "file_id": f.get("file_id"),
                 "file_name": f.get("file_name"),
-                "doc_score": f.get("doc_score"),
             }
             for f in candidate_files
         ]

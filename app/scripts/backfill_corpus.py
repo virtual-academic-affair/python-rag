@@ -75,10 +75,8 @@ async def main() -> None:
         for file_doc in batch:
             fid = str(file_doc.id)
             try:
-                meta_dict = file_doc.custom_metadata.model_dump(mode="json") if file_doc.custom_metadata else {}
                 await index_svc.index_file(
                     fid,
-                    meta_dict,
                     display_name=file_doc.display_name or "",
                     toc_headings=file_doc.table_of_contents or [],
                 )
@@ -102,10 +100,8 @@ async def main() -> None:
         for faq in batch:
             fid = str(faq.id)
             try:
-                meta_dict = faq.metadata_filter.model_dump(mode="json") if faq.metadata_filter else {}
                 await index_svc.index_faq(
                     fid,
-                    meta_dict,
                     question=faq.question or "",
                     answer_markdown=faq.answer_markdown or "",
                 )

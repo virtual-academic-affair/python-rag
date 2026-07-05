@@ -9,8 +9,7 @@ from app.core.config import settings
 from app.integrations.llm.gemini import gemini_client
 from app.modules.corpus.dtos.traversal import Candidate, TraversalResult
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
-from app.modules.corpus.models.corpus_node import CorpusNodeDocument, NodeStatus, NodeType
-from app.modules.corpus.traversal_logic import classify_leaf, score_candidate
+from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
@@ -40,16 +39,27 @@ class CorpusTraversalService:
         return resp.text or "{}"
 
     async def _select_topics(
-        self, question: str, topic_nodes: list[CorpusNodeDocument]
+        self,
+        question: str,
+        topic_nodes: list[CorpusNodeDocument],
+        descendant_titles: dict[str, list[str]] | None = None,
     ) -> list[str]:
-        """LLM picks relevant topics from catalog. Returns list of valid node_keys."""
+        """
+        LLM picks relevant topics from catalog. Returns list of valid node_keys.
+        descendant_titles: tên các topic con cháu của mỗi node — đính kèm vào catalog
+        để node sâu trong cây không bị "vô hình" khi LLM chọn ở tầng trên.
+        """
         if not topic_nodes:
             return []
 
-        catalog = "\n".join(
-            f"- {n.node_key}: {n.title} — {n.summary}"
-            for n in topic_nodes
-        )
+        def _line(n: CorpusNodeDocument) -> str:
+            line = f"- {n.node_key}: {n.title} — {n.summary}"
+            kids = (descendant_titles or {}).get(n.node_key) or []
+            if kids:
+                line += f" (bao gồm: {', '.join(kids[:12])})"
+            return line
+
+        catalog = "\n".join(_line(n) for n in topic_nodes)
         prompt = (
             "Bạn là trợ lý phân loại câu hỏi giáo vụ đại học.\n\n"
             f'Câu hỏi: "{question}"\n\n'
@@ -70,12 +80,6 @@ class CorpusTraversalService:
             logger.warning(f"[Corpus] _select_topics parse error: {raw[:200]}")
             return []
 
-    async def list_entry_nodes(self) -> list[CorpusNodeDocument]:
-        """Return all active axis nodes (entry points into the graph)."""
-        nodes = await self.repo.get_by_type(NodeType.AXIS)
-        logger.debug(f"[Corpus] entry nodes: {[n.node_key for n in nodes]}")
-        return nodes
-
     async def expand_nodes(self, node_keys: list[str]) -> dict[str, list[CorpusNodeDocument]]:
         """Expand each node_key to its direct children."""
         result = {}
@@ -84,143 +88,113 @@ class CorpusTraversalService:
             result[key] = children
         return result
 
-    async def resolve_candidates(
-        self, selected_keys: list[str], metadata_filter: dict
-    ) -> TraversalResult:
+    async def _traverse_topics(self, question: str) -> list[str]:
         """
-        Given selected node keys (metadata + topic), collect leaf nodes,
-        classify by metadata_filter, apply topic bonus, and return TraversalResult.
+        Corpus Traversal: duyệt lặp cây topic từ các topic gốc, sâu theo cây thực tế.
 
-        Topic nodes (node_type=TOPIC) have empty metadata_filter → classified "low"
-        but files/faqs in topic nodes get has_topic_match=True bonus (+0.3).
-        Files under BOTH a metadata node and a topic node get the full bonus.
-        """
-        nodes = await self.repo.get_by_keys(selected_keys)
-
-        # Sort: metadata nodes first so their scoring takes precedence on first-seen
-        nodes.sort(key=lambda n: 0 if n.node_type == NodeType.METADATA else 1)
-
-        # Pre-collect all topic-matched file/faq IDs for bonus scoring
-        topic_matched_files: set[str] = set()
-        topic_matched_faqs: set[str] = set()
-        for node in nodes:
-            if node.node_type == NodeType.TOPIC:
-                topic_matched_files.update(node.file_ids)
-                topic_matched_faqs.update(node.faq_ids)
-
-        seen_files: set[str] = set()
-        seen_faqs: set[str] = set()
-        file_candidates: list[Candidate] = []
-        supporting_faqs: list[Candidate] = []
-
-        for node in nodes:
-            for file_id in node.file_ids:
-                if file_id in seen_files:
-                    continue
-                seen_files.add(file_id)
-                classification = classify_leaf(node.metadata_filter, metadata_filter)
-                if classification == "drop":
-                    continue
-                has_topic = file_id in topic_matched_files
-                score = score_candidate(classification, has_topic_match=has_topic)
-                file_candidates.append(Candidate("file", file_id, score))
-
-            for faq_id in node.faq_ids:
-                if faq_id in seen_faqs:
-                    continue
-                seen_faqs.add(faq_id)
-                classification = classify_leaf(node.metadata_filter, metadata_filter)
-                if classification == "drop":
-                    continue
-                has_topic = faq_id in topic_matched_faqs
-                score = score_candidate(classification, has_topic_match=has_topic)
-                supporting_faqs.append(Candidate("faq", faq_id, score))
-
-        # Secondary key on leaf_id makes ordering deterministic across calls —
-        # Mongo's find() has no guaranteed order, so ties on score must not
-        # depend on incidental DB return order (candidates would silently
-        # flip in/out of a downstream top-N cut otherwise).
-        file_candidates.sort(key=lambda c: (-c.score, c.leaf_id))
-        supporting_faqs.sort(key=lambda c: (-c.score, c.leaf_id))
-        logger.info(
-            f"[Corpus] resolve_candidates: {len(file_candidates)} files, "
-            f"{len(supporting_faqs)} faqs (filter={metadata_filter})"
-        )
-        return TraversalResult(file_candidates=file_candidates, supporting_faqs=supporting_faqs)
-
-    async def _traverse_topics(self, question: str, max_depth: int = 4) -> list[str]:
-        """
-        Stage 2 — Corpus Traversal: duyệt lặp cây topic từ axis:topics.
-
-        Mỗi vòng: expand_nodes lấy child topic → LLM chọn node liên quan →
+        Mỗi vòng: LLM chọn node liên quan trong tầng hiện tại →
         drill-down vào các node được chọn còn có topic con.
-        Termination: LLM không chọn node nào, không còn node con, hoặc chạm max_depth.
+        Termination tự nhiên: LLM không chọn node nào, hoặc không còn node con mới.
+        Không có trần độ sâu cứng — tập `offered` đảm bảo mỗi node chỉ được đưa
+        cho LLM đúng 1 lần, nên vòng lặp luôn kết thúc (kể cả khi data có vòng cha-con lỗi).
         Node được chọn ở mọi tầng đều được gộp vào kết quả (gộp candidate cha + con).
         """
-        frontier = ["axis:topics"]
+        all_nodes = await self.repo.get_all()
+        node_map = {n.node_key: n for n in all_nodes}
+
+        # Tên toàn bộ con cháu của từng node — để node sâu vẫn "hiện hình"
+        # trong catalog khi LLM chọn ở các tầng trên (chống mù routing).
+        def _descendants(key: str, seen: set[str]) -> list[str]:
+            titles: list[str] = []
+            node = node_map.get(key)
+            if not node:
+                return titles
+            for ck in node.child_keys:
+                if ck in seen:
+                    continue
+                seen.add(ck)
+                child = node_map.get(ck)
+                if child:
+                    titles.append(child.title or ck)
+                    titles.extend(_descendants(ck, seen))
+            return titles
+
+        descendant_titles = {
+            n.node_key: _descendants(n.node_key, {n.node_key}) for n in all_nodes
+        }
+
+        frontier_nodes = [n for n in all_nodes if not n.parent_keys]
         collected: list[str] = []
+        offered: set[str] = {n.node_key for n in frontier_nodes}
+        depth = 0
 
-        for depth in range(max_depth):
-            expanded = await self.expand_nodes(frontier)
-            children: list[CorpusNodeDocument] = []
-            seen: set[str] = set()
-            for kids in expanded.values():
-                for n in kids:
-                    if (
-                        n.node_type == NodeType.TOPIC
-                        and n.status == NodeStatus.ACTIVE
-                        and n.node_key not in seen
-                    ):
-                        seen.add(n.node_key)
-                        children.append(n)
-            if not children:
-                break
-
-            selected_keys = await self._select_topics(question, children)
+        while frontier_nodes:
+            selected_keys = await self._select_topics(question, frontier_nodes, descendant_titles)
             logger.info(f"[Corpus] traversal depth {depth}: selected {selected_keys}")
             if not selected_keys:
                 break  # termination: không có nhánh phù hợp
 
             collected.extend(selected_keys)
 
-            # Drill-down: chỉ đi tiếp vào node được chọn còn có topic con
-            selected_nodes = [n for n in children if n.node_key in selected_keys]
-            frontier = [
-                n.node_key for n in selected_nodes
-                if any(k.startswith("topic:") for k in n.child_keys)
-            ]
-            if not frontier:
-                break
+            # Drill-down: chỉ đi tiếp vào node được chọn còn có con chưa duyệt
+            selected_nodes = [n for n in frontier_nodes if n.node_key in selected_keys]
+            next_nodes: list[CorpusNodeDocument] = []
+            for n in selected_nodes:
+                for ck in n.child_keys:
+                    child = node_map.get(ck)
+                    if child and child.node_key not in offered:
+                        offered.add(child.node_key)
+                        next_nodes.append(child)
+            frontier_nodes = next_nodes
+            depth += 1
 
         return list(dict.fromkeys(collected))
 
-    async def traverse(self, question: str, metadata_filter: dict) -> TraversalResult:
-        """
-        Stage 1: Prefilter metadata nodes by query metadata (deterministic, no LLM).
-        Stage 2: Iterative topic traversal (expand_nodes + LLM drill-down).
-        Then: resolve_candidates(metadata_nodes + topic_nodes, metadata_filter).
-        """
-        logger.info(f"[Corpus] traverse start: filter={metadata_filter}")
+    async def resolve_candidates(self, selected_keys: list[str]) -> TraversalResult:
+        """Gộp file_ids/faq_ids từ các topic được chọn (dedupe, giữ thứ tự chọn)."""
+        nodes = await self.repo.get_by_keys(selected_keys)
+        # Giữ thứ tự theo selected_keys để kết quả ổn định giữa các lần gọi
+        node_map = {n.node_key: n for n in nodes}
 
-        # Stage 1: Metadata Resolution & Pruning (deterministic)
-        metadata_nodes = await self.repo.get_by_type(NodeType.METADATA)
-        selected_metadata_keys = [
-            n.node_key for n in metadata_nodes
-            if classify_leaf(n.metadata_filter, metadata_filter) != "drop"
-        ]
+        seen_files: set[str] = set()
+        seen_faqs: set[str] = set()
+        file_candidates: list[Candidate] = []
+        supporting_faqs: list[Candidate] = []
+
+        for key in selected_keys:
+            node = node_map.get(key)
+            if not node:
+                continue
+            for file_id in node.file_ids:
+                if file_id not in seen_files:
+                    seen_files.add(file_id)
+                    file_candidates.append(Candidate("file", file_id))
+            for faq_id in node.faq_ids:
+                if faq_id not in seen_faqs:
+                    seen_faqs.add(faq_id)
+                    supporting_faqs.append(Candidate("faq", faq_id))
+
         logger.info(
-            f"[Corpus] prefilter: {len(selected_metadata_keys)}/{len(metadata_nodes)} metadata nodes"
+            f"[Corpus] resolve_candidates: {len(file_candidates)} files, "
+            f"{len(supporting_faqs)} faqs (topics={selected_keys})"
         )
+        return TraversalResult(file_candidates=file_candidates, supporting_faqs=supporting_faqs)
 
-        # Stage 2: Corpus Traversal (iterative expand + LLM selection)
+    async def traverse(self, question: str) -> TraversalResult:
+        """
+        Corpus Traversal: duyệt cây topic bằng LLM (drill-down từ topic gốc),
+        gộp toàn bộ file/faq thuộc các topic được chọn.
+        Lọc metadata (khóa/năm học/quyền) thực hiện ở bước enrich phía sau.
+        """
+        logger.info(f"[Corpus] traverse start: '{question[:80]}'")
+
         selected_topic_keys = await self._traverse_topics(question)
         logger.info(f"[Corpus] topic selection: {selected_topic_keys}")
 
-        all_selected = selected_metadata_keys + selected_topic_keys
-        if not all_selected:
+        if not selected_topic_keys:
             return TraversalResult()
 
-        return await self.resolve_candidates(all_selected, metadata_filter)
+        return await self.resolve_candidates(selected_topic_keys)
 
 
 _instance: Optional[CorpusTraversalService] = None

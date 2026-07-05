@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin
-from app.modules.corpus.models.corpus_node import NodeType, NodeStatus
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
 from app.modules.corpus.services.corpus_traversal_service import get_corpus_traversal_service
@@ -19,12 +18,11 @@ class TopicCreateRequest(BaseModel):
     slug: str
     title: str
     summary: str = ""
-    parent_key: Optional[str] = None  # "topic:<slug>" cha; None → top-level dưới axis:topics
+    parent_key: Optional[str] = None  # "topic:<slug>" của cha, None = topic gốc
 
 
 class TraverseRequest(BaseModel):
     question: str
-    metadata_filter: dict = {}
 
 
 class ChatPreviewRequest(BaseModel):
@@ -46,22 +44,53 @@ def _get_repo() -> CorpusNodeRepository:
     return _repo
 
 
-@router.get("/stats", summary="Corpus graph statistics")
+def _node_out(n) -> dict:
+    return {
+        "node_key": n.node_key,
+        "title": n.title,
+        "summary": n.summary,
+        "parent_keys": n.parent_keys,
+        "child_keys": n.child_keys,
+        "doc_count": n.doc_count,
+        "faq_count": n.faq_count,
+    }
+
+
+@router.get("/stats", summary="Corpus tree statistics")
 async def corpus_stats(_admin: JWTPayload = Depends(require_admin)):
-    """Return node counts by type and status."""
+    """Tổng số topic, số topic gốc, tổng liên kết file/faq."""
     from app.modules.corpus.models.corpus_node import CorpusNodeDocument
-    total = await CorpusNodeDocument.count()
-    counts = {}
-    for nt in NodeType:
-        active = await CorpusNodeDocument.find(
-            {"node_type": nt.value, "status": NodeStatus.ACTIVE.value}
-        ).count()
-        archived = await CorpusNodeDocument.find(
-            {"node_type": nt.value, "status": NodeStatus.ARCHIVED.value}
-        ).count()
-        if active + archived > 0:
-            counts[nt.value] = {"active": active, "archived": archived}
-    return {"total": total, "by_type": counts}
+    nodes = await CorpusNodeDocument.find_all().to_list()
+    top_level = [n for n in nodes if not n.parent_keys]
+    return {
+        "total_topics": len(nodes),
+        "top_level_topics": len(top_level),
+        "total_file_links": sum(len(n.file_ids) for n in nodes),
+        "total_faq_links": sum(len(n.faq_ids) for n in nodes),
+    }
+
+
+@router.get("/tree", summary="Full topic tree")
+async def corpus_tree(_admin: JWTPayload = Depends(require_admin)):
+    """Trả cây topic lồng nhau (đệ quy từ topic gốc) để nhìn cấu trúc cha-con."""
+    repo = _get_repo()
+    nodes = await repo.get_all()
+    node_map = {n.node_key: n for n in nodes}
+
+    def build(key: str, seen: frozenset) -> dict:
+        n = node_map.get(key)
+        if not n or key in seen:
+            return {"node_key": key}
+        return {
+            "node_key": n.node_key,
+            "title": n.title,
+            "doc_count": n.doc_count,
+            "faq_count": n.faq_count,
+            "children": [build(ck, seen | {key}) for ck in n.child_keys],
+        }
+
+    roots = [n for n in nodes if not n.parent_keys]
+    return {"tree": [build(n.node_key, frozenset()) for n in sorted(roots, key=lambda x: x.node_key)]}
 
 
 @router.post("/traverse", summary="Test corpus traversal for a question")
@@ -70,22 +99,15 @@ async def debug_traverse(
     _admin: JWTPayload = Depends(require_admin),
 ):
     """
-    Run full Phase B traversal (BƯỚC 1 prefilter + BƯỚC 2 LLM topic selection +
-    resolve_candidates) for a given question and metadata_filter.
-    Returns which topics were selected, which files/FAQs resolved, and their scores.
-    Useful for verifying the graph is wired correctly without going through chat.
+    Chạy traversal thật (LLM drill-down cây topic) cho một câu hỏi.
+    Trả về danh sách file/faq ids gộp từ các topic được chọn.
     """
     traversal_svc = get_corpus_traversal_service()
-    result = await traversal_svc.traverse(body.question, body.metadata_filter)
+    result = await traversal_svc.traverse(body.question)
     return {
         "question": body.question,
-        "metadata_filter": body.metadata_filter,
-        "file_candidates": [
-            {"leaf_id": c.leaf_id, "score": c.score} for c in result.file_candidates
-        ],
-        "supporting_faqs": [
-            {"leaf_id": c.leaf_id, "score": c.score} for c in result.supporting_faqs
-        ],
+        "file_candidates": [c.leaf_id for c in result.file_candidates],
+        "supporting_faqs": [c.leaf_id for c in result.supporting_faqs],
         "total_files": len(result.file_candidates),
         "total_faqs": len(result.supporting_faqs),
     }
@@ -98,12 +120,11 @@ async def debug_chat_preview(
 ):
     """
     Runs the real chat pipeline up to (but not including) Stage 4's agent loop:
-    query analysis -> metadata_filter -> corpus traversal -> lecturer_only filtering
+    query analysis -> corpus traversal -> metadata/lecturer_only filtering
     -> FAQ fast-path check. Lets you verify role-based filtering and FAQ fast-path
-    behavior by simulating different roles, without needing a real user JWT or
-    incurring the cost of the full document-reading agent loop.
+    behavior by simulating different roles, without needing a real user JWT.
     """
-    from app.modules.chat.dtos import UserContext, ChatHistoryItem
+    from app.modules.chat.dtos import UserContext
     from app.modules.chat.services.chat_service import get_chat_service
     from app.modules.chat.services.query_analyzer_service import get_query_analyzer
 
@@ -132,7 +153,7 @@ async def debug_chat_preview(
                 "needs_rag": False,
                 "metadata_filter": metadata_filter,
             },
-            "note": "Gate = NO. Would answer directly without touching the corpus graph.",
+            "note": "Gate = NO. Would answer directly without touching the corpus tree.",
         }
 
     chat_svc = get_chat_service()
@@ -153,7 +174,7 @@ async def debug_chat_preview(
         "stage2_traversal_and_filtering": {
             "role_used_for_filtering": body.role,
             "candidate_files": [
-                {"file_id": c["file_id"], "file_name": c["file_name"], "doc_score": c["doc_score"]}
+                {"file_id": c["file_id"], "file_name": c["file_name"]}
                 for c in candidate_files
             ],
             "supporting_faqs": [
@@ -168,75 +189,45 @@ async def debug_chat_preview(
     }
 
 
-@router.get("/nodes", summary="List corpus nodes")
+@router.get("/nodes", summary="List topic nodes")
 async def list_corpus_nodes(
-    node_type: Optional[NodeType] = Query(None, description="Filter by node_type"),
-    node_status: Optional[NodeStatus] = Query(None, alias="status", description="Filter by status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """List corpus nodes with optional filters."""
+    """List topic nodes (flat, phân trang)."""
     from app.modules.corpus.models.corpus_node import CorpusNodeDocument
-    query_filter = {}
-    if node_type:
-        query_filter["node_type"] = node_type.value
-    if node_status:
-        query_filter["status"] = node_status.value
-
-    nodes = await CorpusNodeDocument.find(query_filter).skip(skip).limit(limit).to_list()
-    total = await CorpusNodeDocument.find(query_filter).count()
+    nodes = await CorpusNodeDocument.find_all().skip(skip).limit(limit).to_list()
+    total = await CorpusNodeDocument.count()
     return {
         "total": total,
         "skip": skip,
         "limit": limit,
-        "items": [
-            {
-                "node_key": n.node_key,
-                "node_type": n.node_type,
-                "title": n.title,
-                "status": n.status,
-                "doc_count": n.doc_count,
-                "faq_count": n.faq_count,
-                "parent_keys": n.parent_keys,
-                "child_keys": n.child_keys,
-            }
-            for n in nodes
-        ],
+        "items": [_node_out(n) for n in nodes],
     }
 
 
-@router.get("/nodes/{node_key:path}", summary="Get a single corpus node")
+@router.get("/nodes/{node_key:path}", summary="Get a single topic node")
 async def get_corpus_node(
     node_key: str,
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """Get full details of a corpus node by its node_key."""
+    """Get full details of a topic node by its node_key."""
     repo = _get_repo()
     node = await repo.get_by_key(node_key)
     if not node:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Node '{node_key}' not found")
-    return {
-        "node_key": node.node_key,
-        "node_type": node.node_type,
-        "title": node.title,
-        "summary": node.summary,
-        "keywords": node.keywords,
-        "metadata_filter": node.metadata_filter,
-        "file_ids": node.file_ids,
-        "faq_ids": node.faq_ids,
-        "child_keys": node.child_keys,
-        "parent_keys": node.parent_keys,
-        "doc_count": node.doc_count,
-        "faq_count": node.faq_count,
-        "status": node.status,
-    }
+    out = _node_out(node)
+    out["keywords"] = node.keywords
+    out["file_ids"] = node.file_ids
+    out["faq_ids"] = node.faq_ids
+    return out
 
 
 @router.post("/backfill", summary="Trigger corpus backfill (background)")
 async def trigger_backfill(_admin: JWTPayload = Depends(require_admin)):
     """
-    Fire-and-forget: seed root/axes and re-index all READY files + active FAQs.
+    Fire-and-forget: seed topic tree and re-index all READY files + active FAQs.
     Returns immediately; progress in server logs.
     """
     async def _run():
@@ -260,10 +251,8 @@ async def trigger_backfill(_admin: JWTPayload = Depends(require_admin)):
                     break
                 for f in batch:
                     try:
-                        meta_dict = f.custom_metadata.model_dump(mode="json") if f.custom_metadata else {}
                         await index_svc.index_file(
                             str(f.id),
-                            meta_dict,
                             display_name=f.display_name or "",
                             toc_headings=f.table_of_contents or [],
                         )
@@ -284,10 +273,8 @@ async def trigger_backfill(_admin: JWTPayload = Depends(require_admin)):
                     break
                 for faq in batch:
                     try:
-                        meta = faq.metadata_filter.model_dump(mode="json") if faq.metadata_filter else {}
                         await index_svc.index_faq(
                             str(faq.id),
-                            meta,
                             question=faq.question or "",
                             answer_markdown=faq.answer_markdown or "",
                         )
@@ -310,42 +297,14 @@ async def trigger_backfill(_admin: JWTPayload = Depends(require_admin)):
     return {"status": "backfill_started", "message": "Check server logs for progress"}
 
 
-@router.patch("/nodes/{node_key:path}/archive", summary="Archive a corpus node")
-async def archive_corpus_node(
-    node_key: str,
-    _admin: JWTPayload = Depends(require_admin),
-):
-    """Set a corpus node's status to archived."""
-    repo = _get_repo()
-    node = await repo.get_by_key(node_key)
-    if not node:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Node '{node_key}' not found")
-    node.status = NodeStatus.ARCHIVED
-    await node.save()
-    logger.info(f"[Corpus] node archived: {node_key}")
-    return {"node_key": node_key, "status": "archived"}
-
-
-@router.get("/topics", summary="List all active topic nodes")
+@router.get("/topics", summary="List all topic nodes")
 async def list_topics(_admin: JWTPayload = Depends(require_admin)):
-    """List all active topic nodes with document and FAQ counts."""
-    from app.modules.corpus.models.corpus_node import CorpusNodeDocument
-    nodes = await CorpusNodeDocument.find(
-        {"node_type": NodeType.TOPIC.value, "status": NodeStatus.ACTIVE.value}
-    ).to_list()
+    """List all topic nodes with document and FAQ counts."""
+    repo = _get_repo()
+    nodes = await repo.get_all()
     return {
         "total": len(nodes),
-        "items": [
-            {
-                "node_key": n.node_key,
-                "title": n.title,
-                "summary": n.summary,
-                "doc_count": n.doc_count,
-                "faq_count": n.faq_count,
-                "status": n.status,
-            }
-            for n in sorted(nodes, key=lambda n: n.node_key)
-        ],
+        "items": [_node_out(n) for n in sorted(nodes, key=lambda n: n.node_key)],
     }
 
 
@@ -354,7 +313,7 @@ async def create_topic(
     body: TopicCreateRequest,
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """Create a new topic node manually. slug → node_key 'topic:<slug>'."""
+    """Create a new topic node. slug → node_key 'topic:<slug>'. parent_key = cha trong cây (optional)."""
     from app.modules.corpus.node_keys import slugify_topic
 
     clean_slug = slugify_topic(body.slug)
@@ -367,24 +326,19 @@ async def create_topic(
     if existing:
         raise HTTPException(status_code=409, detail=f"Topic '{node_key}' already exists")
 
-    parent_key = "axis:topics"
     if body.parent_key:
-        if not body.parent_key.startswith("topic:"):
-            raise HTTPException(status_code=400, detail="parent_key must be a 'topic:...' node")
         parent = await repo.get_by_key(body.parent_key)
         if not parent:
             raise HTTPException(status_code=404, detail=f"Parent '{body.parent_key}' not found")
-        parent_key = body.parent_key
 
     node = await repo.upsert_node(
         node_key,
-        node_type=NodeType.TOPIC,
         title=body.title,
         summary=body.summary,
-        axis_parent_key=parent_key,
+        parent_key=body.parent_key,
     )
-    logger.info(f"[Corpus] admin created topic: {node_key} (parent={parent_key})")
-    return {"node_key": node.node_key, "title": node.title, "parent_key": parent_key, "status": node.status}
+    logger.info(f"[Corpus] admin created topic: {node_key} (parent={body.parent_key})")
+    return {"node_key": node.node_key, "title": node.title, "parent_keys": node.parent_keys}
 
 
 @router.post(
@@ -397,11 +351,13 @@ async def merge_topics(
     _admin: JWTPayload = Depends(require_admin),
 ):
     """
-    Re-link all files and FAQs from source topic to target topic, then archive source.
+    Chuyển toàn bộ file/faq và topic con từ source sang target, sau đó XÓA source.
     Both node_keys must be 'topic:...' nodes.
     """
     if not node_key.startswith("topic:") or not target_key.startswith("topic:"):
         raise HTTPException(status_code=400, detail="Both keys must be topic: nodes")
+    if node_key == target_key:
+        raise HTTPException(status_code=400, detail="Source and target must differ")
 
     repo = _get_repo()
     source = await repo.get_by_key(node_key)
@@ -416,37 +372,54 @@ async def merge_topics(
     for file_id in list(source.file_ids):
         await repo.remove_leaf_link(node_key, "file", file_id)
         await repo.add_leaf_link(target_key, "file", file_id)
-        leaf = await repo.get_by_key(f"file:{file_id}")
-        if leaf and node_key in leaf.parent_keys:
-            leaf.parent_keys = list(dict.fromkeys(
-                target_key if k == node_key else k for k in leaf.parent_keys
-            ))
-            await leaf.save()
         files_moved += 1
 
     faqs_moved = 0
     for faq_id in list(source.faq_ids):
         await repo.remove_leaf_link(node_key, "faq", faq_id)
         await repo.add_leaf_link(target_key, "faq", faq_id)
-        leaf = await repo.get_by_key(f"faq:{faq_id}")
-        if leaf and node_key in leaf.parent_keys:
-            leaf.parent_keys = list(dict.fromkeys(
-                target_key if k == node_key else k for k in leaf.parent_keys
-            ))
-            await leaf.save()
         faqs_moved += 1
 
-    source.status = NodeStatus.ARCHIVED
+    # Topic con của source chuyển sang làm con của target
+    children_moved = 0
+    for child_key in list(source.child_keys):
+        child = await repo.get_by_key(child_key)
+        if child:
+            child.parent_keys = [target_key if k == node_key else k for k in child.parent_keys]
+            await child.save()
+            target_doc = await repo.get_by_key(target_key)
+            if target_doc and child_key not in target_doc.child_keys:
+                target_doc.child_keys.append(child_key)
+                await target_doc.save()
+            children_moved += 1
+    source.child_keys = []
     await source.save()
+
+    await repo.delete_by_key(node_key)
 
     logger.info(
         f"[Corpus] merge_topics: {node_key} → {target_key} "
-        f"({files_moved} files, {faqs_moved} faqs moved)"
+        f"({files_moved} files, {faqs_moved} faqs, {children_moved} children moved; source deleted)"
     )
     return {
         "merged_from": node_key,
         "merged_into": target_key,
         "files_moved": files_moved,
         "faqs_moved": faqs_moved,
-        "source_status": "archived",
+        "children_moved": children_moved,
+        "source_deleted": True,
     }
+
+
+@router.delete("/nodes/{node_key:path}", summary="Delete a topic node")
+async def delete_corpus_node(
+    node_key: str,
+    _admin: JWTPayload = Depends(require_admin),
+):
+    """Xóa một topic node (gỡ liên kết cha-con hai chiều trước khi xóa)."""
+    repo = _get_repo()
+    deleted = await repo.delete_by_key(node_key)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Node '{node_key}' not found")
+    logger.info(f"[Corpus] node deleted: {node_key}")
+    return {"node_key": node_key, "deleted": True}

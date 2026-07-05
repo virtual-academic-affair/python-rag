@@ -156,14 +156,12 @@ class FileService(FileUploadMixin):
             except Exception as e:
                 raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
-            # Re-index in corpus if metadata changed
-            if custom_metadata is not None:
+            # Re-index in corpus if display name changed (topic gán theo tên + TOC)
+            if display_name is not None:
                 try:
                     from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                    meta_dict = file_doc.custom_metadata.model_dump(mode="json") if file_doc.custom_metadata else {}
                     await get_corpus_index_service().index_file(
                         file_id,
-                        meta_dict,
                         display_name=file_doc.display_name or "",
                         toc_headings=file_doc.table_of_contents or [],
                     )

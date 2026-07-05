@@ -1,4 +1,5 @@
-from app.modules.corpus.data.seed import SEED_TOPICS, ROOT_AND_AXES
+from app.modules.corpus.data.seed import SEED_TOPICS
+from app.modules.corpus.node_keys import slugify_topic
 
 
 def test_seed_topics_count():
@@ -42,8 +43,7 @@ def test_seed_hierarchy_two_levels():
         assert parent in top_level, f"'{slug}' trỏ vào cha '{parent}' không phải nhóm top-level"
 
 
-def test_root_and_axes_unchanged():
-    assert len(ROOT_AND_AXES) == 7
-    keys = [n["node_key"] for n in ROOT_AND_AXES]
-    assert "root" in keys
-    assert "axis:topics" in keys
+def test_slugify_topic_vietnamese():
+    assert slugify_topic("Chuẩn ngoại ngữ") == "chuan-ngoai-ngu"
+    assert slugify_topic("  Tốt   nghiệp ") == "tot-nghiep"
+    assert slugify_topic("Đào tạo đại học") == "dao-tao-dai-hoc"
