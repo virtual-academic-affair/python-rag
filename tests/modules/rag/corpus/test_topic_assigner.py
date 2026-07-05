@@ -1,6 +1,6 @@
 import json
 import pytest
-from app.modules.corpus.topic_assigner import assign_topics
+from app.modules.rag.corpus.utils.topic_assigner import assign_topics
 
 ACTIVE = [
     ("topic:chuan-dau-ra-ngoai-ngu", "Chuẩn đầu ra ngoại ngữ", "Quy định ngoại ngữ tốt nghiệp"),

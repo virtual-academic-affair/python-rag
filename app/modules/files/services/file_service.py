@@ -85,7 +85,7 @@ class FileService(FileUploadMixin):
 
         # Corpus graph unindex — best-effort
         try:
-            from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+            from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
             await get_corpus_index_service().unindex_file(file_id)
         except Exception as _corpus_err:
             logger.warning(f"[Corpus] unindex_file skipped for {file_id}: {_corpus_err}")
@@ -159,7 +159,7 @@ class FileService(FileUploadMixin):
             # Re-index in corpus if display name changed (topic gán theo tên + TOC)
             if display_name is not None:
                 try:
-                    from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                    from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
                     await get_corpus_index_service().index_file(
                         file_id,
                         display_name=file_doc.display_name or "",

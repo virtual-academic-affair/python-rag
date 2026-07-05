@@ -1,5 +1,4 @@
 """Chat Service - Handles non-streaming Agentic RAG chat operations."""
-import json
 import logging
 import time
 from typing import Optional, Any
@@ -7,8 +6,7 @@ import asyncio
 
 from google.genai import types
 from app.core.config import settings
-from app.integrations.llm.gemini import gemini_client
-from app.utils.retry import async_retry
+from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context, try_faq_fast_path
 from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
@@ -51,14 +49,14 @@ class ChatService:
         metadata_filter: Optional[dict[str, Any]] = None,
     ) -> dict:
         """Corpus traversal: retrieve file candidates + supporting FAQ context."""
-        from app.modules.corpus.services.corpus_traversal_service import get_corpus_traversal_service
+        from app.modules.rag.corpus.services.corpus_traversal_service import get_corpus_traversal_service
 
         traversal_svc = get_corpus_traversal_service()
         try:
             result = await traversal_svc.traverse(question)
         except Exception as e:
             logger.warning(f"[Corpus] traverse failed (best-effort): {e}")
-            from app.modules.corpus.dtos.traversal import TraversalResult
+            from app.modules.rag.corpus.dtos.traversal import TraversalResult
             result = TraversalResult()
 
         # Enrich + lọc metadata (khóa/năm học) và quyền (student không thấy lecturer_only)
@@ -69,25 +67,8 @@ class ChatService:
         )
 
         # Fetch supporting FAQ documents (dùng cho Stage 3 fast-path và ngữ cảnh Stage 4)
-        faq_docs = []
-        if result.supporting_faqs:
-            faq_svc = await self._get_faq_svc()
-            for cand in result.supporting_faqs[:3]:
-                faq = await faq_svc.get_faq(cand.leaf_id)
-                if faq and faq.is_active:
-                    faq_docs.append(faq)
-
-        faq_context = ""
-        if faq_docs:
-            faq_parts = [
-                f"**Câu hỏi liên quan:** {f.question}\n**Trả lời tham khảo:** {f.answer_markdown}"
-                for f in faq_docs
-            ]
-            faq_context = (
-                "## Ngữ cảnh bổ sung từ FAQ (tham khảo, không phải câu trả lời cuối):\n\n"
-                + "\n\n---\n\n".join(faq_parts)
-                + "\n\n"
-            )
+        faq_docs = await fetch_supporting_faqs(result.supporting_faqs)
+        faq_context = build_faq_context(faq_docs)
 
         if not candidate_files:
             logger.info(f"[Corpus] _prepare_chat_state: no files ({len(faq_docs)} FAQs available)")
@@ -113,49 +94,6 @@ class ChatService:
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)]))
 
         return {"candidate_files": candidate_files, "history": history, "faq_docs": faq_docs}
-
-    async def _try_faq_fast_path(self, question: str, faq_docs: list) -> Optional[str]:
-        """
-        Stage 3 — Fast-Path Resolution: ưu tiên trả lời từ FAQ.
-        Trả về câu trả lời markdown nếu FAQ đủ thông tin, ngược lại None (→ Stage 4).
-        Best-effort: mọi lỗi LLM đều fallback về None.
-        """
-        if not faq_docs:
-            return None
-
-        faq_block = "\n\n---\n\n".join(
-            f"Câu hỏi: {f.question}\nTrả lời: {f.answer_markdown}" for f in faq_docs
-        )
-        prompt = (
-            "Bạn là trợ lý giáo vụ đại học. Dưới đây là các cặp câu hỏi - trả lời (FAQ) đã kiểm duyệt.\n\n"
-            f"FAQ:\n{faq_block}\n\n"
-            f'Câu hỏi của người dùng: "{question}"\n\n'
-            "Nếu các FAQ trên ĐỦ thông tin để trả lời đầy đủ và chính xác câu hỏi, "
-            "hãy trả lời dựa HOÀN TOÀN trên nội dung FAQ (định dạng markdown).\n"
-            "Nếu KHÔNG đủ (câu hỏi cần chi tiết hơn, khác ngữ cảnh, hoặc FAQ không liên quan), "
-            "đánh dấu sufficient=false.\n\n"
-            'Trả về JSON: {"sufficient": true/false, "answer": "câu trả lời markdown hoặc chuỗi rỗng"}'
-        )
-        try:
-            resp = await async_retry(
-                gemini_client.client.aio.models.generate_content,
-                model=settings.FAQ_MATCHER_MODEL or settings.GEMINI_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                ),
-            )
-            data = json.loads(resp.text or "{}")
-        except Exception as e:
-            logger.warning(f"[Chat] FAQ fast-path failed (best-effort): {e}")
-            return None
-
-        if data.get("sufficient") and data.get("answer"):
-            logger.info("[Chat] FAQ fast-path: sufficient — answering from FAQ")
-            return data["answer"]
-        logger.info("[Chat] FAQ fast-path: insufficient — proceeding to document reading")
-        return None
 
     async def generate_chat_response(
         self,
@@ -262,7 +200,7 @@ class ChatService:
 
         # [4] Stage 3 — Fast-Path Resolution: ưu tiên trả lời từ FAQ
         start_faq = time.perf_counter()
-        faq_answer = await self._try_faq_fast_path(effective_question, state.get("faq_docs") or [])
+        faq_answer = await try_faq_fast_path(effective_question, state.get("faq_docs") or [])
         logger.info(f"[Chat] FAQ fast-path check done in {time.perf_counter() - start_faq:.2f}s")
         if faq_answer:
             pipeline_steps.append({"type": "faq_check", "matched": True})

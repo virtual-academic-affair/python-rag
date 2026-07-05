@@ -1,4 +1,4 @@
-from app.modules.corpus.services.corpus_index_service import diff_links
+from app.modules.rag.corpus.services.corpus_index_service import diff_links
 
 
 def test_diff_links_add_and_remove():

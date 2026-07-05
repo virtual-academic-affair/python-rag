@@ -6,8 +6,8 @@ from google.genai import types
 
 from app.core.config import settings
 from app.integrations.llm.gemini import gemini_client
-from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
-from app.modules.corpus.topic_assigner import assign_topics
+from app.modules.rag.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from app.modules.rag.corpus.utils.topic_assigner import assign_topics
 from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,9 @@ class CorpusIndexService:
         Returns [] if both display_name and content_text are empty (no LLM call).
         """
         if not display_name and not content_text:
+            logger.warning(
+                "[Corpus] _ensure_topic_nodes: display_name và content_text đều rỗng — bỏ qua, không gọi LLM"
+            )
             return []
 
         topic_nodes = await self.repo.get_all()
@@ -66,7 +69,7 @@ class CorpusIndexService:
 
         new_topic_keys = []
         for t in new_topics:
-            node_key = f"topic:{t['slug']}"
+            node_key = t["slug"]
             # LLM đề xuất cha trong cây; parent=None → topic gốc
             await self.repo.upsert_node(
                 node_key,

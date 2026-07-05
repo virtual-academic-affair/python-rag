@@ -15,7 +15,7 @@ from app.modules.files.routers.debug_router import router as debug_router
 from app.modules.files.toc_tree.routers.toc_tree_router import router as toc_tree_router
 from app.modules.faq.routers.faq_router import router as faq_router
 from app.modules.forms import router as forms_router
-from app.modules.corpus.routers.corpus_debug_router import router as corpus_debug_router
+from app.modules.rag.corpus.routers.corpus_debug_router import router as corpus_debug_router
 
 logger = logging.getLogger(__name__)
 

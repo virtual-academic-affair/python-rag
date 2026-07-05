@@ -4,31 +4,14 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel
 
 from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin
-from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
-from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-from app.modules.corpus.services.corpus_traversal_service import get_corpus_traversal_service
-from app.modules.corpus.data.seed import seed_corpus
-
-
-class TopicCreateRequest(BaseModel):
-    slug: str
-    title: str
-    summary: str = ""
-    parent_key: Optional[str] = None  # "topic:<slug>" của cha, None = topic gốc
-
-
-class TraverseRequest(BaseModel):
-    question: str
-
-
-class ChatPreviewRequest(BaseModel):
-    question: str
-    role: str = "student"  # student | lecture | admin — test lecturer_only filtering
-    enrollment_year: Optional[int] = None
+from app.modules.rag.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
+from app.modules.rag.corpus.services.corpus_traversal_service import get_corpus_traversal_service
+from app.modules.rag.corpus.data.seed import seed_corpus
+from app.modules.rag.corpus.dtos import TopicCreateRequest, TraverseRequest, ChatPreviewRequest
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +32,7 @@ def _node_out(n) -> dict:
         "node_key": n.node_key,
         "title": n.title,
         "summary": n.summary,
-        "parent_keys": n.parent_keys,
+        "parent_key": n.parent_key,
         "child_keys": n.child_keys,
         "doc_count": n.doc_count,
         "faq_count": n.faq_count,
@@ -59,9 +42,9 @@ def _node_out(n) -> dict:
 @router.get("/stats", summary="Corpus tree statistics")
 async def corpus_stats(_admin: JWTPayload = Depends(require_admin)):
     """Tổng số topic, số topic gốc, tổng liên kết file/faq."""
-    from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+    from app.modules.rag.corpus.models.corpus_node import CorpusNodeDocument
     nodes = await CorpusNodeDocument.find_all().to_list()
-    top_level = [n for n in nodes if not n.parent_keys]
+    top_level = [n for n in nodes if n.parent_key is None]
     return {
         "total_topics": len(nodes),
         "top_level_topics": len(top_level),
@@ -71,26 +54,57 @@ async def corpus_stats(_admin: JWTPayload = Depends(require_admin)):
 
 
 @router.get("/tree", summary="Full topic tree")
-async def corpus_tree(_admin: JWTPayload = Depends(require_admin)):
-    """Trả cây topic lồng nhau (đệ quy từ topic gốc) để nhìn cấu trúc cha-con."""
+async def corpus_tree(
+    include_leaf_ids: bool = Query(False, description="Kèm file_ids/faq_ids của từng node"),
+    _admin: JWTPayload = Depends(require_admin),
+):
+    """
+    Trả cây topic lồng nhau (đệ quy từ topic gốc) để nhìn cấu trúc cha-con,
+    kèm has_content (subtree có file/FAQ nào không — khớp đúng prefilter mà
+    traversal dùng để loại nhánh rỗng trước khi đưa cho LLM).
+    """
     repo = _get_repo()
     nodes = await repo.get_all()
     node_map = {n.node_key: n for n in nodes}
 
+    def has_content(key: str, seen: set) -> bool:
+        n = node_map.get(key)
+        if not n:
+            return False
+        if n.file_ids or n.faq_ids:
+            return True
+        for ck in n.child_keys:
+            if ck not in seen:
+                seen.add(ck)
+                if has_content(ck, seen):
+                    return True
+        return False
+
     def build(key: str, seen: frozenset) -> dict:
         n = node_map.get(key)
         if not n or key in seen:
-            return {"node_key": key}
-        return {
+            return {"node_key": key, "error": "missing or cyclic reference"}
+        out = {
             "node_key": n.node_key,
             "title": n.title,
+            "summary": n.summary,
             "doc_count": n.doc_count,
             "faq_count": n.faq_count,
-            "children": [build(ck, seen | {key}) for ck in n.child_keys],
+            "has_content": has_content(key, {key}),
+            "children": [build(ck, seen | {key}) for ck in sorted(n.child_keys)],
         }
+        if include_leaf_ids:
+            out["file_ids"] = n.file_ids
+            out["faq_ids"] = n.faq_ids
+        return out
 
-    roots = [n for n in nodes if not n.parent_keys]
-    return {"tree": [build(n.node_key, frozenset()) for n in sorted(roots, key=lambda x: x.node_key)]}
+    roots = [n for n in nodes if n.parent_key is None]
+    tree = [build(n.node_key, frozenset()) for n in sorted(roots, key=lambda x: x.node_key)]
+    return {
+        "total_nodes": len(nodes),
+        "total_roots": len(roots),
+        "tree": tree,
+    }
 
 
 @router.post("/traverse", summary="Test corpus traversal for a question")
@@ -163,7 +177,8 @@ async def debug_chat_preview(
     candidate_files = state["candidate_files"]
     faq_docs = state.get("faq_docs") or []
 
-    faq_answer = await chat_svc._try_faq_fast_path(effective_question, faq_docs)
+    from app.modules.rag.faq import try_faq_fast_path
+    faq_answer = await try_faq_fast_path(effective_question, faq_docs)
 
     return {
         "stage1_query_analysis": {
@@ -196,7 +211,7 @@ async def list_corpus_nodes(
     _admin: JWTPayload = Depends(require_admin),
 ):
     """List topic nodes (flat, phân trang)."""
-    from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+    from app.modules.rag.corpus.models.corpus_node import CorpusNodeDocument
     nodes = await CorpusNodeDocument.find_all().skip(skip).limit(limit).to_list()
     total = await CorpusNodeDocument.count()
     return {
@@ -313,14 +328,14 @@ async def create_topic(
     body: TopicCreateRequest,
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """Create a new topic node. slug → node_key 'topic:<slug>'. parent_key = cha trong cây (optional)."""
-    from app.modules.corpus.node_keys import slugify_topic
+    """Create a new topic node. node_key = slug. parent_key = cha trong cây (optional)."""
+    from app.modules.rag.corpus.utils.node_keys import slugify_topic
 
     clean_slug = slugify_topic(body.slug)
     if not clean_slug:
         raise HTTPException(status_code=400, detail="slug invalid after slugification")
 
-    node_key = f"topic:{clean_slug}"
+    node_key = clean_slug
     repo = _get_repo()
     existing = await repo.get_by_key(node_key)
     if existing:
@@ -338,7 +353,7 @@ async def create_topic(
         parent_key=body.parent_key,
     )
     logger.info(f"[Corpus] admin created topic: {node_key} (parent={body.parent_key})")
-    return {"node_key": node.node_key, "title": node.title, "parent_keys": node.parent_keys}
+    return {"node_key": node.node_key, "title": node.title, "parent_key": node.parent_key}
 
 
 @router.post(
@@ -352,10 +367,7 @@ async def merge_topics(
 ):
     """
     Chuyển toàn bộ file/faq và topic con từ source sang target, sau đó XÓA source.
-    Both node_keys must be 'topic:...' nodes.
     """
-    if not node_key.startswith("topic:") or not target_key.startswith("topic:"):
-        raise HTTPException(status_code=400, detail="Both keys must be topic: nodes")
     if node_key == target_key:
         raise HTTPException(status_code=400, detail="Source and target must differ")
 
@@ -385,7 +397,7 @@ async def merge_topics(
     for child_key in list(source.child_keys):
         child = await repo.get_by_key(child_key)
         if child:
-            child.parent_keys = [target_key if k == node_key else k for k in child.parent_keys]
+            child.parent_key = target_key
             await child.save()
             target_doc = await repo.get_by_key(target_key)
             if target_doc and child_key not in target_doc.child_keys:

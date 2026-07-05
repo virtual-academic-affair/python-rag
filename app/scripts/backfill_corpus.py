@@ -32,10 +32,10 @@ async def main() -> None:
     from app.modules.chat.models.chat_session import ChatSessionDocument
     from app.modules.chat.models.chat_message import ChatMessageDocument
     from app.modules.forms.models.form import FormDocument
-    from app.modules.corpus.models.corpus_node import CorpusNodeDocument
-    from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
-    from app.modules.corpus.data.seed import seed_corpus
-    from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+    from app.modules.rag.corpus.models.corpus_node import CorpusNodeDocument
+    from app.modules.rag.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+    from app.modules.rag.corpus.data.seed import seed_corpus
+    from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
 
     await Database.connect()
     db = Database.get_db()

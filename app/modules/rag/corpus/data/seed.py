@@ -1,12 +1,12 @@
 from __future__ import annotations
 import logging
-from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from app.modules.rag.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 
 logger = logging.getLogger(__name__)
 
-# (slug, title, summary, parent_slug) — slug becomes node_key "topic:<slug>".
+# (slug, title, summary, parent_slug) — slug chính là node_key (mọi node đều là topic).
 # parent_slug=None → topic gốc (tầng 1 của cây).
-# parent_slug="x"  → con của "topic:x" (cha phải khai báo TRƯỚC con trong list).
+# parent_slug="x"  → con của node "x" (cha phải khai báo TRƯỚC con trong list).
 SEED_TOPICS: list[tuple[str, str, str, str | None]] = [
     # ── Topic gốc (tầng 1) ────────────────────────────────────────────
     ("chuan-dau-ra",          "Chuẩn đầu ra",                    "Các chuẩn đầu ra bắt buộc để tốt nghiệp: ngoại ngữ, tin học, chuẩn chương trình", None),
@@ -44,14 +44,13 @@ async def seed_corpus(repo: CorpusNodeRepository) -> int:
     """Seed cây topic. Idempotent — node đã tồn tại thì bỏ qua."""
     created = 0
     for slug, title, summary, parent_slug in SEED_TOPICS:
-        node_key = f"topic:{slug}"
-        if await repo.get_by_key(node_key):
+        if await repo.get_by_key(slug):
             continue
         await repo.upsert_node(
-            node_key,
+            slug,
             title=title,
             summary=summary,
-            parent_key=f"topic:{parent_slug}" if parent_slug else None,
+            parent_key=parent_slug,
         )
         created += 1
 

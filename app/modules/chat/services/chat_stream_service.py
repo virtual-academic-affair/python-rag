@@ -26,6 +26,7 @@ from app.integrations.llm.gemini import gemini_client
 from app.modules.chat.services.query_analyzer_service import get_query_analyzer
 from app.utils.format_utils import sanitize_latex_in_markdown
 from app.modules.chat.services.chat_service import ChatService, fire_and_forget
+from app.modules.rag.faq import try_faq_fast_path
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ class ChatStreamService(ChatService):
         faq_docs = state.get("faq_docs") or []
         if faq_docs:
             yield json.dumps({"type": "faq_check", "content": "Kiểm tra câu hỏi thường gặp...", "done": False})
-            faq_answer = await self._try_faq_fast_path(effective_question, faq_docs)
+            faq_answer = await try_faq_fast_path(effective_question, faq_docs)
             if faq_answer:
                 faq_step = {"type": "faq_check", "matched": True}
                 pipeline_steps.append(faq_step)

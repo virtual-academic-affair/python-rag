@@ -95,7 +95,7 @@ class FaqService:
             created = await self._faq_repo.create(doc)
             # Corpus graph index — best-effort
             try:
-                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
                 await get_corpus_index_service().index_faq(
                     str(created.id),
                     question=question,
@@ -197,7 +197,7 @@ class FaqService:
             # Re-index in corpus only when metadata changed — best-effort
             if "metadata_filter" in data:
                 try:
-                    from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+                    from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
                     await get_corpus_index_service().index_faq(
                         faq_id,
                         question=saved.question or "",
@@ -215,7 +215,7 @@ class FaqService:
             return False
         # Corpus graph unindex — best-effort
         try:
-            from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
+            from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
             await get_corpus_index_service().unindex_faq(faq_id)
         except Exception as _corpus_err:
             logger.warning(f"[Corpus] unindex_faq skipped for {faq_id}: {_corpus_err}")

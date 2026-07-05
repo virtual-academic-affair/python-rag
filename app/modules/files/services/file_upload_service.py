@@ -158,15 +158,21 @@ class FileUploadMixin:
                 raise NotFoundException("File", file_id)
 
             # Corpus graph index — best-effort; does not affect upload outcome
+            start_corpus = time.perf_counter()
+            logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{ready_doc.display_name}') vào corpus graph")
             try:
-                from app.modules.corpus.services.corpus_index_service import get_corpus_index_service
-                await get_corpus_index_service().index_file(
+                from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
+                topic_keys = await get_corpus_index_service().index_file(
                     file_id,
                     display_name=ready_doc.display_name or "",
                     toc_headings=ready_doc.table_of_contents or [],
                 )
+                corpus_dur = time.perf_counter() - start_corpus
+                logger.info(
+                    f"[Corpus] Index file {file_id} xong trong {corpus_dur:.2f}s — gán vào {len(topic_keys)} topic: {topic_keys}"
+                )
             except Exception as _corpus_err:
-                logger.warning(f"[Corpus] index_file skipped for {file_id}: {_corpus_err}")
+                logger.warning(f"[Corpus] index_file skipped for {file_id}: {_corpus_err}", exc_info=True)
 
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")

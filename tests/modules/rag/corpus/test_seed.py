@@ -1,5 +1,5 @@
-from app.modules.corpus.data.seed import SEED_TOPICS
-from app.modules.corpus.node_keys import slugify_topic
+from app.modules.rag.corpus.data.seed import SEED_TOPICS
+from app.modules.rag.corpus.utils.node_keys import slugify_topic
 
 
 def test_seed_topics_count():

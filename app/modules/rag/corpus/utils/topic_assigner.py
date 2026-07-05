@@ -24,6 +24,9 @@ async def assign_topics(
     If active_topics is empty, returns ([], []) without calling LLM.
     """
     if not active_topics:
+        logger.warning(
+            f"[TopicAssigner] '{display_name}': catalog rỗng (chưa seed topic nào) — bỏ qua, không gọi LLM"
+        )
         return [], []
 
     valid_keys = {t[0] for t in active_topics}
@@ -47,7 +50,7 @@ async def assign_topics(
         'Với mỗi chủ đề mới, chọn "parent" là node_key của chủ đề cha phù hợp nhất trong danh sách trên '
         "(hoặc null nếu là nhóm chủ đề lớn hoàn toàn mới).\n\n"
         "Trả về JSON:\n"
-        '{"selected": ["topic:key1"], "new_topics": [{"slug": "ten-slug-viet-khong-dau", "title": "Tên", "summary": "Mô tả ngắn", "parent": "topic:key-cha"}]}'
+        '{"selected": ["key1"], "new_topics": [{"slug": "ten-slug-viet-khong-dau", "title": "Tên", "summary": "Mô tả ngắn", "parent": "key-cha"}]}'
     )
 
     raw = await call_llm(prompt)
