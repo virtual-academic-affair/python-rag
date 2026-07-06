@@ -142,16 +142,17 @@ async def debug_traverse(
     }
 
 
-@router.post("/chat-preview", summary="Dry-run the full chat pipeline (Stage 1-3) without a real JWT")
+@router.post("/chat-preview", summary="Dry-run the chat retrieval pipeline (Stage 1-2) without a real JWT")
 async def debug_chat_preview(
     body: ChatPreviewRequest,
     _admin: JWTPayload = Depends(require_admin),
 ):
     """
     Runs the real chat pipeline up to (but not including) Stage 4's agent loop:
-    query analysis -> corpus traversal -> metadata/lecturer_only filtering
-    -> FAQ fast-path check. Lets you verify role-based filtering and FAQ fast-path
-    behavior by simulating different roles, without needing a real user JWT.
+    query analysis -> corpus traversal -> metadata/lecturer_only filtering.
+    Lets you verify role-based filtering and retrieved candidates (files + supporting
+    FAQ context) by simulating different roles, without needing a real user JWT.
+    FAQ chỉ là ngữ cảnh bổ trợ — không có bước trả lời thẳng từ FAQ.
     """
     from app.modules.chat.dtos import UserContext
     from app.modules.chat.services.chat_service import get_chat_service
@@ -192,9 +193,6 @@ async def debug_chat_preview(
     candidate_files = state["candidate_files"]
     faq_docs = state.get("faq_docs") or []
 
-    from app.modules.rag.faq import try_faq_fast_path
-    faq_answer = await try_faq_fast_path(effective_question, faq_docs)
-
     return {
         "stage1_query_analysis": {
             "effective_question": effective_question,
@@ -211,11 +209,7 @@ async def debug_chat_preview(
                 {"question": f.question, "is_active": f.is_active} for f in faq_docs
             ],
         },
-        "stage3_faq_fast_path": {
-            "triggered": faq_answer is not None,
-            "answer": faq_answer,
-        },
-        "stage4_would_run": faq_answer is None and bool(candidate_files),
+        "stage4_would_run": bool(candidate_files),
     }
 
 

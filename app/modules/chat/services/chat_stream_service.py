@@ -26,7 +26,6 @@ from app.integrations.llm.gemini import gemini_client
 from app.modules.chat.services.query_analyzer_service import get_query_analyzer
 from app.utils.format_utils import sanitize_latex_in_markdown
 from app.modules.chat.services.chat_service import ChatService, fire_and_forget
-from app.modules.rag.faq import try_faq_fast_path
 
 logger = logging.getLogger(__name__)
 
@@ -142,27 +141,8 @@ class ChatStreamService(ChatService):
         pipeline_steps.append(retrieval_step)
         yield json.dumps({**simplify_step(retrieval_step, candidate_files), "done": False})
 
-        # [4] Stage 3 — Fast-Path Resolution: ưu tiên trả lời từ FAQ
-        faq_docs = state.get("faq_docs") or []
-        if faq_docs:
-            yield json.dumps({"type": "faq_check", "content": "Kiểm tra câu hỏi thường gặp...", "done": False})
-            faq_answer = await try_faq_fast_path(effective_question, faq_docs)
-            if faq_answer:
-                faq_step = {"type": "faq_check", "matched": True}
-                pipeline_steps.append(faq_step)
-                yield json.dumps({"type": "text", "content": faq_answer, "done": False})
-                processing_time_ms = int((time.time() - start_time) * 1000)
-                logger.info(f"[Chat-Stream] FAQ fast-path answer for user {user_context.name} ({processing_time_ms}ms)")
-                yield json.dumps({
-                    "done": True,
-                    "source": "faq",
-                    "sources": [],
-                    "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
-                    "processingTimeMs": processing_time_ms,
-                })
-                return
-
-        # [5] Stage 4 — Page Index: đọc tài liệu qua agent loop
+        # [4] Stage 4 — Page Index: đọc tài liệu qua agent loop
+        # FAQ đã được nhồi vào prompt làm ngữ cảnh bổ trợ (không trả lời thẳng từ FAQ).
         if not candidate_files:
             yield json.dumps({"type": "text", "content": "Không tìm thấy tài liệu phù hợp.", "done": False})
             yield json.dumps({

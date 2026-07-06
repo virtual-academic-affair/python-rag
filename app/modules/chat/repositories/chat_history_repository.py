@@ -11,7 +11,7 @@ from app.modules.chat.models.chat_message import ChatMessageDocument
 from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
 
 # Single source of truth for which pipeline step types are persisted to MongoDB.
-PERSISTED_STEP_TYPES = frozenset({"query_analysis", "faq_check", "retrieval", "call"})
+PERSISTED_STEP_TYPES = frozenset({"query_analysis", "retrieval", "call"})
 
 
 class ChatHistoryRepository:

@@ -1,8 +1,7 @@
-"""Inquiry email flow giống chat: corpus traversal → FAQ fast-path → agent loop.
+"""Inquiry email flow giống chat: corpus traversal → agent loop, FAQ chỉ là context.
 
-Test _run_rag_pipeline (phần RAG tách riêng) với các collaborator được mock,
-kiểm tra: traversal chạy với role=student + metadata_filter, FAQ fast-path
-short-circuit trước agent loop, và fallback bypass khi rỗng.
+FAQ KHÔNG bao giờ trả lời thẳng (giống file — chỉ là ngữ cảnh bổ trợ). Không có
+file tài liệu → trả bypass dù có FAQ. Test _run_rag_pipeline với collaborator mock.
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,42 +31,15 @@ def _patch_traversal(traversal_result):
     return patcher, traverse_mock
 
 
-async def test_faq_fast_path_short_circuits_agent_loop():
-    """FAQ fast-path đủ thông tin → source=faq, KHÔNG chạy agent loop."""
-    svc = _svc(enrich_return=[{"file_id": "f1", "file_name": "Doc", "doc_description": ""}])
-    result = TraversalResult(
-        file_candidates=[Candidate("file", "f1")],
-        supporting_faqs=[Candidate("faq", "q1")],
-    )
-    patcher, traverse_mock = _patch_traversal(result)
-
-    with patcher, \
-        patch("app.modules.email.workflows.inquiry_service.fetch_supporting_faqs",
-              AsyncMock(return_value=[object()])), \
-        patch("app.modules.email.workflows.inquiry_service.try_faq_fast_path",
-              AsyncMock(return_value="Trả lời từ FAQ")) as fast_path, \
-        patch("app.modules.email.workflows.inquiry_service.run_agent_loop",
-              AsyncMock()) as agent_loop:
-        out = await svc._run_rag_pipeline("Chuẩn ngoại ngữ K22?", "Tiêu đề", "Nội dung", MF)
-
-    assert out == {"answer": "Trả lời từ FAQ", "sources": [], "source": "faq"}
-    fast_path.assert_awaited_once()
-    agent_loop.assert_not_awaited()
-    # Traversal chạy với role student + metadata_filter của email
-    traverse_mock.assert_awaited_once()
-    _, kwargs = traverse_mock.call_args
-    assert kwargs["user_role"] == "student"
-    assert kwargs["metadata_filter"] == MF
-
-
-async def test_agent_loop_when_faq_insufficient():
-    """FAQ không đủ → chạy agent loop với faq_context nhồi vào prompt, source=llm."""
+async def test_faq_used_as_context_not_direct_answer():
+    """Có file + FAQ → agent loop chạy với faq_context trong prompt, source=llm.
+    FAQ chỉ là context, KHÔNG trả lời thẳng."""
     svc = _svc(enrich_return=[{"file_id": "f1", "file_name": "Quy chế", "doc_description": "Mô tả"}])
     result = TraversalResult(
         file_candidates=[Candidate("file", "f1")],
         supporting_faqs=[Candidate("faq", "q1")],
     )
-    patcher, _ = _patch_traversal(result)
+    patcher, traverse_mock = _patch_traversal(result)
 
     agent_mock = AsyncMock(return_value={"final_answer": "Câu trả lời tài liệu", "sources": [{"citationId": 1}]})
     with patcher, \
@@ -75,33 +47,36 @@ async def test_agent_loop_when_faq_insufficient():
               AsyncMock(return_value=[object()])), \
         patch("app.modules.email.workflows.inquiry_service.build_faq_context",
               return_value="## FAQ context\n\n"), \
-        patch("app.modules.email.workflows.inquiry_service.try_faq_fast_path",
-              AsyncMock(return_value=None)), \
         patch("app.modules.email.workflows.inquiry_service.run_agent_loop", agent_mock):
-        out = await svc._run_rag_pipeline("Câu hỏi", "Tiêu đề", "Nội dung email", MF)
+        out = await svc._run_rag_pipeline("Chuẩn ngoại ngữ K22?", "Tiêu đề", "Nội dung", MF)
 
     assert out["source"] == "llm"
     assert out["answer"] == "Câu trả lời tài liệu"
-    assert out["sources"] == [{"citationId": 1}]
-    # faq_context được nhồi vào prompt của agent
+    # faq_context được nhồi vào prompt agent (FAQ = context)
     _, kwargs = agent_mock.call_args
     assert "## FAQ context" in kwargs["prompt_contents"]
     assert kwargs["citation_link_type"] == "original"
+    # Traversal chạy với role student + metadata_filter của email
+    _, tkwargs = traverse_mock.call_args
+    assert tkwargs["user_role"] == "student"
+    assert tkwargs["metadata_filter"] == MF
 
 
-async def test_bypass_when_no_files_and_no_faq():
-    """Không file, FAQ fast-path None → source=bypass."""
+async def test_no_files_returns_bypass_even_with_faqs():
+    """Không có file (dù có FAQ) → bypass. FAQ không bao giờ trả lời thẳng."""
     svc = _svc(enrich_return=[])
-    patcher, _ = _patch_traversal(TraversalResult())
+    result = TraversalResult(
+        file_candidates=[],
+        supporting_faqs=[Candidate("faq", "q1")],
+    )
+    patcher, _ = _patch_traversal(result)
 
     with patcher, \
         patch("app.modules.email.workflows.inquiry_service.fetch_supporting_faqs",
-              AsyncMock(return_value=[])), \
-        patch("app.modules.email.workflows.inquiry_service.try_faq_fast_path",
-              AsyncMock(return_value=None)), \
+              AsyncMock(return_value=[object()])), \
         patch("app.modules.email.workflows.inquiry_service.run_agent_loop",
               AsyncMock()) as agent_loop:
-        out = await svc._run_rag_pipeline("Câu hỏi", "Tiêu đề", "Nội dung", {})
+        out = await svc._run_rag_pipeline("Câu hỏi", "Tiêu đề", "Nội dung", MF)
 
     assert out["source"] == "bypass"
     assert out["sources"] == []
@@ -117,9 +92,7 @@ async def test_traversal_failure_falls_back_to_bypass():
     with patch("app.modules.email.workflows.inquiry_service.get_corpus_traversal_service",
                return_value=fake_svc), \
         patch("app.modules.email.workflows.inquiry_service.fetch_supporting_faqs",
-              AsyncMock(return_value=[])), \
-        patch("app.modules.email.workflows.inquiry_service.try_faq_fast_path",
-              AsyncMock(return_value=None)):
+              AsyncMock(return_value=[])):
         out = await svc._run_rag_pipeline("Câu hỏi", "Tiêu đề", "Nội dung", MF)
 
     assert out["source"] == "bypass"

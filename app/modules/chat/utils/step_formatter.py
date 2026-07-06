@@ -1,7 +1,7 @@
 """
 Step Formatter — Chuyển đổi pipeline step sang schema thống nhất {type, content}.
 
-Tất cả step (query_analysis, faq_check, retrieval, call) đều được trả về dưới dạng:
+Tất cả step (query_analysis, retrieval, call) đều được trả về dưới dạng:
     {"type": "<loại>", "content": "<mô tả ngôn ngữ tự nhiên tiếng Việt>"}
 
 Hàm này là pure function (không có side effect, không I/O) và có thể được
@@ -67,14 +67,6 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
             content = f"Phân tích câu hỏi: câu hỏi gốc là '{original}', được chuẩn hóa thành '{effective}'{filter_str}."
         else:
             content = f"Phân tích câu hỏi: '{original}' (Không cần tra cứu tài liệu)."
-
-    elif step_type == "faq_check":
-        hit = step.get("hit", False)
-        faq_q = step.get("faq_question", "")
-        if hit:
-            content = f"Tìm thấy câu hỏi tương tự trong FAQ: '{faq_q}'."
-        else:
-            content = "Không tìm thấy câu hỏi tương tự trong FAQ, chuyển sang tra cứu tài liệu học vụ."
 
     elif step_type == "retrieval":
         files = step.get("candidate_files") or []

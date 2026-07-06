@@ -1,8 +1,8 @@
 """Inquiry workflow service: RAG reply generation via corpus traversal.
 
 Luồng giống chat (chat_service): corpus traversal (pre-filter 3 key,
-role=student) → FAQ fast-path → agent loop đọc tài liệu. Giữ phần extraction
-riêng của email (unified extraction + regex/cohort fallback).
+role=student) → agent loop đọc tài liệu (FAQ chỉ là ngữ cảnh bổ trợ, không trả
+lời thẳng). Giữ phần extraction riêng của email (unified extraction + regex/cohort fallback).
 """
 import logging
 from typing import Dict, Any, Optional, List
@@ -13,7 +13,7 @@ from app.integrations.llm.gemini import build_extraction_llm
 from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
 from app.modules.rag.corpus.services.corpus_traversal_service import get_corpus_traversal_service
 from app.modules.rag.corpus.dtos.traversal import TraversalResult
-from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context, try_faq_fast_path
+from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context
 from app.modules.rag.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
 from app.modules.email.utils.email_utils import extract_structured_data
@@ -127,7 +127,7 @@ class InquiryService:
         
         logger.info(f"[Inquiry] Final metadata_filter applied: {metadata_filter}")
 
-        # 3. RAG Step (corpus traversal → FAQ fast-path → agent loop, giống chat)
+        # 3. RAG Step (corpus traversal → agent loop, FAQ là ngữ cảnh bổ trợ, giống chat)
         rag_query = extracted_question or f"{title}\n{content}"
         rag_result = await self._run_rag_pipeline(rag_query, title, content, metadata_filter)
 
@@ -170,7 +170,7 @@ class InquiryService:
         metadata_filter: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Luồng RAG giống chat: corpus traversal → FAQ fast-path → agent loop.
+        Luồng RAG giống chat: corpus traversal → agent loop (FAQ là ngữ cảnh bổ trợ).
         Người gửi email luôn là sinh viên → user_role="student" (tự động ẩn
         tài liệu/FAQ lecturer_only nhờ pre-filter 3 key).
         Trả về {"answer", "sources", "source"} với source ∈ {faq, llm, bypass}.
@@ -193,15 +193,9 @@ class InquiryService:
             f"[Inquiry] Retrieval: {len(candidate_files)} files, {len(faq_docs)} supporting FAQs"
         )
 
-        # Stage 3 — FAQ fast-path
-        faq_answer = await try_faq_fast_path(rag_query, faq_docs)
-        if faq_answer:
-            logger.info("[Inquiry] FAQ fast-path answer")
-            return {"answer": faq_answer, "sources": [], "source": "faq"}
-
-        # Stage 4 — đọc tài liệu qua agent loop
+        # Stage 4 — đọc tài liệu qua agent loop (FAQ chỉ là ngữ cảnh bổ trợ, không trả lời thẳng)
         if not candidate_files:
-            logger.warning("[Inquiry] No candidate files and no FAQ match.")
+            logger.warning("[Inquiry] No candidate files. Bypassing (FAQ không dùng để trả lời thẳng).")
             return {
                 "answer": "Không tìm thấy tài liệu phù hợp để trả lời email này.",
                 "sources": [],

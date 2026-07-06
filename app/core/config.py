@@ -56,11 +56,6 @@ class Settings(BaseSettings):
     LLAMA_PARSE_LANGUAGE: str = "vi"
     LLAMA_PARSE_USE_PREMIUM: bool = False
 
-    # Vectorless navigator (LLM catalog navigation for file retrieval).
-    RETRIEVAL_NAVIGATOR_MAX_CATALOG: int = 500
-    # None -> falls back to GEMINI_MODEL.
-    RETRIEVAL_NAVIGATOR_MODEL: Optional[str] = None
-    
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
     PAGEINDEX_MODEL: str = "gemma-4-31b-it" 

@@ -123,10 +123,14 @@ MỤC LỤC
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
-│   2. FAQ Pre-check: Tìm kiếm ngữ nghĩa trong kho FAQ qua FaqMatcher.         │
-│      Nếu trúng -> Dùng luôn.                                                 │
-│   3. RAG Retrieval: Nếu không có FAQ, Navigator tìm kiếm tài liệu liên quan. │
-│   4. LLM Synthesis: Soạn thảo email phản hồi dựa trên bối cảnh tìm được.     │
+│   2. Unified Extraction: 1 lần gọi LLM trích câu hỏi, loại thắc mắc và       │
+│      metadata_filter (khóa/năm học), có regex + cohort fallback.            │
+│   3. Corpus Traversal: giống chat — pre-filter 3 key (enrollmentYear,       │
+│      academicYear, lecturerOnly; role=student cố định vì người gửi luôn là  │
+│      sinh viên) rồi LLM chọn chủ đề, gộp file + FAQ liên quan.               │
+│   4. LLM Synthesis: Agent đọc tài liệu (PageIndex) và soạn thảo email phản  │
+│      hồi. FAQ liên quan chỉ đưa vào làm NGỮ CẢNH bổ trợ cho agent — không   │
+│      có bước trả lời thẳng từ FAQ. Không có tài liệu nào -> bypass.         │
 │   5. gRPC Call: Lưu thắc mắc và bản thảo email vào NestJS qua gRPC.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 

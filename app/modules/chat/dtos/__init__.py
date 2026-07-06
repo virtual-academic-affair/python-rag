@@ -15,12 +15,6 @@ from app.modules.chat.dtos.chat_history import (
     ChatSessionRenameRequest,
     ChatSessionMutationResponse,
 )
-from app.modules.chat.dtos.preview import (
-    ChatRetrievePreviewRequest,
-    ChatRetrievePreviewItem,
-    ChatRetrievePreviewResponse,
-)
-
 __all__ = [
     "UserContext",
     "ChatHistoryItem",
@@ -35,7 +29,4 @@ __all__ = [
     "ChatMessageListResponse",
     "ChatSessionRenameRequest",
     "ChatSessionMutationResponse",
-    "ChatRetrievePreviewRequest",
-    "ChatRetrievePreviewItem",
-    "ChatRetrievePreviewResponse",
 ]

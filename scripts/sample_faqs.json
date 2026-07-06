@@ -3,6 +3,7 @@
     {
       "question": "Làm thế nào để xét tốt nghiệp?",
       "answer_rich_text": "<p>Sinh viên cần hoàn thành đầy đủ các học phần trong chương trình đào tạo, đạt chuẩn đầu ra ngoại ngữ và tin học theo quy định. Sau đó, nộp hồ sơ xét tốt nghiệp theo thông báo của Phòng Giáo vụ.</p>",
+      "lecturer_only": false,
       "metadata_filter": {
         "academic_year": { "from_year": 0, "to_year": 9999 },
         "enrollment_year": { "from_year": 0, "to_year": 9999 }
@@ -11,6 +12,16 @@
     {
       "question": "Quy định về chuẩn ngoại ngữ đầu ra như thế nào?",
       "answer_rich_text": "<p>Chuẩn ngoại ngữ đầu ra được quy định tùy theo khóa học và hệ đào tạo. Đối với hệ CLC, sinh viên cần đạt chứng chỉ tiếng Anh quốc tế (như IELTS, TOEFL) hoặc hoàn thành các học phần tiếng Anh theo lộ trình của trường. Chi tiết xem tại Quyết định chuẩn ngoại ngữ 2024.</p>",
+      "lecturer_only": false,
+      "metadata_filter": {
+        "academic_year": { "from_year": 0, "to_year": 9999 },
+        "enrollment_year": { "from_year": 0, "to_year": 9999 }
+      }
+    },
+    {
+      "question": "Giảng viên nộp bảng điểm cuối kỳ theo mẫu nào và hạn chót là khi nào?",
+      "answer_rich_text": "<p>Giảng viên nộp bảng điểm theo mẫu chuẩn của Phòng Giáo vụ (Mẫu BD-01), ký xác nhận và nộp bản cứng kèm file Excel qua email phòng Giáo vụ chậm nhất 7 ngày sau khi kết thúc kỳ thi. Bảng điểm nộp trễ cần có xác nhận của Trưởng bộ môn.</p>",
+      "lecturer_only": true,
       "metadata_filter": {
         "academic_year": { "from_year": 0, "to_year": 9999 },
         "enrollment_year": { "from_year": 0, "to_year": 9999 }

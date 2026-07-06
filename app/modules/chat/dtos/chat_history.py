@@ -30,7 +30,7 @@ class ChatMessageItem(BaseSchema):
     message_type: str = Field(default="text", description="Message type: text or thinking")
     token_usage: Optional[TokenUsage] = None
     sources: Optional[List[SourceCitation]] = Field(default=None)
-    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps persisted to DB: query_analysis, faq_check, retrieval, call")
+    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps persisted to DB: query_analysis, retrieval, call")
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
 

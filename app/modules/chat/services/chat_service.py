@@ -6,7 +6,7 @@ import asyncio
 
 from google.genai import types
 from app.core.config import settings
-from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context, try_faq_fast_path
+from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context
 from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
@@ -67,7 +67,7 @@ class ChatService:
         # enrich chỉ còn hydrate nội dung file (status/storage).
         candidate_files = await self._retrieval.enrich_corpus_candidates(result.file_candidates)
 
-        # Fetch supporting FAQ documents (dùng cho Stage 3 fast-path và ngữ cảnh Stage 4)
+        # Fetch supporting FAQ documents (ngữ cảnh bổ trợ cho agent Stage 4)
         faq_docs = await fetch_supporting_faqs(result.supporting_faqs)
         faq_context = build_faq_context(faq_docs)
 
@@ -199,26 +199,8 @@ class ChatService:
             "candidate_files": retrieval_files_step,
         })
 
-        # [4] Stage 3 — Fast-Path Resolution: ưu tiên trả lời từ FAQ
-        start_faq = time.perf_counter()
-        faq_answer = await try_faq_fast_path(effective_question, state.get("faq_docs") or [])
-        logger.info(f"[Chat] FAQ fast-path check done in {time.perf_counter() - start_faq:.2f}s")
-        if faq_answer:
-            pipeline_steps.append({"type": "faq_check", "matched": True})
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat] FAQ fast-path answer for user {user_context.name}: '{faq_answer[:200]}...' ({processing_time_ms}ms)")
-            final_answer = faq_answer
-            if to_rich_text:
-                final_answer = markdown_to_rich_text(faq_answer)
-            return {
-                "answer": final_answer,
-                "source": "faq",
-                "sources": [],
-                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
-                "processing_time_ms": processing_time_ms,
-            }
-
-        # [5] Stage 4 — Page Index: đọc tài liệu qua agent loop
+        # [4] Stage 4 — Page Index: đọc tài liệu qua agent loop
+        # FAQ đã được nhồi vào prompt làm ngữ cảnh bổ trợ (không trả lời thẳng từ FAQ).
         if not candidate_files:
             logger.info(f"[Chat] No candidate files and no FAQ match for user {user_context.name}. Returning empty result.")
             answer_text = "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn."

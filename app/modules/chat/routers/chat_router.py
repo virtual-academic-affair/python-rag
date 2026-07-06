@@ -1,6 +1,6 @@
 """
 Chat Endpoints - Handle all RAG-based chat operations.
-Includes: query, stream, and retrieval preview (Qdrant).
+Includes: query and stream.
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends, Query
@@ -16,9 +16,6 @@ from app.modules.chat.dtos import (
     ChatStreamRequest,
     UserContext,
     ChatHistoryItem,
-    ChatRetrievePreviewRequest,
-    ChatRetrievePreviewResponse,
-    ChatRetrievePreviewItem,
     ChatSessionListResponse,
     ChatSessionItem,
     ChatMessageListResponse,
@@ -26,12 +23,11 @@ from app.modules.chat.dtos import (
     ChatSessionRenameRequest,
     ChatSessionMutationResponse,
 )
-from app.core.dependencies import require_auth, require_admin
+from app.core.dependencies import require_auth
 from app.core.auth import JWTPayload
 from app.modules.chat.services.chat_service import get_chat_service
 from app.modules.chat.services.chat_stream_service import get_chat_stream_service
 from app.modules.chat.repositories.chat_history_repository import get_chat_history_repository
-from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
 from app.core.config import settings
 from app.core.exceptions import AppException, NotFoundException, ValidationException, handle_google_api_error
 
@@ -472,63 +468,3 @@ async def delete_chat_session(
     if not deleted:
         raise NotFoundException("Session", session_id)
     return ChatSessionMutationResponse(session_id=session_id, success=True)
-
-
-@router.post(
-    "/retrieve-preview",
-    response_model=ChatRetrievePreviewResponse,
-    summary="Preview navigator retrieval results",
-    description="Debug endpoint to inspect candidate documents selected by the navigator before generation.",
-)
-async def chat_retrieve_preview(
-    request: ChatRetrievePreviewRequest,
-    user: JWTPayload = Depends(require_admin),
-):
-    """Preview navigator-based document retrieval for relevance tuning."""
-    try:
-        retrieval = get_retrieval_service()
-
-        meta_dict = request.metadata_filter.model_dump() if request.metadata_filter else {}
-        max_files = request.top_k or 5
-
-        candidates = await retrieval.retrieve_candidate_files(
-            query=request.question,
-            metadata_filter=meta_dict,
-            max_files=max_files,
-        )
-
-        items = [
-            ChatRetrievePreviewItem(
-                rank=i,
-                file_id=c.get("file_id"),
-                file_name=c.get("file_name"),
-                section_path=None,
-                score=c.get("doc_score"),
-                explain={"reason": c.get("nav_reason")} if request.include_explain else None,
-                text=c.get("doc_description") or "",
-            )
-            for i, c in enumerate(candidates, start=1)
-        ]
-
-        return ChatRetrievePreviewResponse(
-            query=request.question,
-            top_k=max_files,
-            min_score=0.0,
-            count=len(items),
-            cache_stats=None,
-            items=items,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except APIError as e:
-        raise handle_google_api_error(e, prefix="Failed to preview retrieval: ")
-    except AppException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview retrieval: {str(e)}",
-        )
