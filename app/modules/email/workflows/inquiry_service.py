@@ -1,4 +1,9 @@
-"""Inquiry workflow service: RAG reply generation using RetrievalService."""
+"""Inquiry workflow service: RAG reply generation via corpus traversal.
+
+Luồng giống chat (chat_service): corpus traversal (pre-filter 3 key,
+role=student) → FAQ fast-path → agent loop đọc tài liệu. Giữ phần extraction
+riêng của email (unified extraction + regex/cohort fallback).
+"""
 import logging
 from typing import Dict, Any, Optional, List
 
@@ -6,6 +11,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.integrations.llm.gemini import build_extraction_llm
 from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
+from app.modules.rag.corpus.services.corpus_traversal_service import get_corpus_traversal_service
+from app.modules.rag.corpus.dtos.traversal import TraversalResult
+from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context, try_faq_fast_path
 from app.modules.rag.agent import run_agent_loop, EMAIL_SYSTEM_PROMPT
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
 from app.modules.email.utils.email_utils import extract_structured_data
@@ -118,88 +126,17 @@ class InquiryService:
                 }
         
         logger.info(f"[Inquiry] Final metadata_filter applied: {metadata_filter}")
-        
-        # 3. RAG Step
+
+        # 3. RAG Step (corpus traversal → FAQ fast-path → agent loop, giống chat)
         rag_query = extracted_question or f"{title}\n{content}"
-        faq_svc = await get_faq_service()
-        
-        # FAQ Pre-check (vectorless — single LLM pass over active FAQ catalog)
-        logger.info(f"[Inquiry] Performing FAQ pre-check...")
-        faq = await faq_svc.find_best_match(rag_query, metadata_filter)
-        
-        if faq:
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Inquiry] FAQ hit: '{faq.question}'")
-            rag_result = {
-                "answer": faq.answer_markdown,
-                "sources": [],
-                "source": "faq"
-            }
-        else:
-            logger.info(f"[Inquiry] FAQ miss. Proceeding to document retrieval...")
-            # Retrieval Step
-            candidate_files = await self._retrieval.retrieve_candidate_files(
-                query=rag_query,
-                metadata_filter=metadata_filter
-            )
-            logger.info(f"[Inquiry] Document retrieval found {len(candidate_files)} candidate files.")
-            
-            if not candidate_files:
-                logger.warning(f"[Inquiry] No candidate files matched the metadata filter and query.")
-                rag_result = {
-                    "answer": "Không tìm thấy tài liệu phù hợp để trả lời email này.", 
-                    "sources": [],
-                    "source": "bypass"
-                }
-            else:
-                # Prepare Context Prompt (Enriched with Metadata)
-                files_info_str = "\n".join([
-                    f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}" 
-                    for c in candidate_files
-                ])
-                
-                # Enrich prompt with metadata context if available
-                context_blocks = []
-                if metadata_filter.get("academic_year"):
-                    ay = metadata_filter["academic_year"]
-                    f_yr = ay.get("from_year") or ay.get("fromYear")
-                    t_yr = ay.get("to_year") or ay.get("toYear")
-                    context_blocks.append(f"Academic Year: {f_yr}-{t_yr}")
-                if metadata_filter.get("enrollment_year"):
-                    ey = metadata_filter["enrollment_year"]
-                    f_yr = ey.get("from_year") or ey.get("fromYear")
-                    t_yr = ey.get("to_year") or ey.get("toYear")
-                    context_blocks.append(f"Enrollment Year: {f_yr}-{t_yr}")
-                
-                context_str = f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""
-
-                prompt_text = (
-                    f"Email Subject: {title}\n"
-                    f"Email Body:\n{content}\n\n"
-                    f"{context_str}"
-                    f"Relevant documents found:\n{files_info_str}\n\n"
-                    f"Please answer the user's specific inquiry based on these documents. Respect the specific rules for the given academic year and cohort if provided."
-                )
-
-                agent_result = await run_agent_loop(
-                    candidate_files=candidate_files,
-                    prompt_contents=prompt_text,
-                    resolve_citations=True,
-                    citation_link_type="original",
-                    system_prompt=EMAIL_SYSTEM_PROMPT
-                )
-
-                rag_result = {
-                    "answer": agent_result["final_answer"] or "Xin lỗi, tôi không thể tìm thấy câu trả lời chính xác.",
-                    "sources": agent_result["sources"],
-                    "source": "llm"
-                }
+        rag_result = await self._run_rag_pipeline(rag_query, title, content, metadata_filter)
 
         processing_time_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[Inquiry] Done in {processing_time_ms / 1000:.2f}s | Source: {rag_result.get('source')} | Answer length: {len(rag_result['answer'])}")
-        
-        # Log async interaction
-        if not faq: # Only log if it wasn't already an FAQ hit to avoid duplicate logs if needed, or always log for analytics
+
+        # Log async interaction (bỏ qua khi trả lời trực tiếp từ FAQ để tránh log trùng)
+        if rag_result.get("source") != "faq":
+            faq_svc = await get_faq_service()
             asyncio.create_task(faq_svc.log_interaction(
                 question=rag_query,
                 answer_markdown=rag_result["answer"],
@@ -224,3 +161,94 @@ class InquiryService:
             "filters": metadata_filter,
             "message_id": message_id
         }
+
+    async def _run_rag_pipeline(
+        self,
+        rag_query: str,
+        title: str,
+        content: str,
+        metadata_filter: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Luồng RAG giống chat: corpus traversal → FAQ fast-path → agent loop.
+        Người gửi email luôn là sinh viên → user_role="student" (tự động ẩn
+        tài liệu/FAQ lecturer_only nhờ pre-filter 3 key).
+        Trả về {"answer", "sources", "source"} với source ∈ {faq, llm, bypass}.
+        """
+        # Stage 2 — corpus traversal (best-effort như chat)
+        traversal_svc = get_corpus_traversal_service()
+        try:
+            result = await traversal_svc.traverse(
+                rag_query,
+                metadata_filter=metadata_filter or None,
+                user_role="student",
+            )
+        except Exception as e:
+            logger.warning(f"[Inquiry] traverse failed (best-effort): {e}")
+            result = TraversalResult()
+
+        candidate_files = await self._retrieval.enrich_corpus_candidates(result.file_candidates)
+        faq_docs = await fetch_supporting_faqs(result.supporting_faqs)
+        logger.info(
+            f"[Inquiry] Retrieval: {len(candidate_files)} files, {len(faq_docs)} supporting FAQs"
+        )
+
+        # Stage 3 — FAQ fast-path
+        faq_answer = await try_faq_fast_path(rag_query, faq_docs)
+        if faq_answer:
+            logger.info("[Inquiry] FAQ fast-path answer")
+            return {"answer": faq_answer, "sources": [], "source": "faq"}
+
+        # Stage 4 — đọc tài liệu qua agent loop
+        if not candidate_files:
+            logger.warning("[Inquiry] No candidate files and no FAQ match.")
+            return {
+                "answer": "Không tìm thấy tài liệu phù hợp để trả lời email này.",
+                "sources": [],
+                "source": "bypass",
+            }
+
+        faq_context = build_faq_context(faq_docs)
+        files_info_str = "\n".join(
+            f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}"
+            for c in candidate_files
+        )
+        context_str = self._build_metadata_context(metadata_filter)
+        prompt_text = (
+            f"Email Subject: {title}\n"
+            f"Email Body:\n{content}\n\n"
+            f"{faq_context}"
+            f"{context_str}"
+            f"Relevant documents found:\n{files_info_str}\n\n"
+            f"Please answer the user's specific inquiry based on these documents. "
+            f"Respect the specific rules for the given academic year and cohort if provided."
+        )
+
+        agent_result = await run_agent_loop(
+            candidate_files=candidate_files,
+            prompt_contents=prompt_text,
+            resolve_citations=True,
+            citation_link_type="original",
+            system_prompt=EMAIL_SYSTEM_PROMPT,
+        )
+        return {
+            "answer": agent_result["final_answer"] or "Xin lỗi, tôi không thể tìm thấy câu trả lời chính xác.",
+            "sources": agent_result["sources"],
+            "source": "llm",
+        }
+
+    @staticmethod
+    def _build_metadata_context(metadata_filter: Dict[str, Any]) -> str:
+        """Khối 'Context Information' (năm học/khóa) để agent tôn trọng ràng buộc năm."""
+        context_blocks = []
+        if metadata_filter.get("academic_year"):
+            ay = metadata_filter["academic_year"]
+            f_yr = ay.get("from_year") or ay.get("fromYear")
+            t_yr = ay.get("to_year") or ay.get("toYear")
+            context_blocks.append(f"Academic Year: {f_yr}-{t_yr}")
+        if metadata_filter.get("enrollment_year"):
+            ey = metadata_filter["enrollment_year"]
+            f_yr = ey.get("from_year") or ey.get("fromYear")
+            t_yr = ey.get("to_year") or ey.get("toYear")
+            context_blocks.append(f"Enrollment Year: {f_yr}-{t_yr}")
+        return f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""

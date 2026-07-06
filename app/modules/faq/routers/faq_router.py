@@ -63,7 +63,8 @@ async def list_faqs(
         metadata_filter=meta,
         search=search,
         page=page,
-        limit=limit
+        limit=limit,
+        exclude_lecturer_only=user.role not in ("admin", "lecture"),
     )
     return FaqListResponse(
         items=[FaqResponse.from_document(item) for item in result.items],
@@ -87,7 +88,8 @@ async def create_faq(
         question=request.question,
         answer_rich_text=request.answer_rich_text,
         metadata_filter=request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {},
-        source="manual"
+        source="manual",
+        lecturer_only=request.lecturer_only,
     )
     return FaqResponse.from_document(result)
 
@@ -226,6 +228,9 @@ async def get_faq(
     faq = await faq_svc.get_faq(faq_id)
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
+    if faq.lecturer_only and user.role not in ("admin", "lecture"):
+        # Student xin FAQ lecturer_only → coi như không tồn tại
+        raise HTTPException(status_code=404, detail="FAQ not found")
     return FaqResponse.from_document(faq)
 
 
@@ -343,6 +348,7 @@ async def import_faqs_from_excel(
                 question=r["question"],
                 answer_rich_text=r["answer_rich_text"],
                 metadata_filter=r["metadata"],
+                lecturer_only=req.lecturer_only,
             )
             for r in parsed["rows"] if r["is_valid"]
         ]

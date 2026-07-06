@@ -68,6 +68,7 @@ class FaqService:
         metadata_filter: Dict[str, Any],
         source: str = "manual",
         candidate_id: Optional[str] = None,
+        lecturer_only: bool = False,
         # question_vector kept as ignored kwarg for caller backward-compat during migration
         question_vector: Optional[List[float]] = None,
     ) -> FaqDocument:
@@ -85,6 +86,7 @@ class FaqService:
             answer_unaccented=remove_accents(answer_markdown),
             answer_markdown=answer_markdown,
             answer_rich_text=answer_rich_text,
+            lecturer_only=lecturer_only,
             metadata_filter=metadata_model,
             source=source,
             candidate_id=candidate_id,
@@ -150,6 +152,7 @@ class FaqService:
                     answer_rich_text=answer_rich_text,
                     metadata_filter=item.metadata_filter.model_dump(by_alias=False),
                     source="bulk_import",
+                    lecturer_only=item.lecturer_only,
                 )
                 created_count += 1
             except ConflictException:
@@ -168,6 +171,9 @@ class FaqService:
 
         if "is_active" in data:
             doc.is_active = data["is_active"]
+
+        if data.get("lecturer_only") is not None:
+            doc.lecturer_only = data["lecturer_only"]
 
         if "question" in data and data["question"] != doc.question:
             doc.question = data["question"]
@@ -232,11 +238,14 @@ class FaqService:
         search: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
+        exclude_lecturer_only: bool = False,
     ) -> PagedResult[FaqDocument]:
         mongo_filter = None
         if metadata_filter:
             builder = get_filter_builder()
             mongo_filter = await builder.build_mongo_filter(metadata_filter, mongo_prefix="metadata_filter")
+        if exclude_lecturer_only:
+            mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
 
         items, total = await self._faq_repo.list_faqs(
             is_active=is_active,
@@ -273,6 +282,8 @@ class FaqService:
             mongo_filter = await builder.build_mongo_filter(
                 metadata_filter, mongo_prefix="metadata_filter"
             )
+        # Đường này phục vụ luồng email (người gửi là sinh viên) → luôn ẩn FAQ lecturer_only
+        mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
 
         faqs, _ = await self._faq_repo.list_faqs(
             is_active=True,

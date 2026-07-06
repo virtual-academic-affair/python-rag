@@ -14,14 +14,18 @@ Hệ thống bảo vệ API bằng JWT Token và phân quyền vai trò (RBAC).
 Việc xác thực được thực hiện thông qua gRPC call tới NestJS Backend.
 
 ROLE LEVELS:
-  - 🔒 admin   : Toàn quyền truy cập, quản lý Metadata và Tệp tin.
-                 Thấy tất cả tệp tin (kể cả lecturerOnly=true).
-  - 🔒 lecture : Tương đương admin về quyền xem tài liệu.
-                 Thấy tất cả tệp tin (kể cả lecturerOnly=true).
+  - 🔒 admin   : Toàn quyền truy cập, quản lý Metadata, Tệp tin và FAQ.
+                 Thấy tất cả tệp tin và FAQ (kể cả lecturerOnly=true).
+  - 🔒 lecture : Tương đương admin về quyền xem tài liệu và FAQ.
+                 Thấy tất cả tệp tin và FAQ (kể cả lecturerOnly=true).
   - 🔒 auth    : Sinh viên đã xác thực (role=student).
-                 Chỉ thấy tệp tin có lecturerOnly=false.
+                 Chỉ thấy tệp tin và FAQ có lecturerOnly=false.
                  Nếu JWT có enrollmentYear: chỉ thấy file không có metadata
                  năm học HOẶC file có enrollment_year_from ≤ year ≤ enrollment_year_to.
+
+GHI CHÚ: `lecturerOnly` là 1 trong 3 key metadata chuẩn áp dụng đồng nhất cho cả
+tệp tin lẫn FAQ (cùng với enrollmentYear, academicYear) — dùng để pre-filter
+tài liệu/FAQ trước khi đưa vào RAG traversal (xem Mục 5).
 
 HEADER BẮT BUỘC:
   Authorization: Bearer <jwt_token>
@@ -677,6 +681,20 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
                         6. FAQ MODULE APIs
 ════════════════════════════════════════════════════════════════════════════════
 
+FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
+  {
+    "faqId": "67...",
+    "question": "Làm thế nào để xét tốt nghiệp?",
+    "answerRichText": "<p>...</p>",
+    "lecturerOnly": false,       ← true: chỉ admin/lecture được thấy (như file)
+    "metadataFilter": { "enrollmentYear": {...}, "academicYear": {...} },
+    "isActive": true,
+    "viewCount": 12,
+    "source": "manual",          ← "manual" | "bulk_import" | "synthesized" | "seed"
+    "createdAt": "ISO Date",
+    "updatedAt": "ISO Date"
+  }
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/faqs                    [🔒 AUTH]                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -689,6 +707,10 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
+│ PHÂN QUYỀN THEO ROLE (tự động — không cần tham số):                          │
+│   - admin / lecture : Thấy toàn bộ FAQ (kể cả lecturerOnly=true).            │
+│   - student         : Tự động ẩn mọi FAQ có lecturerOnly=true.               │
+│                                                                              │
 │ RESPONSE: { "items": [FaqResponse], "total": 10, "page": 1, "limit": 20 }    │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
@@ -697,7 +719,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │      - Tự động chuẩn hóa câu hỏi về dạng không dấu trước khi query.          │
 │      - Sắp xếp kết quả theo độ liên quan (textScore) thay vì thời gian.      │
 │   3. Nếu không có `search`: Truy vấn thông thường, sắp xếp theo LIFO.        │
-│   4. Trả về danh sách FAQ và tổng số lượng.                                  │
+│   4. Nếu role không phải admin/lecture: thêm điều kiện lecturerOnly≠true.    │
+│   5. Trả về danh sách FAQ và tổng số lượng.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -705,9 +728,11 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy chi tiết một câu hỏi FAQ theo ID.                                 │
 │ RESPONSE 200 OK: FaqResponse object.                                         │
+│ RESPONSE 404: FAQ không tồn tại, HOẶC FAQ có lecturerOnly=true và người gọi  │
+│               không phải admin/lecture (coi như không tồn tại).             │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Tìm kiếm FAQ theo ID trong MongoDB.                                     │
-│   2. Tăng bộ đếm `viewCount` thêm 1.                                        │
+│   2. Nếu FAQ.lecturerOnly=true và role=student -> trả 404.                   │
 │   3. Trả về thông tin chi tiết câu hỏi và câu trả lời.                       │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -719,6 +744,7 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   {                                                                          │
 │     "question": "...",                                                       │
 │     "answerRichText": "...",                                                 │
+│     "lecturerOnly": false,   ← optional, mặc định false                    │
 │     "metadataFilter": { "academicYear": {"fromYear": 0, "toYear": 9999}, "enrollmentYear": {"fromYear": 2024} } │
 │   }                                                                          │
 │ RESPONSE: FaqResponse object                                                 │
@@ -730,14 +756,16 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ PATCH /api/faqs/{faq_id}              [🔒 ADMIN]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Cập nhật nội dung câu hỏi, câu trả lời hoặc metadata của FAQ.        │
+│ MÔ TẢ: Cập nhật nội dung câu hỏi, câu trả lời, lecturerOnly hoặc metadata.  │
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "question": "...",                                                       │
 │     "answerRichText": "...",                                                 │
+│     "lecturerOnly": true,                                                    │
 │     "metadataFilter": {...},                                                 │
 │     "isActive": true                                                         │
 │   }                                                                          │
+│ GHI CHÚ: Tất cả các trường đều optional.                                     │
 │ RESPONSE: FaqResponse object đã cập nhật.                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Cập nhật các trường dữ liệu mới vào MongoDB.                            │
@@ -852,6 +880,7 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   - metadataFilterJson: JSON string (VD: {"academicYear": "D", "type": "E"}) │
 │   - sheet_name: string (Tùy chọn, tên sheet cần đọc)                         │
 │   - skip_rows: int (Số dòng bỏ qua ở đầu, mặc định: 1)                       │
+│   - lecturerOnly: bool (mặc định: false) — áp dụng cho TOÀN BỘ batch import  │
 │                                                                              │
 │ LƯU Ý: Hệ thống tự động xử lý số nguyên từ Excel (vd: 2020.0 -> 2020) và      │
 │ bảo toàn Rich Text (In đậm, In nghiêng, Gạch chân, Hyperlinks).              │
@@ -881,6 +910,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │        Hỗ trợ song song embedding và bỏ qua các câu hỏi bị trùng lặp.        │
 │ REQUEST (Multipart): Tương tự endpoint preview.                              │
 │   - skip_duplicates: bool (Mặc định: true)                                   │
+│   - lecturerOnly: bool (Mặc định: false) — áp dụng cho TOÀN BỘ batch import, │
+│     KHÔNG hỗ trợ set riêng từng dòng trong file Excel/CSV.                   │
 │ RESPONSE: { "total": 10, "created": 8, "skipped": 2, "failed": 0, "errors": []}│
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Thực hiện bóc tách dữ liệu tương tự endpoint preview.                   │
@@ -896,7 +927,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "items": [                                                               │
-│       { "question": "...", "answerRichText": "...", "metadataFilter": {...} }│
+│       { "question": "...", "answerRichText": "...", "lecturerOnly": false,   │
+│         "metadataFilter": {...} }                                           │
 │     ],                                                                       │
 │     "skipDuplicates": true                                                   │
 │   }                                                                          │

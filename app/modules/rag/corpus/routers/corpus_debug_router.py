@@ -113,13 +113,28 @@ async def debug_traverse(
     _admin: JWTPayload = Depends(require_admin),
 ):
     """
-    Chạy traversal thật (LLM drill-down cây topic) cho một câu hỏi.
-    Trả về danh sách file/faq ids gộp từ các topic được chọn.
+    Chạy traversal thật (pre-filter 3 key + LLM drill-down cây topic) cho một câu hỏi.
+    Trả về danh sách file/faq ids gộp từ các topic được chọn + trace pre-filter.
     """
+    metadata_filter: dict = {}
+    if body.enrollment_year:
+        metadata_filter["enrollment_year"] = {
+            "from_year": body.enrollment_year, "to_year": body.enrollment_year,
+        }
+    if body.academic_year:
+        metadata_filter["academic_year"] = {
+            "from_year": body.academic_year, "to_year": body.academic_year,
+        }
+
     traversal_svc = get_corpus_traversal_service()
-    result = await traversal_svc.traverse(body.question)
+    result = await traversal_svc.traverse(
+        body.question, metadata_filter=metadata_filter or None, user_role=body.role,
+    )
     return {
         "question": body.question,
+        "role": body.role,
+        "metadata_filter": metadata_filter,
+        "prefilter": result.prefilter,
         "file_candidates": [c.leaf_id for c in result.file_candidates],
         "supporting_faqs": [c.leaf_id for c in result.supporting_faqs],
         "total_files": len(result.file_candidates),

@@ -10,6 +10,11 @@ from app.integrations.llm.gemini import gemini_client
 from app.modules.rag.corpus.dtos.traversal import Candidate, TraversalResult
 from app.modules.rag.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 from app.modules.rag.corpus.models.corpus_node import CorpusNodeDocument
+from app.modules.rag.corpus.utils.prefilter import (
+    build_faq_prefilter_query,
+    build_file_prefilter_query,
+    has_year_filter,
+)
 from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
@@ -103,6 +108,25 @@ class CorpusTraversalService:
             logger.warning(f"[Corpus] _decide_topics parse error: {raw[:200]}")
             return []
 
+    async def _fetch_allowed_ids(
+        self,
+        metadata_filter: Optional[dict],
+        user_role: Optional[str],
+        relax_years: bool = False,
+    ) -> tuple[set[str], set[str]]:
+        """2 Mongo query nhẹ (projection _id) lấy tập lá được phép theo 3 key."""
+        from app.modules.files.models.file import FileDocument
+        from app.modules.faq.models.faq import FaqDocument
+
+        file_q = build_file_prefilter_query(metadata_filter, user_role, relax_years)
+        faq_q = build_faq_prefilter_query(metadata_filter, user_role, relax_years)
+        file_rows = await FileDocument.get_motor_collection().find(file_q, {"_id": 1}).to_list(None)
+        faq_rows = await FaqDocument.get_motor_collection().find(faq_q, {"_id": 1}).to_list(None)
+        return (
+            {str(r["_id"]) for r in file_rows},
+            {str(r["_id"]) for r in faq_rows},
+        )
+
     async def expand_nodes(self, node_keys: list[str]) -> dict[str, list[CorpusNodeDocument]]:
         """Expand each node_key to its direct children."""
         result = {}
@@ -111,9 +135,18 @@ class CorpusTraversalService:
             result[key] = children
         return result
 
-    async def _traverse_topics(self, question: str) -> list[str]:
+    async def _traverse_topics(
+        self,
+        question: str,
+        all_nodes: list[CorpusNodeDocument],
+        node_allowed: dict[str, tuple[list[str], list[str]]],
+    ) -> list[str]:
         """
         Corpus Traversal: duyệt lặp cây topic từ các topic gốc, sâu theo cây thực tế.
+
+        node_allowed: payload đã qua pre-filter 3 key của từng node
+        ({node_key: (file_ids_ok, faq_ids_ok)}) — folder mà cả subtree không còn
+        lá hợp lệ bị ẩn khỏi catalog LLM.
 
         Mỗi vòng LLM quyết định cho từng folder ở tầng hiện tại:
           - "take": lấy toàn bộ candidates của folder + cả subtree, không mở tiếp
@@ -123,16 +156,16 @@ class CorpusTraversalService:
         Không có trần độ sâu cứng — tập `offered` đảm bảo mỗi node chỉ được đưa
         cho LLM đúng 1 lần, nên vòng lặp luôn kết thúc (kể cả khi data có vòng cha-con lỗi).
         """
-        all_nodes = await self.repo.get_all()
         node_map = {n.node_key: n for n in all_nodes}
 
-        # Filter trước khi travel: loại node mà cả subtree không chứa file/FAQ nào —
-        # nhánh rỗng không đưa cho LLM chọn (đỡ nhiễu + đỡ token).
+        # Filter trước khi travel: loại node mà cả subtree không chứa lá hợp lệ nào —
+        # nhánh rỗng (sau pre-filter) không đưa cho LLM chọn (đỡ nhiễu + đỡ token).
         def _subtree_has_content(key: str, seen: set[str]) -> bool:
             node = node_map.get(key)
             if not node:
                 return False
-            if node.file_ids or node.faq_ids:
+            files_ok, faqs_ok = node_allowed.get(key, ([], []))
+            if files_ok or faqs_ok:
                 return True
             for ck in node.child_keys:
                 if ck in seen:
@@ -223,8 +256,15 @@ class CorpusTraversalService:
 
         return list(dict.fromkeys(collected))
 
-    async def resolve_candidates(self, selected_keys: list[str]) -> TraversalResult:
-        """Gộp file_ids/faq_ids từ các topic được chọn (dedupe, giữ thứ tự chọn)."""
+    async def resolve_candidates(
+        self,
+        selected_keys: list[str],
+        allowed_files: Optional[set[str]] = None,
+        allowed_faqs: Optional[set[str]] = None,
+    ) -> TraversalResult:
+        """Gộp file_ids/faq_ids từ các topic được chọn (giao allowed, dedupe, giữ thứ tự chọn).
+
+        allowed_files/allowed_faqs = None → không giới hạn (tương thích caller cũ)."""
         nodes = await self.repo.get_by_keys(selected_keys)
         # Giữ thứ tự theo selected_keys để kết quả ổn định giữa các lần gọi
         node_map = {n.node_key: n for n in nodes}
@@ -239,10 +279,14 @@ class CorpusTraversalService:
             if not node:
                 continue
             for file_id in node.file_ids:
+                if allowed_files is not None and file_id not in allowed_files:
+                    continue
                 if file_id not in seen_files:
                     seen_files.add(file_id)
                     file_candidates.append(Candidate("file", file_id))
             for faq_id in node.faq_ids:
+                if allowed_faqs is not None and faq_id not in allowed_faqs:
+                    continue
                 if faq_id not in seen_faqs:
                     seen_faqs.add(faq_id)
                     supporting_faqs.append(Candidate("faq", faq_id))
@@ -253,21 +297,71 @@ class CorpusTraversalService:
         )
         return TraversalResult(file_candidates=file_candidates, supporting_faqs=supporting_faqs)
 
-    async def traverse(self, question: str) -> TraversalResult:
+    async def traverse(
+        self,
+        question: str,
+        metadata_filter: Optional[dict] = None,
+        user_role: Optional[str] = None,
+    ) -> TraversalResult:
         """
-        Corpus Traversal: duyệt cây topic bằng LLM (drill-down từ topic gốc),
-        gộp toàn bộ file/faq thuộc các topic được chọn.
-        Lọc metadata (khóa/năm học/quyền) thực hiện ở bước enrich phía sau.
+        Corpus Traversal với pre-filter 3 key (BƯỚC 1 flow.md):
+        1. Lọc tất định lá theo enrollment/academic year (mềm) + lecturer_only (cứng).
+        2. Folder mà cả subtree không còn lá hợp lệ → ẩn khỏi catalog LLM.
+        3. LLM duyệt cây topic (take/open), gộp lá thuộc topic được chọn ∩ allowed.
+        0 lá sau lọc năm → nới năm chạy lại (metadata là ràng buộc mềm);
+        lecturer_only là quyền — không bao giờ nới.
         """
-        logger.info(f"[Corpus] traverse start: '{question[:80]}'")
+        logger.info(f"[Corpus] traverse start: '{question[:80]}' (role={user_role})")
 
-        selected_topic_keys = await self._traverse_topics(question)
+        allowed_files, allowed_faqs = await self._fetch_allowed_ids(metadata_filter, user_role)
+        all_nodes = await self.repo.get_all()
+
+        def _node_allowed():
+            return {
+                n.node_key: (
+                    [fid for fid in n.file_ids if fid in allowed_files],
+                    [qid for qid in n.faq_ids if qid in allowed_faqs],
+                )
+                for n in all_nodes
+            }
+
+        def _graph_leaf_counts(na):
+            files = {fid for f, _ in na.values() for fid in f}
+            faqs = {qid for _, q in na.values() for qid in q}
+            return len(files), len(faqs)
+
+        node_allowed = _node_allowed()
+        n_files, n_faqs = _graph_leaf_counts(node_allowed)
+        relaxed = False
+        if n_files + n_faqs == 0 and has_year_filter(metadata_filter):
+            # Ràng buộc mềm: lọc năm hết sạch → nới năm, giữ nguyên lọc quyền
+            logger.info("[Corpus] prefilter: 0 lá sau lọc năm → nới lọc năm (giữ lecturer_only)")
+            allowed_files, allowed_faqs = await self._fetch_allowed_ids(
+                metadata_filter, user_role, relax_years=True
+            )
+            node_allowed = _node_allowed()
+            n_files, n_faqs = _graph_leaf_counts(node_allowed)
+            relaxed = True
+
+        prefilter_trace = {
+            "allowed_files": n_files,
+            "allowed_faqs": n_faqs,
+            "relaxed_years": relaxed,
+        }
+        logger.info(f"[Corpus] prefilter: {prefilter_trace}")
+
+        if n_files + n_faqs == 0:
+            return TraversalResult(prefilter=prefilter_trace)
+
+        selected_topic_keys = await self._traverse_topics(question, all_nodes, node_allowed)
         logger.info(f"[Corpus] topic selection: {selected_topic_keys}")
 
         if not selected_topic_keys:
-            return TraversalResult()
+            return TraversalResult(prefilter=prefilter_trace)
 
-        return await self.resolve_candidates(selected_topic_keys)
+        result = await self.resolve_candidates(selected_topic_keys, allowed_files, allowed_faqs)
+        result.prefilter = prefilter_trace
+        return result
 
 
 _instance: Optional[CorpusTraversalService] = None

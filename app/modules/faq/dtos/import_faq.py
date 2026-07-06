@@ -25,3 +25,4 @@ class FaqImportExcelRequest(BaseSchema):
     sheet_name: Optional[str] = None
     skip_rows: int = 1
     skip_duplicates: bool = True
+    lecturer_only: bool = False  # áp cho toàn bộ batch import

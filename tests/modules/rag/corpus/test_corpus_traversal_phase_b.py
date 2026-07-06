@@ -18,7 +18,8 @@ def _make_node(node_key, file_ids=None, faq_ids=None, title="", summary="",
 
 
 def _wire(svc, nodes):
-    """Gắn repo mock: get_all trả toàn bộ nodes, get_by_keys lọc theo key."""
+    """Gắn repo mock: get_all trả toàn bộ nodes, get_by_keys lọc theo key.
+    Pre-filter stub cho phép mọi lá (hành vi như trước khi có pre-filter)."""
     async def mock_get_all():
         return nodes
 
@@ -28,6 +29,20 @@ def _wire(svc, nodes):
     svc._repo = MagicMock()
     svc._repo.get_all = mock_get_all
     svc._repo.get_by_keys = mock_get_by_keys
+
+    async def mock_fetch_allowed(metadata_filter, user_role, relax_years=False):
+        return (
+            {fid for n in nodes for fid in n.file_ids},
+            {qid for n in nodes for qid in n.faq_ids},
+        )
+
+    svc._fetch_allowed_ids = mock_fetch_allowed
+
+
+async def _run_traverse_topics(svc, nodes, question):
+    """Gọi _traverse_topics với chữ ký mới (nodes + payload không lọc)."""
+    node_allowed = {n.node_key: (list(n.file_ids), list(n.faq_ids)) for n in nodes}
+    return await svc._traverse_topics(question, nodes, node_allowed)
 
 
 async def test_traverse_take_collects_files_and_faqs():
@@ -112,7 +127,7 @@ async def test_traverse_open_on_leaf_folder_treated_as_take():
 
     svc._decide_topics = mock_decide
 
-    collected = await svc._traverse_topics("Học phí?")
+    collected = await _run_traverse_topics(svc, [leaf], "Học phí?")
     assert collected == ["hoc-phi"]
 
 
@@ -182,7 +197,7 @@ async def test_traverse_skips_empty_subtrees():
 
     svc._decide_topics = mock_decide
 
-    await svc._traverse_topics("Câu hỏi")
+    await _run_traverse_topics(svc, [full, empty, empty_child], "Câu hỏi")
     assert offered_keys == ["co-noi-dung"]  # nhánh rỗng bị loại trước khi LLM nhìn thấy
 
 
@@ -205,7 +220,7 @@ async def test_traverse_topics_no_depth_cap_reaches_level_four():
 
     svc._decide_topics = mock_decide
 
-    collected = await svc._traverse_topics("Câu hỏi")
+    collected = await _run_traverse_topics(svc, [l1, l2, l3, l4], "Câu hỏi")
     assert collected == ["l4"]  # chuỗi open l1→l2→l3, take l4
 
 
@@ -222,7 +237,7 @@ async def test_traverse_topics_terminates_on_cyclic_data():
 
     svc._decide_topics = mock_decide
 
-    collected = await svc._traverse_topics("Câu hỏi")
+    collected = await _run_traverse_topics(svc, [a, b], "Câu hỏi")
     # a mở → b; b mở → a đã offered → dừng. Không node nào được take → rỗng, nhưng kết thúc.
     assert collected == []
 
@@ -240,7 +255,7 @@ async def test_traverse_topics_stops_when_llm_skips_everything():
 
     svc._decide_topics = mock_decide
 
-    collected = await svc._traverse_topics("Thời tiết hôm nay?")
+    collected = await _run_traverse_topics(svc, [topic_node, child], "Thời tiết hôm nay?")
     assert collected == []
 
 
@@ -287,7 +302,7 @@ async def test_catalog_advertises_deep_descendants():
 
     svc._call_llm = mock_call_llm
 
-    await svc._traverse_topics("Ra trường làm nghề gì?")
+    await _run_traverse_topics(svc, [root, child, grandchild], "Ra trường làm nghề gì?")
 
     # Catalog tầng gốc phải "quảng bá" cả con (Mục tiêu đào tạo) lẫn cháu (Cơ hội nghề nghiệp)
     assert len(prompts) == 1

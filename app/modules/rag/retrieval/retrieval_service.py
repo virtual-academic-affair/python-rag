@@ -84,6 +84,8 @@ class RetrievalService:
             skip_validation=True,
         )
         mongo_filter["status"] = FileStatus.READY.value
+        # Đường này chỉ còn luồng email (người gửi là sinh viên) → ẩn file lecturer_only
+        mongo_filter["lecturer_only"] = {"$ne": True}
 
         files, _ = await self._file_repo.list_files(
             mongo_filter, skip=0, limit=settings.RETRIEVAL_NAVIGATOR_MAX_CATALOG
@@ -140,43 +142,17 @@ class RetrievalService:
 
         return build_candidate_files(nav_results, doc_data_by_id)
 
-    @staticmethod
-    def _metadata_conditions(metadata_filter: Optional[dict]) -> list[dict]:
-        """
-        Điều kiện Mongo cho lọc metadata (Stage 1 pruning, áp ở mức file).
-        File KHÔNG có metadata năm vẫn được giữ (áp dụng chung mọi khóa);
-        file có năm nhưng không giao với filter thì bị loại.
-        """
-        conds: list[dict] = []
-        for dim in ("enrollment_year", "academic_year"):
-            yr = (metadata_filter or {}).get(dim)
-            if not yr:
-                continue
-            lo = yr.get("from_year") or 0
-            hi = yr.get("to_year") or 9999
-            conds.append({"$or": [
-                {f"custom_metadata.{dim}": None},
-                {
-                    f"custom_metadata.{dim}.from_year": {"$lte": hi},
-                    f"custom_metadata.{dim}.to_year": {"$gte": lo},
-                },
-            ]})
-        return conds
-
     async def enrich_corpus_candidates(
         self,
         candidates: list,  # list of Candidate dataclass instances from corpus.dtos.traversal
-        metadata_filter: Optional[dict] = None,
         max_files: int = 5,
-        user_role: Optional[str] = None,
     ) -> list[dict]:
         """
         Convert corpus TraversalResult.file_candidates to candidate_files format
         expected by run_agent_loop.
-        Looks up FileDocument (status=ready) and FileTocTree for each candidate.
-        Áp metadata_filter (khóa/năm học) trực tiếp bằng Mongo query.
-        Student role không thấy file lecturer_only (đồng bộ với file_router).
-        Drops candidates where storage paths are missing.
+        Metadata (khóa/năm học) + quyền (lecturer_only) đã lọc ở pre-filter trước
+        traversal — ở đây chỉ hydrate FileDocument (status=ready) + FileTocTree,
+        drop file thiếu storage path.
         Giữ thứ tự candidates từ traversal, cắt tại max_files sau khi lọc.
         """
         from bson import ObjectId
@@ -196,11 +172,6 @@ class RetrievalService:
             return []
 
         query: dict = {"_id": {"$in": valid_ids}, "status": FileStatus.READY.value}
-        if user_role == "student":
-            query["lecturer_only"] = {"$ne": True}
-        meta_conds = self._metadata_conditions(metadata_filter)
-        if meta_conds:
-            query["$and"] = meta_conds
 
         files, _ = await self._file_repo.list_files(
             query,

@@ -13,6 +13,9 @@ class TopicCreateRequest(BaseModel):
 
 class TraverseRequest(BaseModel):
     question: str
+    role: str = "student"  # student | lecture | admin — test lecturer_only filtering
+    enrollment_year: Optional[int] = None   # ví dụ 2022 (K22)
+    academic_year: Optional[int] = None     # ví dụ 2024 (NH 2024-2025 truyền 2024)
 
 
 class ChatPreviewRequest(BaseModel):

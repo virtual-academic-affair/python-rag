@@ -11,6 +11,7 @@ class FaqDocument(BaseDocument):
     answer_unaccented: str = Field(..., description="Unaccented answer for search")
     answer_markdown: str = Field(..., description="Answer in Markdown format (internal, for AI)")
     answer_rich_text: Optional[str] = Field(None, description="Answer in HTML Rich Text (for display)")
+    lecturer_only: bool = Field(default=False, description="Nếu True, chỉ admin/lecture mới xem được")
     metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Fixed schema metadata filter")
     is_active: bool = Field(True, description="Whether this FAQ is active and searchable")
     view_count: int = Field(0, description="Number of times this FAQ was matched")

@@ -10,6 +10,7 @@ class FaqResponse(BaseSchema):
     id: str = Field(..., alias="faqId")
     question: str
     answer_rich_text: str
+    lecturer_only: bool = False
     metadata_filter: FaqMetadataResponse
     is_active: bool
     view_count: int
@@ -35,6 +36,7 @@ class FaqResponse(BaseSchema):
             id=str(doc.id),
             question=doc.question,
             answer_rich_text=doc.answer_rich_text or "",
+            lecturer_only=bool(getattr(doc, "lecturer_only", False)),
             metadata_filter=FaqMetadataResponse.from_model(meta_model),
             is_active=doc.is_active,
             view_count=doc.view_count,
