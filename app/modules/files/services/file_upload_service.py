@@ -1,4 +1,3 @@
-import io
 import os
 import logging
 import time
@@ -16,8 +15,7 @@ from app.modules.files.utils.file_helpers import (
     cleanup_temp_file,
 )
 from app.modules.files.utils.upload_state import UploadStep, UploadState
-from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
-from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
+from app.modules.rag.ingestion.ingestion_service import get_ingestion_service
 from app.utils.text_utils import remove_accents
 from app.modules.metadata.services.metadata_service import get_metadata_service
 
@@ -107,128 +105,48 @@ class FileUploadMixin:
             if progress_callback:
                 await progress_callback({"step": step, "message": message, "file_id": file_id})
 
+        ingestion_service = None
+        markdown_storage_path = None
         try:
+            ingestion_service = get_ingestion_service()
             file_doc = await self.file_repo.find_by_id(file_id)
             if not file_doc:
                 raise NotFoundException("File", file_id)
 
             storage_path = file_doc.storage_path
+            markdown_storage_path = storage_path.rsplit(".", 1)[0] + ".md"
 
             await self.file_repo.mark_processing(file_id)
 
-            await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Vector DB")
-            ingest_result = await self._ingest_to_vector_db(
+            await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Corpus Tree")
+            ingest_result = await ingestion_service.ingest_file(
                 file_id=file_id,
                 display_name=display_name,
                 file_path=file_path,
-                custom_metadata=custom_metadata,
+                original_storage_path=storage_path,
             )
-            
-            markdown_content = ingest_result["markdown_content"]
-            markdown_bytes = markdown_content.encode("utf-8")
-            md_storage_path = storage_path.rsplit(".", 1)[0] + ".md"
-            
-            await r2_storage.upload_file(
-                file=io.BytesIO(markdown_bytes),
-                object_name=md_storage_path,
-                content_type="text/markdown; charset=utf-8",
-            )
-
-            # Update TOC Tree with markdown storage path
-            toc_repo = FileTocTreeRepository()
-            await toc_repo.upsert_by_file_id(
-                file_id,
-                TocTreeUpsertData(
-                    doc_name=display_name,
-                    doc_description=ingest_result.get("summary", ""),
-                    line_count=ingest_result.get("line_count", 0),
-                    structure=ingest_result.get("toc_structure", []),
-                    markdown_storage_path=md_storage_path,
-                ),
-            )
+            markdown_storage_path = ingest_result.markdown_storage_path
 
             ready_doc = await self.file_repo.mark_ready(
                 file_id=file_id,
-                markdown_storage_path=md_storage_path,
-                markdown_file_size=len(markdown_bytes),
-                table_of_contents=ingest_result.get("table_of_contents", []),
+                markdown_storage_path=ingest_result.markdown_storage_path,
+                markdown_file_size=ingest_result.markdown_file_size,
+                table_of_contents=ingest_result.table_of_contents,
             )
             if not ready_doc:
-                await self._cleanup_background_artifacts(file_id, md_storage_path, toc_repo)
                 raise NotFoundException("File", file_id)
-
-            # Corpus graph index — best-effort; does not affect upload outcome
-            start_corpus = time.perf_counter()
-            logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{ready_doc.display_name}') vào corpus graph")
-            try:
-                from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-                topic_keys = await get_corpus_index_service().index_file(
-                    file_id,
-                    display_name=ready_doc.display_name or "",
-                    toc_headings=ready_doc.table_of_contents or [],
-                )
-                corpus_dur = time.perf_counter() - start_corpus
-                logger.info(
-                    f"[Corpus] Index file {file_id} xong trong {corpus_dur:.2f}s — gán vào {len(topic_keys)} topic: {topic_keys}"
-                )
-            except Exception as _corpus_err:
-                logger.warning(f"[Corpus] index_file skipped for {file_id}: {_corpus_err}", exc_info=True)
 
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")
             await _notify("completed", "Upload hoàn tất")
         except Exception as e:
             logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
-            md_path = md_storage_path if 'md_storage_path' in locals() else None
-            t_repo = toc_repo if 'toc_repo' in locals() else FileTocTreeRepository()
-            await self._cleanup_background_artifacts(file_id, md_path, t_repo)
+            if ingestion_service:
+                await ingestion_service.cleanup_file_artifacts(file_id, markdown_storage_path)
             await self.file_repo.mark_failed(file_id)
             await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
         finally:
             cleanup_temp_file(file_path)
-            try:
-                from app.modules.rag.ingestion.ingestion_service import get_ingestion_service
-                ingest_svc = get_ingestion_service()
-                await ingest_svc.cleanup_local_artifacts(file_id)
-            except Exception as e:
-                logger.warning(f"Failed to cleanup markdown artifacts for {file_id}: {e}")
-
-    async def _cleanup_background_artifacts(
-        self,
-        file_id: str,
-        markdown_storage_path: Optional[str],
-        toc_repo: FileTocTreeRepository,
-    ) -> None:
-        """Best-effort cleanup for artifacts created before a background failure."""
-        if markdown_storage_path:
-            try:
-                await r2_storage.delete_file(markdown_storage_path)
-            except Exception as e:
-                logger.warning(f"Failed to cleanup markdown artifact for failed file {file_id}: {e}")
-
-        try:
-            await toc_repo.delete_by_file_id(file_id)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup TOC for failed file {file_id}: {e}")
-
-
-    async def _ingest_to_vector_db(
-        self,
-        file_id: str,
-        display_name: str,
-        file_path: str,
-        custom_metadata: Optional[dict] = None,
-    ) -> Dict[str, Any]:
-        """Helper to trigger the ingestion service for RAG."""
-        from app.modules.rag.ingestion.ingestion_service import get_ingestion_service
-        ingest_svc = get_ingestion_service()
-        result = await ingest_svc.ingest_file(
-            file_id=file_id,
-            file_name=display_name,
-            file_path=file_path,
-            metadata=custom_metadata,
-        )
-        return result
 
     async def _prepare_upload_state(
         self,

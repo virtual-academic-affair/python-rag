@@ -1,7 +1,7 @@
 from typing import List, Optional, Literal
 from pydantic import Field
 from app.core.base_schema import BaseSchema
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
@@ -29,7 +29,7 @@ class TokenUsage(BaseSchema):
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")
     session_id: str = Field(..., description="Chat session ID")
-    source: str = Field(default="llm", description="Source of the answer: 'llm' | 'faq'")
+    source: str = Field(default="llm", description="Source of the answer: 'llm' | 'faq' | 'bypass'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
     steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
     token_usage: Optional[TokenUsage] = Field(default=None, description="Token consumption statistics")

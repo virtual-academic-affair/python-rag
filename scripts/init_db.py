@@ -41,6 +41,10 @@ from pymongo import ASCENDING, DESCENDING, TEXT
 
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
+from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from scripts.seed_corpus import seed_corpus
+from beanie import init_beanie
 
 # ====================================
 # Configuration
@@ -140,7 +144,21 @@ async def clear_pageindex_workspace():
 # Phase 2: Initialize
 # ====================================
 
-async def create_database_indexes():
+async def _seed_corpus_nodes():
+    """Seed the corpus topic tree into MongoDB (idempotent, does not overwrite custom links)."""
+    logger.info("Seeding corpus nodes...")
+
+    await init_beanie(
+        database=Database.get_db(),
+        document_models=[CorpusNodeDocument]
+    )
+
+    repo = CorpusNodeRepository()
+    created = await seed_corpus(repo)
+    logger.info(f"✓ Seeded corpus: {created} new topic nodes created")
+
+
+async def create_database_indexes(skip_seeding: bool = False):
     """Create MongoDB indexes."""
     logger.info("Creating database indexes...")
 
@@ -176,6 +194,21 @@ async def create_database_indexes():
     )
     await db[Database.FAQ_CANDIDATES].create_index([("status", ASCENDING)], name="status_1")
     await db[Database.FAQ_CANDIDATES].create_index([("synthesis_batch_id", ASCENDING)], name="synthesis_batch_id_1")
+
+    # Corpus Nodes collection indexes
+    await db["corpus_nodes"].create_index(
+        [("node_key", ASCENDING)],
+        unique=True,
+        name="idx_corpus_node_key"
+    )
+    await db["corpus_nodes"].create_index([("parent_key", ASCENDING)], name="parent_key_1")
+    await db["corpus_nodes"].create_index([("direct_file_ids", ASCENDING)], name="direct_file_ids_1")
+    await db["corpus_nodes"].create_index([("direct_faq_ids", ASCENDING)], name="direct_faq_ids_1")
+    await db["corpus_nodes"].create_index([("subtree_file_ids", ASCENDING)], name="subtree_file_ids_1")
+    await db["corpus_nodes"].create_index([("subtree_faq_ids", ASCENDING)], name="subtree_faq_ids_1")
+
+    if not skip_seeding:
+        await _seed_corpus_nodes()
 
     await Database.disconnect()
 
@@ -328,7 +361,6 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         print("\n⚠️  WARNING: This will DELETE all existing data!")
         print("   - MongoDB database will be dropped")
         print("   - R2 files will be deleted")
-        print("   - Qdrant collections will be recreated")
         print()
         confirm = input("Continue? (yes/no): ").strip().lower()
         if confirm != "yes":
@@ -360,7 +392,7 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
         print("PHASE 2: INITIALIZING")
         print("-" * 50)
 
-        await create_database_indexes()
+        await create_database_indexes(skip_seeding=bool(restore_path))
         
         if restore_path:
             print("Restoration mode: Skipped DB initialization (will be loaded from snapshot)")
@@ -377,6 +409,10 @@ async def main(skip_confirm: bool = False, restore_path: str = None):
             print("-" * 50)
             snapshot_mgr = SnapshotManager()
             await snapshot_mgr.import_data(restore_path)
+            # Idempotently seed any missing seed corpus nodes after importing
+            await Database.connect()
+            await _seed_corpus_nodes()
+            await Database.disconnect()
         else:
             if "files" in init_data:
                 uploaded_ids = await upload_files(init_data["files"])

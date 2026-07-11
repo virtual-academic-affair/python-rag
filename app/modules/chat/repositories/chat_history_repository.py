@@ -8,10 +8,10 @@ from app.core.exceptions import NotFoundException
 from app.modules.chat.dtos.send_message import TokenUsage
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 # Single source of truth for which pipeline step types are persisted to MongoDB.
-PERSISTED_STEP_TYPES = frozenset({"query_analysis", "retrieval", "call"})
+PERSISTED_STEP_TYPES = frozenset({"query_analysis", "retrieval", "faq_match", "call"})
 
 
 class ChatHistoryRepository:

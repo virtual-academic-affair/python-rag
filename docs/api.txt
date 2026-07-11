@@ -43,15 +43,15 @@ MỤC LỤC
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
- 4. File Management APIs       (7 endpoints) [🔒 admin / 🔒 auth]
- 5. Chat & RAG Tooling         (9 endpoints) [🔒 auth]
- 6. FAQ MODULE APIs            (12 endpoints) [🔒 admin / 🔒 auth]
- 7. FORMS MODULE APIs          (8 endpoints)  [🔒 admin / 🔒 auth]
- 8. Debug & Preview APIs       (1 endpoint)  [🔒 admin]
+ 4. File Management APIs       (8 endpoints) [🔒 admin / 🔒 auth]
+ 5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
+ 6. FAQ MODULE APIs            (13 endpoints) [🔒 admin / 🔒 auth]
+ 7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
+ 8. Debug & Preview APIs       (12 endpoints)  [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 43 ENDPOINTS
+ TỔNG: 53 REST ENDPOINTS + 1 WEBSOCKET
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -125,12 +125,11 @@ MỤC LỤC
 │   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
 │   2. Unified Extraction: 1 lần gọi LLM trích câu hỏi, loại thắc mắc và       │
 │      metadata_filter (khóa/năm học), có regex + cohort fallback.            │
-│   3. Corpus Traversal: giống chat — pre-filter 3 key (enrollmentYear,       │
-│      academicYear, lecturerOnly; role=student cố định vì người gửi luôn là  │
-│      sinh viên) rồi LLM chọn chủ đề, gộp file + FAQ liên quan.               │
-│   4. LLM Synthesis: Agent đọc tài liệu (PageIndex) và soạn thảo email phản  │
-│      hồi. FAQ liên quan chỉ đưa vào làm NGỮ CẢNH bổ trợ cho agent — không   │
-│      có bước trả lời thẳng từ FAQ. Không có tài liệu nào -> bypass.         │
+│   3. Shared RagQueryPipeline: pre-filter metadata/role, duyệt Corpus Tree,  │
+│      rerank file và FAQ riêng bằng Cohere.                                   │
+│   4. FAQ Answering: LLM đọc FAQ liên quan. Nếu FAQ đủ bao phủ toàn bộ câu   │
+│      hỏi, trả source=faq. Nếu chưa đủ, PageIndex agent đọc tài liệu. Không  │
+│      có tài liệu phù hợp -> source=bypass.                                   │
 │   5. gRPC Call: Lưu thắc mắc và bản thảo email vào NestJS qua gRPC.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -370,7 +369,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   2. Tự động load lịch sử trò chuyện (6 tin nhắn gần nhất) từ MongoDB.       │
 │   3. QueryAnalyzer phân tích câu hỏi + history để tạo câu hỏi tối ưu         │
 │      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
-│   4. Chạy luồng RAG đồng bộ (kiểm tra FAQ trước, sau đó retrieve văn bản).   │
+│   4. Chạy shared RagQueryPipeline: retrieval Corpus Tree, Cohere rerank,     │
+│      FAQ answering bằng LLM, rồi PageIndex nếu FAQ chưa đủ.                  │
 │   5. Trả response chứa `sessionId` và danh sách steps xử lý chi tiết.         │
 │      Steps được lưu vào MongoDB và có thể truy xuất qua GET messages API.    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -393,12 +393,14 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │      }                                                                       │
 │    }                                                                         │
 │                                                                              │
-│ 2. FAQ_CHECK — Kiểm tra câu hỏi có khớp FAQ đã có sẵn không                 │
+│ 2. FAQ_MATCH — LLM đọc FAQ liên quan và đủ trả lời câu hỏi                  │
 │    {                                                                         │
-│      "type": "faq_check",                                                    │
-│      "hit": true,                ← true: trả lời từ FAQ, false: tiếp tục RAG │
-│      "faq_question": "Học phí CLC?"  ← chỉ có khi hit=true                 │
+│      "type": "faq_match",                                                    │
+│      "faq_ids": ["..."],                                                     │
+│      "questions": ["Học phí CLC?"]                                           │
 │    }                                                                         │
+│    Lưu ý: Nếu FAQ không đủ bao phủ toàn bộ câu hỏi, step này không xuất hiện │
+│    và pipeline tiếp tục đọc tài liệu bằng PageIndex.                         │
 │                                                                              │
 │ 3. RETRIEVAL — Kết quả tra cứu tài liệu qua Navigator                       │
 │    {                                                                         │
@@ -430,12 +432,13 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │    {"type": "text", "content": "Học phí CLC năm 2025 là...", "done": false} │
 │                                                                              │
 │ THỨ TỰ ĐIỂN HÌNH CỦA CÁC EVENT TRONG MỘT /stream REQUEST:                  │
-│   query_analysis → faq_check → retrieval                                     │
+│   query_analysis → retrieval                                                 │
+│   → faq_match nếu FAQ đủ, hoặc                                               │
 │   → reasoning(status) + call (lặp lại cho mỗi tool)                         │
 │   → reasoning(kết luận) → text(s) → done                                    │
 │                                                                              │
 │ LƯU VÀO MONGODB:                                                             │
-│   Chỉ các bước pipeline cấp cao được lưu: query_analysis, faq_check,        │
+│   Chỉ các bước pipeline cấp cao được lưu: query_analysis, faq_match,        │
 │   retrieval, call. Không lưu tool_output, reasoning, text.                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -469,36 +472,33 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │              "content":"Phân tích câu hỏi: ... (Bộ lọc: Khóa 2022)","done":false}│
 │        ← Completed status của Query Analysis                                 │
 │                                                                              │
-│   [3] data: {"type":"faq_check","content":"Tìm kiếm FAQ...","done":false}  │
-│        ← Pending status của FAQ check (phát ra trước khi embed để tối ưu UX) │
-│   [4] data: {"type":"faq_check",                                             │
-│              "content":"Không tìm thấy câu hỏi tương tự trong FAQ","done":false}│
-│        ← Completed status của FAQ check                                      │
-│                                                                              │
-│   [5] data: {"type":"retrieval","content":"Tìm kiếm...","done":false}      │
+│   [3] data: {"type":"retrieval","content":"Tìm kiếm tài liệu và câu hỏi liên quan...","done":false}│
 │        ← Pending status của Retrieval                                        │
-│   [6] data: {"type":"retrieval",                                             │
+│   [4] data: {"type":"retrieval",                                             │
 │              "content":"Tìm thấy 1 tài liệu: Quy chế đào tạo...","done":false} │
 │        ← Completed status của Retrieval                                      │
 │                                                                              │
-│   [7] data: {"type":"reasoning",                                             │
+│   [5A] data: {"type":"text","content":"...","done":false}                   │
+│        ← Nếu FAQ đủ trả lời, pipeline stream answer FAQ rồi DONE source=faq  │
+│                                                                              │
+│   [5B] data: {"type":"reasoning",                                            │
 │              "content":"Tôi sẽ dùng get_document_structure để xem mục lục Quy chế",│
 │              "done":false}                                                   │
 │        ← Lập luận tiếng Việt của Agent (bao gồm cả model thought nội bộ)      │
 │                                                                              │
-│   [8] data: {"type":"call",                                                  │
+│   [6] data: {"type":"call",                                                  │
 │              "content":"Đang tra cứu cấu trúc mục lục của 'Quy chế...'",     │
 │              "done":false}                                                   │
 │        ← Đang gọi tool (đã map sang tên hiển thị thân thiện trên UI)         │
 │                                                                              │
-│   [9] data: {"type":"text","content":"Phòng Giáo vụ xin thông báo...",      │
+│   [7] data: {"type":"text","content":"Phòng Giáo vụ xin thông báo...",      │
 │              "done":false}                                                   │
 │        ← Nội dung câu trả lời tư vấn cuối cùng, stream theo từng chunk       │
 │                                                                              │
 │   [DONE] data: {"done":true, "source":"llm",                                 │
 │                 "sources":[{"citationId":1,"fileName":"...","title":"..."}], │
 │                 "steps":[{"type":"query_analysis","content":"..."},          │
-│                          {"type":"faq_check","content":"..."},               │
+│                          {"type":"faq_match","content":"..."},               │
 │                          {"type":"retrieval","content":"..."},               │
 │                          {"type":"call","content":"..."}],                   │
 │                 "tokenUsage":{"promptTokens":N,"completionTokens":N,         │
@@ -513,9 +513,9 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `user_id` và trích xuất `enrollment_year` tự động.  │
 │   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
-│   3. Phát lần lượt: query_analysis → faq_check → retrieval dưới dạng SSE.   │
-│   4. Với mỗi tool call: stream reasoning(status) → call → thực thi tool.    │
-│   5. Khi Agent chuẩn bị trả lời: stream reasoning(kết luận) → text chunks.  │
+│   3. Phát lần lượt: query_analysis → retrieval dưới dạng SSE.               │
+│   4. Nếu FAQ đủ trả lời: stream text và DONE source=faq.                    │
+│   5. Nếu cần tài liệu: forward reasoning/tool/text từ PageIndex stream.      │
 │   6. Lưu structural steps vào MongoDB (chat_messages) khi stream kết thúc.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -576,7 +576,6 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
 │         "steps": [                                                            │
 │           {"type": "query_analysis", "content": "Phân tích câu hỏi..."},      │
-│           {"type": "faq_check", "content": "Không tìm thấy trong FAQ..."},    │
 │           {"type": "retrieval", "content": "Tìm thấy 1 tài liệu liên quan..."},│
 │           {"type": "call", "content": "Đang đọc nội dung chi tiết..."}        │
 │         ],                                                                    │
@@ -646,39 +645,6 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   4. Nếu không có session để xóa -> trả 404.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/chat/retrieve-preview  [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xem trước danh sách tài liệu mà RAG Navigator chọn cho câu hỏi.       │
-│                                                                              │
-│ REQUEST:                                                                     │
-│   {                                                                          │
-│     "question": "...",                                                       │
-│     "topK": 5,                                                               │
-│     "metadataFilter": { "type": ["ctdt"] }  ← optional                      │
-│   }                                                                          │
-│                                                                              │
-│ RESPONSE:                                                                    │
-│   {                                                                          │
-│     "query": "...",                                                          │
-│     "topK": 5,                                                               │
-│     "count": 3,                                                              │
-│     "items": [                                                               │
-│        {                                                                     │
-│          "rank": 1,                                                          │
-│          "fileId": "abc123",                                                 │
-│          "fileName": "Quy chế ĐT",                                           │
-│          "score": 0.85,                                                      │
-│          "text": "...",          ← doc_description từ TOC                    │
-│          "explain": { "reason": "..." }  ← lý do Navigator chọn file        │
-│        }                                                                     │
-│     ]                                                                        │
-│   }                                                                          │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Gọi RetrievalService.retrieve_candidate_files() qua Navigator.          │
-│   2. Navigator dùng LLM đọc catalog tóm tắt tài liệu và chọn file phù hợp.  │
-│   3. Trả về danh sách tài liệu ứng viên kèm lý do chọn.                     │
-└──────────────────────────────────────────────────────────────────────────────┘
 
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -788,39 +754,27 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/match             [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Debug endpoint để thử nghiệm thuật toán FaqMatcher trên kho FAQ.      │
-│ REQUEST BODY: { "question": "...", "threshold": 0.85, "metadataFilter": {} } │
-│ RESPONSE: FaqResponse object (câu hỏi khớp nhất) hoặc 404 (Không tìm thấy).  │
+│ MÔ TẢ: Debug endpoint để thử nghiệm FAQ answering trên kho FAQ.              │
+│ REQUEST BODY: { "question": "...", "metadataFilter": {} }                    │
+│ RESPONSE: { answerMarkdown, faqIds, questions } hoặc 404 (Không tìm thấy).   │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. FaqMatcher dùng LLM đọc catalog FAQ và chấm điểm tương đồng.            │
-│   2. Trả về FAQ có độ tương đồng cao nhất nếu vượt qua ngưỡng threshold.     │
+│   1. LLM đọc nội dung FAQ phù hợp trong catalog đã lọc metadata.             │
+│   2. Nếu FAQ đủ trả lời toàn bộ câu hỏi, trả answer Markdown và FAQ đã dùng. │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/synthesis         [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Kích hoạt tiến trình phân tích gom cụm (Clustering) các Interaction   │
-│        Logs (Chat/Email) và dùng LLM tổng hợp ra các FAQ Candidates.         │
+│ MÔ TẢ: Endpoint synthesis hiện tạm disabled trong API production.            │
 │ REQUEST BODY:                                                                │
 │   {                                                                          │
 │     "dateFrom": "ISO Date",                                                  │
 │     "dateTo": "ISO Date",                                                    │
 │     "sources": ["chat", "inquiry_email"]                                     │
 │   }                                                                          │
-│ RESPONSE:                                                                    │
-│   {                                                                          │
-│     "batchId": "...",                                                        │
-│     "candidatesCreated": 5,                                                  │
-│     "totalLogsProcessed": 100,                                               │
-│     "clustersFound": 10,                                                     │
-│     "failedClusters": 0                                                      │
-│   }                                                                          │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Truy vấn Interaction Logs trong khoảng thời gian yêu cầu.               │
-│   2. Gom cụm (Clustering) các câu hỏi tương đồng dựa trên nội dung.          │
-│   3. Với mỗi cụm, gọi LLM tổng hợp câu trả lời chung. Hệ thống truyền thêm   │
-│      Top 5 FAQ hiện có gần nhất làm tham chiếu để đảm bảo tính nhất quán.    │
-│   4. Lưu các ứng viên vào collection `faq_candidates` để chờ Admin duyệt.    │
+│ RESPONSE 501:                                                                │
+│   { "detail": "FAQ synthesis is temporarily disabled pending architecture migration" }│
+│ GHI CHÚ: Candidate APIs vẫn được giữ để quản lý dữ liệu/candidate hiện có.   │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -911,7 +865,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Import hàng loạt FAQ từ tệp Excel hoặc CSV vào hệ thống.              │
 │        Bảo toàn định dạng Rich Text (Bold, Italic, Underline, Links).        │
-│        Hỗ trợ song song embedding và bỏ qua các câu hỏi bị trùng lặp.        │
+│        Hỗ trợ batch insert và bỏ qua các câu hỏi bị trùng lặp.               │
 │ REQUEST (Multipart): Tương tự endpoint preview.                              │
 │   - skip_duplicates: bool (Mặc định: true)                                   │
 │   - lecturerOnly: bool (Mặc định: false) — áp dụng cho TOÀN BỘ batch import, │
@@ -1038,6 +992,37 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
+│ DEBUG CORPUS TREE ENDPOINTS [🔒 ADMIN]                                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ GET    /api/debug/corpus/stats                                              │
+│        Thống kê số topic, root topics, direct file/FAQ links.               │
+│ GET    /api/debug/corpus/tree?include_leaf_ids=false                        │
+│        Trả cây chủ đề lồng nhau; có thể bật include_leaf_ids để debug links. │
+│ POST   /api/debug/corpus/traverse                                           │
+│        Chạy traversal thật cho question/role/enrollmentYear/academicYear.    │
+│ POST   /api/debug/corpus/chat-preview                                       │
+│        Dry-run chat query analysis + retrieval, không gọi PageIndex agent.   │
+│ GET    /api/debug/corpus/nodes?skip=0&limit=50                              │
+│        List topic nodes dạng flat, phân trang.                              │
+│ GET    /api/debug/corpus/nodes/{node_key}                                   │
+│        Chi tiết một topic node, gồm direct/subtree file/FAQ ids.             │
+│ POST   /api/debug/corpus/backfill                                           │
+│        Trigger background backfill READY files và active FAQs vào tree.      │
+│ GET    /api/debug/corpus/topics                                             │
+│        List toàn bộ topic nodes với file/FAQ counts.                        │
+│ POST   /api/debug/corpus/topics                                             │
+│        Tạo topic node thủ công. Body: {slug,title,summary,parentKey}.        │
+│ POST   /api/debug/corpus/topics/{node_key}/merge-into/{target_key}          │
+│        Merge source topic vào target topic, rồi xóa source.                 │
+│ DELETE /api/debug/corpus/nodes/{node_key}                                   │
+│        Xóa topic node khỏi Corpus Tree.                                     │
+│                                                                              │
+│ REQUEST mẫu cho traverse/chat-preview:                                      │
+│   {"question":"Điều kiện tốt nghiệp?","role":"student",              │
+│    "enrollmentYear":2022,"academicYear":2024}                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/debug/files/parse-preview [🔒 ADMIN]                               │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Thử nghiệm bóc tách PDF sang Markdown (Không lưu tệp vào hệ thống).   │
@@ -1088,11 +1073,11 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
-LƯU Ý VỀ RETRIEVAL (VECTORLESS ARCHITECTURE):
-- File retrieval dùng Navigator: LLM đọc catalog tóm tắt tài liệu và chọn file phù hợp.
-  Không dùng vector embedding hay Qdrant. Tuning qua RETRIEVAL_NAVIGATOR_MAX_CATALOG.
-- FAQ matching dùng FaqMatcher: LLM đọc catalog FAQ và chấm điểm tương đồng ngữ nghĩa.
-  Không dùng vector embedding hay Qdrant. Tuning qua FAQ_MATCHER_MAX_CATALOG.
+LƯU Ý VỀ RETRIEVAL (CORPUS TREE ARCHITECTURE):
+- File retrieval dùng Corpus Traversal: Duyệt cây chủ đề từ gốc, gọi LLM phân tích và đi xuống các nhánh con cho đến khi tìm thấy tài liệu liên quan.
+  Không dùng vector embedding hay Qdrant; file candidates được rerank bằng Cohere nếu bật config.
+- FAQ answering: LLM đọc nội dung FAQ liên quan và trả answer/null theo mức độ đủ bao phủ câu hỏi.
+  Không dùng vector embedding hay Qdrant; FAQ docs cũng được rerank riêng bằng Cohere. Tuning qua COHERE_RERANK_* và FAQ_MATCHER_MAX_CATALOG.
 
 Hoàn tất bản Đặc tả API chi tiết v3.0.0 (Vectorless Edition).
 --------------------------------------------------------------------------------

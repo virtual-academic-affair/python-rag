@@ -1,22 +1,14 @@
 """Chat Service - Handles non-streaming Agentic RAG chat operations."""
+import asyncio
 import logging
 import time
-from typing import Optional, Any
-import asyncio
+from typing import Any, Optional
 
-from google.genai import types
-from app.core.config import settings
-from app.modules.rag.faq import fetch_supporting_faqs, build_faq_context
 from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
-from app.modules.rag.retrieval.retrieval_service import get_retrieval_service
-from app.modules.rag.agent import (
-    CHAT_SYSTEM_PROMPT,
-    run_agent_loop,
-)
 from app.modules.faq.services.faq_service import get_faq_service
-from app.modules.chat.services.query_analyzer_service import get_query_analyzer
+from app.modules.rag.query import RagQueryInput, get_rag_query_pipeline
 from app.utils.format_utils import markdown_to_rich_text
 
 logger = logging.getLogger(__name__)
@@ -33,68 +25,18 @@ class ChatService:
     """Service for non-streaming Agentic RAG chat operations."""
 
     def __init__(self):
-        self._retrieval = get_retrieval_service()
+        self._rag_query = get_rag_query_pipeline()
         self._faq_svc = None
+
+    def _get_rag_query(self):
+        if not hasattr(self, "_rag_query") or self._rag_query is None:
+            self._rag_query = get_rag_query_pipeline()
+        return self._rag_query
 
     async def _get_faq_svc(self):
         if self._faq_svc is None:
             self._faq_svc = await get_faq_service()
         return self._faq_svc
-
-    async def _prepare_chat_state(
-        self,
-        question: str,
-        user_context: UserContext,
-        chat_history: list[ChatHistoryItem],
-        metadata_filter: Optional[dict[str, Any]] = None,
-    ) -> dict:
-        """Corpus traversal: retrieve file candidates + supporting FAQ context."""
-        from app.modules.rag.corpus.services.corpus_traversal_service import get_corpus_traversal_service
-
-        traversal_svc = get_corpus_traversal_service()
-        try:
-            result = await traversal_svc.traverse(
-                question,
-                metadata_filter=metadata_filter,
-                user_role=user_context.role,
-            )
-        except Exception as e:
-            logger.warning(f"[Corpus] traverse failed (best-effort): {e}")
-            from app.modules.rag.corpus.dtos.traversal import TraversalResult
-            result = TraversalResult()
-
-        # Metadata (khóa/năm học) + quyền (lecturer_only) đã lọc TRƯỚC traversal —
-        # enrich chỉ còn hydrate nội dung file (status/storage).
-        candidate_files = await self._retrieval.enrich_corpus_candidates(result.file_candidates)
-
-        # Fetch supporting FAQ documents (ngữ cảnh bổ trợ cho agent Stage 4)
-        faq_docs = await fetch_supporting_faqs(result.supporting_faqs)
-        faq_context = build_faq_context(faq_docs)
-
-        if not candidate_files:
-            logger.info(f"[Corpus] _prepare_chat_state: no files ({len(faq_docs)} FAQs available)")
-            return {"candidate_files": [], "history": [], "faq_docs": faq_docs}
-
-        files_info_str = "\n".join([
-            f"[{i+1}] ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}"
-            for i, c in enumerate(candidate_files)
-        ])
-
-        prompt_text = (
-            f"Ngữ cảnh người dùng: {user_context.name} (Vai trò: {user_context.role}, Khóa: {user_context.enrollment_year or 'N/A'})\n\n"
-            f"{faq_context}"
-            "Dưới đây là các tài liệu liên quan được tìm thấy trong cơ sở dữ liệu. Hãy sử dụng công cụ để đọc nội dung chi tiết bằng cách dùng số thứ tự [n] trong ngoặc vuông (ví dụ: '1'):\n"
-            f"{files_info_str}\n\n"
-            f"Câu hỏi của người dùng: {question}"
-        )
-
-        history = []
-        for h in chat_history[-6:]:
-            role = "user" if h.role == "user" else "model"
-            history.append(types.Content(role=role, parts=[types.Part.from_text(text=h.content)]))
-        history.append(types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)]))
-
-        return {"candidate_files": candidate_files, "history": history, "faq_docs": faq_docs}
 
     async def generate_chat_response(
         self,
@@ -107,166 +49,74 @@ class ChatService:
     ) -> dict:
         """
         Generate Agentic Chat Response (non-streaming).
-        Delegates fully to shared run_agent_loop; returns answer, steps, and sources.
+        Delegates query lifecycle to the shared RAG query pipeline.
         """
         start_time = time.time()
-        pipeline_steps = []
         logger.info(f"[Chat] Nhận request từ user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
 
-        # [1] Analyze query (rewrite + gate + metadata) — 1 LLM call
-        analyzer = get_query_analyzer()
-        start_analysis = time.perf_counter()
-        analysis = await analyzer.analyze_query(question, chat_history)
-        logger.info(f"[Chat] QueryAnalysis done in {time.perf_counter() - start_analysis:.2f}s")
-        effective_question = analysis["effective_question"]
-        needs_rag = analysis["needs_rag"]
-        metadata_filter = analysis.get("metadata_filter") or {}
-        
-        # Merge user context enrollment_year as fallback if not extracted from query
-        if not metadata_filter.get("enrollment_year") and user_context.enrollment_year:
-            logger.info("[Chat] Fallback enrollment_year to user context: %s", user_context.enrollment_year)
-            metadata_filter["enrollment_year"] = {
-                "from_year": user_context.enrollment_year,
-                "to_year": user_context.enrollment_year
-            }
+        rag_result = await self._get_rag_query().answer_chat(
+            RagQueryInput(
+                mode="chat",
+                question=question,
+                user_role=user_context.role,
+                user_name=user_context.name,
+                enrollment_year=user_context.enrollment_year,
+                chat_history=chat_history,
+                resolve_citations=resolve_citations,
+                citation_link_type=citation_link_type,
+            )
+        )
+        candidate_files = rag_result.candidate_files
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"[Chat] Pipeline completed in {processing_time_ms}ms | found={len(candidate_files)} files")
 
-        logger.info("[Chat] Final metadata_filter applied: %s", metadata_filter or "(none)")
+        answer_markdown = rag_result.answer_markdown
+        final_answer = markdown_to_rich_text(answer_markdown) if to_rich_text else answer_markdown
+        token_usage_obj = self._token_usage_obj(rag_result.token_usage)
+        simplified_steps = [simplify_step(s, candidate_files) for s in rag_result.steps if s.get("type") in PERSISTED_STEP_TYPES]
 
-        pipeline_steps.append({
-            "type": "query_analysis",
-            "original_question": question,
-            "effective_question": effective_question,
-            "needs_rag": needs_rag,
-            "metadata_filter": metadata_filter,
-        })
-
-        # [2] Gate = NO: generate direct reply
-        if not needs_rag:
-            logger.info("[Chat] RAG bypass via gate. Generating direct answer.")
-            direct_answer, reply_usage = await analyzer.generate_reply(effective_question, chat_history)
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"[Chat] RAG bypass. Final answer for user {user_context.name}: '{direct_answer[:200]}...' (Completed in {processing_time_ms}ms)")
-            answer_markdown = direct_answer
-            final_answer = answer_markdown
-            if to_rich_text:
-                final_answer = markdown_to_rich_text(answer_markdown)
-
-            analysis_usage = analysis.get("usage")
-            total_prompt_tokens = 0
-            total_candidates_tokens = 0
-            if analysis_usage:
-                total_prompt_tokens += analysis_usage.get("prompt_tokens", 0)
-                total_candidates_tokens += analysis_usage.get("completion_tokens", 0)
-            if reply_usage:
-                total_prompt_tokens += reply_usage.get("prompt_tokens", 0)
-                total_candidates_tokens += reply_usage.get("completion_tokens", 0)
-
-            token_usage_obj = None
-            if analysis_usage or reply_usage:
-                token_usage_obj = TokenUsage(
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_candidates_tokens,
-                    total_tokens=total_prompt_tokens + total_candidates_tokens
-                )
-
+        if rag_result.is_direct_reply:
             return {
                 "answer": final_answer,
                 "sources": [],
-                "steps": [simplify_step(s) for s in pipeline_steps],
+                "steps": simplified_steps,
                 "token_usage": token_usage_obj,
                 "processing_time_ms": processing_time_ms,
             }
 
-        # [3] Prepare Chat State using effective_question (corpus traversal)
-        start_retrieval = time.perf_counter()
-        state = await self._prepare_chat_state(effective_question, user_context, chat_history, metadata_filter)
-        candidate_files = state["candidate_files"]
-        logger.info(
-            f"[Chat] Retrieval done in {time.perf_counter() - start_retrieval:.2f}s | "
-            f"found={len(candidate_files)} files"
-        )
-
-        # Log retrieval step
-        retrieval_files_step = [
-            {
-                "file_id": f.get("file_id"),
-                "file_name": f.get("file_name"),
-            }
-            for f in candidate_files
-        ]
-        pipeline_steps.append({
-            "type": "retrieval",
-            "candidate_files": retrieval_files_step,
-        })
-
-        # [4] Stage 4 — Page Index: đọc tài liệu qua agent loop
-        # FAQ đã được nhồi vào prompt làm ngữ cảnh bổ trợ (không trả lời thẳng từ FAQ).
-        if not candidate_files:
-            logger.info(f"[Chat] No candidate files and no FAQ match for user {user_context.name}. Returning empty result.")
-            answer_text = "Không tìm thấy tài liệu nào phù hợp với yêu cầu của bạn."
-            if to_rich_text:
-                answer_text = markdown_to_rich_text(answer_text)
-            return {
-                "answer": answer_text,
-                "sources": [],
-                "steps": [simplify_step(s, candidate_files) for s in pipeline_steps],
-                "processing_time_ms": int((time.time() - start_time) * 1000),
-            }
-
-        result = await run_agent_loop(
-            candidate_files=candidate_files,
-            prompt_contents=state["history"],
-            resolve_citations=resolve_citations,
-            citation_link_type=citation_link_type,
-            system_prompt=CHAT_SYSTEM_PROMPT,
-        )
-
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        answer_markdown = result["final_answer"]
-        if not answer_markdown:
-            logger.warning(f"[Chat] Empty answer from agent loop for user {user_context.name}. Using fallback.")
-            answer_markdown = "Hệ thống chưa tổng hợp được câu trả lời từ tài liệu. Vui lòng hỏi lại cụ thể hơn."
-
         logger.info(f"[Chat] Final answer for user {user_context.name}: '{answer_markdown[:200]}...' (Completed in {processing_time_ms}ms)")
 
         # Log async interaction if final answer was generated successfully
-        if not result.get("max_turns_reached"):
+        if rag_result.source != "bypass" and not rag_result.max_turns_reached:
             faq_svc = await self._get_faq_svc()
             fire_and_forget(faq_svc.log_interaction(
-                question=effective_question,
+                question=rag_result.analysis.effective_question if rag_result.analysis else question,
                 answer_markdown=answer_markdown,
-                metadata_filter=metadata_filter,
+                metadata_filter=rag_result.analysis.metadata_filter if rag_result.analysis else {},
                 source_type="chat",
                 processing_time_ms=processing_time_ms,
             ))
         else:
             logger.warning(f"[Chat] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
 
-        final_answer = answer_markdown
-        if to_rich_text:
-            final_answer = markdown_to_rich_text(answer_markdown)
-
-        # Only persist structural pipeline steps
-        agent_call_steps = [s for s in result["steps"] if s.get("type") in PERSISTED_STEP_TYPES]
-
-        agent_usage = result.get("tokenUsage")
-        token_usage_obj = None
-        if agent_usage:
-            token_usage_obj = TokenUsage(
-                prompt_tokens=agent_usage.get("promptTokens") or agent_usage.get("prompt_tokens") or 0,
-                completion_tokens=agent_usage.get("completionTokens") or agent_usage.get("completion_tokens") or 0,
-                total_tokens=agent_usage.get("totalTokens") or agent_usage.get("total_tokens") or 0
-            )
-
         return {
             "answer": final_answer,
-            "source": "llm",
-            "sources": result["sources"],
-            "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + agent_call_steps)],
+            "source": rag_result.source,
+            "sources": rag_result.sources,
+            "steps": simplified_steps,
             "token_usage": token_usage_obj,
             "processing_time_ms": processing_time_ms,
         }
+
+    @staticmethod
+    def _token_usage_obj(token_usage: dict[str, Any] | None) -> TokenUsage | None:
+        if not token_usage:
+            return None
+        return TokenUsage(
+            prompt_tokens=token_usage.get("promptTokens") or token_usage.get("prompt_tokens") or 0,
+            completion_tokens=token_usage.get("completionTokens") or token_usage.get("completion_tokens") or 0,
+            total_tokens=token_usage.get("totalTokens") or token_usage.get("total_tokens") or 0,
+        )
 
 
 _chat_service_instance: Optional[ChatService] = None

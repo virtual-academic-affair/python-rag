@@ -4,7 +4,7 @@ LlamaParse Ingest Service (Sprint 1).
 Scope of Sprint 1:
 - Parse PDF to markdown using LlamaParse Cloud.
 - Return page-level markdown blocks with lightweight normalization.
-- No indexing (Qdrant/ES) yet.
+- No indexing yet.
 """
 
 from __future__ import annotations

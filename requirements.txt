@@ -11,6 +11,9 @@ pydantic-settings==2.13.1
 # Google Generative AI SDK
 google-genai==1.56.0
 
+# Cohere Rerank SDK
+cohere==7.0.5
+
 # Environment Management
 python-dotenv==1.0.1
 

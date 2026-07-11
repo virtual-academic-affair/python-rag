@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.chat.dtos.send_message import TokenUsage
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 class ChatPaginationRequest(BaseSchema):
     page: int = Field(default=1, ge=1, description="Page number")

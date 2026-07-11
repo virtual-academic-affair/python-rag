@@ -50,7 +50,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
     "/query",
     response_model=ChatQueryResponse,
     summary="Generate RAG-based chat response",
-    description="Process a user question with Qdrant RAG retrieval and return a complete answer.",
+    description="Process a user question with Corpus Tree RAG traversal and return a complete answer.",
 )
 async def chat_query(
     request: ChatQueryRequest,

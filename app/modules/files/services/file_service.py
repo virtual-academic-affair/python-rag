@@ -11,11 +11,11 @@ from app.core.exceptions import (
 from app.modules.files.models.file import FileDocument, FileStatus
 from app.modules.files.repositories.file_repository import FileRepository
 from app.integrations.storage.client import r2_storage
-from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.utils.text_utils import remove_accents
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.metadata.utils.filter_builder import get_filter_builder
+from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
 from app.modules.files.services.file_upload_service import FileUploadMixin
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class FileService(FileUploadMixin):
     """
     Service for file management operations.
-    Coordinates between Cloudflare R2 storage, MongoDB (Beanie), and Gemini/Qdrant.
+    Coordinates between Cloudflare R2 storage, MongoDB (Beanie), and Corpus Tree.
     """
 
     def __init__(self):
@@ -76,21 +76,19 @@ class FileService(FileUploadMixin):
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        # 1. Delete from TOC and PageIndex cache first
+        # 1. Corpus tree unindex — must succeed before any destructive steps
+        await get_corpus_linker().unindex_file(file_id)
+
+        # 2. Delete from TOC and evict PageIndex cache
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
+
+        from app.integrations.pageindex.client import get_page_index_client
 
         page_index_client = get_page_index_client()
         await page_index_client.evict_doc(file_id)
 
-        # Corpus graph unindex — best-effort
-        try:
-            from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-            await get_corpus_index_service().unindex_file(file_id)
-        except Exception as _corpus_err:
-            logger.warning(f"[Corpus] unindex_file skipped for {file_id}: {_corpus_err}")
-
-        # 2. Delete DB record — after this point the file is logically gone
+        # 3. Delete DB record — after this point the file is logically gone
         await self.file_repo.delete(file_doc)
         logger.info(f"File {file_id} deleted from MongoDB")
 
@@ -156,18 +154,6 @@ class FileService(FileUploadMixin):
             except Exception as e:
                 raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
-            # Re-index in corpus if display name changed (topic gán theo tên + TOC)
-            if display_name is not None:
-                try:
-                    from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-                    await get_corpus_index_service().index_file(
-                        file_id,
-                        display_name=file_doc.display_name or "",
-                        toc_headings=file_doc.table_of_contents or [],
-                    )
-                except Exception as _corpus_err:
-                    logger.warning(f"[Corpus] re-index file skipped for {file_id}: {_corpus_err}")
-
         return file_doc
 
     async def list_files(
@@ -208,6 +194,20 @@ class FileService(FileUploadMixin):
                 filters["$and"] = filters.get("$and", []) + [{"$or": keyword_or}]
 
         return await self.file_repo.list_files(filters=filters, skip=skip, limit=limit)
+
+    async def find_ids_for_corpus(
+        self,
+        metadata_filter: Optional[Dict[str, Any]],
+        user_role: Optional[str],
+    ) -> set[str]:
+        """Return READY file IDs allowed for corpus traversal."""
+        from app.modules.corpus.utils.prefilter import build_file_prefilter_query
+
+        query = await build_file_prefilter_query(metadata_filter, user_role)
+        return await self.file_repo.find_ids_by_query(query)
+
+    async def get_files_by_ids(self, file_ids: list[str]) -> list[FileDocument]:
+        return await self.file_repo.find_by_ids(file_ids)
 
     async def get_file_by_id(self, file_id: str) -> Optional[FileDocument]:
         """Get a single file by ID."""

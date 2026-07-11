@@ -4,7 +4,7 @@ from app.core.base_document import BaseDocument
 from pymongo import IndexModel, ASCENDING, DESCENDING
 
 from app.modules.chat.dtos.send_message import TokenUsage
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 class ChatMessageDocument(BaseDocument):
     session_id: str

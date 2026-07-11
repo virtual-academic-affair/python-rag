@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, List, Optional, Tuple
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -66,3 +67,23 @@ class FaqRepository(BeanieRepository[FaqDocument]):
         except Exception as e:
             logger.error(f"[FAQ] Failed to increment view count for FAQ {faq_id}: {e}")
             return False
+
+    async def find_by_ids(self, faq_ids: List[str]) -> List[FaqDocument]:
+        if not faq_ids:
+            return []
+        object_ids = []
+        for fid in faq_ids:
+            try:
+                object_ids.append(ObjectId(fid))
+            except Exception:
+                continue
+        if not object_ids:
+            return []
+        return await FaqDocument.find({"_id": {"$in": object_ids}}).to_list()
+
+    async def find_ids_by_query(self, query: dict[str, Any]) -> set[str]:
+        ids: set[str] = set()
+        cursor = FaqDocument.get_motor_collection().find(query, {"_id": 1})
+        async for row in cursor:
+            ids.add(str(row["_id"]))
+        return ids

@@ -127,7 +127,7 @@
                 "query"
               ]
             },
-            "description": "Process a user question with Qdrant RAG retrieval and return a complete answer.",
+            "description": "Process a user question with Corpus Tree RAG traversal and return a complete answer.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}",
@@ -323,33 +323,290 @@
             }
           },
           "response": []
-        },
+        }
+      ]
+    },
+    {
+      "name": "Debug Corpus",
+      "item": [
         {
-          "name": "Preview Qdrant retrieval results",
+          "name": "Corpus tree statistics",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/chat/retrieve-preview",
+              "raw": "{{base_url}}/api/debug/corpus/stats",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
-                "chat",
-                "retrieve-preview"
+                "debug",
+                "corpus",
+                "stats"
               ]
             },
-            "description": "Debug endpoint to inspect retrieved chunks and ranking before generation.",
+            "description": "Return total topic count, root count, and direct file/FAQ link counts."
+          },
+          "response": []
+        },
+        {
+          "name": "Full Corpus Topic Tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/tree?include_leaf_ids=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "tree"
+              ]
+            },
+            "description": "Return nested Corpus Topic Tree. Set include_leaf_ids=true to include direct/subtree file and FAQ ids."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Corpus Traversal",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/traverse",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "traverse"
+              ]
+            },
+            "description": "Run Corpus Tree traversal for a question and return selected file/FAQ ids.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp?\",\n  \"topK\": 5,\n  \"minScore\": 0.2,\n  \"includeExplain\": true\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022,\n  \"academicYear\": 2024\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             }
+          },
+          "response": []
+        },
+        {
+          "name": "Chat Retrieval Preview",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/chat-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "chat-preview"
+              ]
+            },
+            "description": "Dry-run chat query analysis and retrieval without PageIndex answering.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Corpus Nodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/nodes?skip=0&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "nodes"
+              ]
+            },
+            "description": "List topic nodes as a flat paginated list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Corpus Node",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/nodes/{{node_key}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "nodes",
+                "{{node_key}}"
+              ]
+            },
+            "description": "Get full details for a Corpus Topic Tree node."
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Corpus Backfill",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/backfill",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "backfill"
+              ]
+            },
+            "description": "Start background backfill: seed Corpus Tree and index READY files + active FAQs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Corpus Topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/topics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "topics"
+              ]
+            },
+            "description": "List all Corpus Topic Tree nodes with file/FAQ counts."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Corpus Topic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/topics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "topics"
+              ]
+            },
+            "description": "Manually create a Corpus Topic Tree node.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"hoc-phi\",\n  \"title\": \"Học phí\",\n  \"summary\": \"Các quy định về học phí\",\n  \"parentKey\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Merge Corpus Topic Into Target",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/topics/{{node_key}}/merge-into/{{target_key}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "topics",
+                "{{node_key}}",
+                "merge-into",
+                "{{target_key}}"
+              ]
+            },
+            "description": "Move source topic links/children into target topic and delete source.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Corpus Node",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/debug/corpus/nodes/{{node_key}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "debug",
+                "corpus",
+                "nodes",
+                "{{node_key}}"
+              ]
+            },
+            "description": "Delete a Corpus Topic Tree node."
           },
           "response": []
         }
@@ -611,47 +868,6 @@
             }
           },
           "response": []
-        },
-        {
-          "name": "Parse + chunk PDF preview",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/files/chunk-preview",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "files",
-                "chunk-preview"
-              ]
-            },
-            "description": "Parse uploaded PDF with LlamaParse and preview section-aware chunks.",
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": []
-                },
-                {
-                  "key": "chunkSizeChars",
-                  "value": "1800",
-                  "type": "text"
-                },
-                {
-                  "key": "chunkOverlapChars",
-                  "value": "250",
-                  "type": "text"
-                }
-              ]
-            }
-          },
-          "response": []
         }
       ]
     },
@@ -746,10 +962,10 @@
                 "match"
               ]
             },
-            "description": "Debug endpoint to test semantic matching.",
+            "description": "Debug endpoint to test FAQ-based answering.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Xin giấy xác nhận sinh viên ở đâu?\",\n  \"threshold\": 0.85\n}"
+              "raw": "{\n  \"question\": \"Xin giấy xác nhận sinh viên ở đâu?\"\n}"
             }
           },
           "response": []
@@ -843,7 +1059,7 @@
                 "synthesis"
               ]
             },
-            "description": "Manually trigger FAQ synthesis background job.",
+            "description": "FAQ synthesis endpoint is currently disabled and returns 501 pending architecture migration.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"dateFrom\": null,\n  \"sources\": []\n}",

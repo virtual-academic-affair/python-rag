@@ -1,154 +1,133 @@
-"""
-RAG Ingestion Service.
-
-Flow:
-- Parse PDF via LlamaParse
-- Build TOC/summary tree via PageIndex
-"""
-
 from __future__ import annotations
-import asyncio
-import time
-from pathlib import Path
-from typing import Any, Optional
 
+from dataclasses import dataclass
+import io
 import logging
 
-from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
-from app.integrations.llamaparse.client import get_llamaparse_client
-from app.integrations.pageindex.client import get_page_index_client
-from app.core.config import settings
+from app.integrations.storage.client import r2_storage
+from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
+from app.modules.rag.ingestion.document_parser import get_document_parser
 
 logger = logging.getLogger(__name__)
 
-class IngestionService:
-    def __init__(self):
-        self._toc_repo: Optional[FileTocTreeRepository] = None
-        self._parser = get_llamaparse_client()
-        self._page_index = get_page_index_client()
 
-    @property
-    def toc_repo(self) -> FileTocTreeRepository:
-        if self._toc_repo is None:
-            self._toc_repo = FileTocTreeRepository()
-        return self._toc_repo
+@dataclass(frozen=True)
+class FileIngestionResult:
+    markdown_storage_path: str
+    markdown_file_size: int
+    table_of_contents: list[str]
+    summary: str
+    line_count: int
+    topic_keys: list[str]
+
+
+class IngestionService:
+    """Orchestrates file ingestion artifacts for RAG."""
+
+    def __init__(self):
+        from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
+
+        self._document_parser = get_document_parser()
+        self._toc_repo = FileTocTreeRepository()
+        self._corpus_linker = get_corpus_linker()
 
     async def ingest_file(
         self,
         *,
         file_id: str,
-        file_name: str,
+        display_name: str,
         file_path: str,
-        metadata: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
-        """Ingest a file: parse to Markdown then build TOC/summary via PageIndex."""
-        start_total = time.perf_counter()
+        original_storage_path: str,
+    ) -> FileIngestionResult:
+        from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
 
-        # 1. Parse content to Markdown via LlamaParse
-        start_parse = time.perf_counter()
-        pages = await self._parser.parse_pdf_to_markdown(file_path)
-        markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
-        parse_dur = time.perf_counter() - start_parse
-        logger.info(f"[Ingestion] Phase 1: Content extraction completed in {parse_dur:.2f}s")
+        markdown_storage_path = original_storage_path.rsplit(".", 1)[0] + ".md"
 
-        # 2. Build TOC/summary via PageIndex
-        logger.info(f"[Ingestion] Phase 2: Building TOC/summary via PageIndex...")
-        toc_result = await self._build_toc(file_id, file_name, markdown_content)
-
-        total_dur = time.perf_counter() - start_total
-        logger.info(f"[Ingestion] Total ingestion for file {file_id} completed in {total_dur:.2f}s")
-
-        return {
-            "file_id": file_id,
-            "page_count": len(pages),
-            "markdown_content": markdown_content,
-            "table_of_contents": toc_result["table_of_contents"],
-            "summary": toc_result["summary"],
-            "toc_structure": toc_result["toc_structure"],
-            "line_count": toc_result["line_count"],
-        }
-
-    async def _build_toc(self, file_id: str, file_name: str, markdown_content: str) -> dict[str, Any]:
-        """Generate TOC and Summary using PageIndex."""
-        workspace_dir = Path(settings.PAGEINDEX_WORKSPACE).resolve()
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-        md_file_path = workspace_dir / f"{file_id}.md"
-
-        def _write_md():
-            with open(md_file_path, "w", encoding="utf-8") as f:
-                f.write(markdown_content)
-
-        await asyncio.to_thread(_write_md)
-
-        toc_line_count = 0
         try:
-            toc_result = await self._page_index.index_md_content(
-                md_path=str(md_file_path),
-                doc_id=file_id,
-                doc_name=file_name
+            ingest_result = await self._document_parser.ingest_file(
+                file_id=file_id,
+                file_name=display_name,
+                file_path=file_path,
             )
 
-            table_of_contents = self._extract_flat_toc(toc_result["structure"])
-            summary = toc_result["doc_description"]
-            toc_structure = toc_result["structure"]
-            toc_line_count = toc_result.get("line_count", 0)
+            markdown_content = ingest_result["markdown_content"]
+            markdown_bytes = markdown_content.encode("utf-8")
+
+            await r2_storage.upload_file(
+                file=io.BytesIO(markdown_bytes),
+                object_name=markdown_storage_path,
+                content_type="text/markdown; charset=utf-8",
+            )
+
+            await self._toc_repo.upsert_by_file_id(
+                file_id,
+                TocTreeUpsertData(
+                    doc_name=display_name,
+                    doc_description=ingest_result.get("summary", ""),
+                    line_count=ingest_result.get("line_count", 0),
+                    structure=ingest_result.get("toc_structure", []),
+                    markdown_storage_path=markdown_storage_path,
+                ),
+            )
+
+            logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{display_name}') vào corpus tree")
+            topic_keys = await self._corpus_linker.index_file(
+                file_id,
+                display_name=display_name,
+                doc_description=ingest_result.get("summary", "") or "",
+                toc_headings=ingest_result.get("table_of_contents", []),
+            )
+            if not topic_keys:
+                raise ValueError("LLM could not assign the file to any topic in the corpus catalog.")
+
+            logger.info(
+                f"[Corpus] Index file {file_id} xong — gán vào {len(topic_keys)} topic: {topic_keys}"
+            )
+
+            return FileIngestionResult(
+                markdown_storage_path=markdown_storage_path,
+                markdown_file_size=len(markdown_bytes),
+                table_of_contents=ingest_result.get("table_of_contents", []),
+                summary=ingest_result.get("summary", ""),
+                line_count=ingest_result.get("line_count", 0),
+                topic_keys=topic_keys,
+            )
+        finally:
+            await self._cleanup_local_artifacts(file_id)
+
+    async def cleanup_file_artifacts(
+        self,
+        file_id: str,
+        markdown_storage_path: str | None = None,
+    ) -> None:
+        """Best-effort cleanup for artifacts created before ingestion failure."""
+        if markdown_storage_path:
+            try:
+                await r2_storage.delete_file(markdown_storage_path)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup markdown artifact for failed file {file_id}: {e}")
+
+        try:
+            await self._toc_repo.delete_by_file_id(file_id)
         except Exception as e:
-            logger.error(f"PageIndex failed to generate TOC/Summary for {file_id}: {e}")
-            table_of_contents = []
-            summary = None
-            toc_structure = []
+            logger.warning(f"Failed to cleanup TOC for failed file {file_id}: {e}")
 
-        return {
-            "table_of_contents": table_of_contents,
-            "summary": summary,
-            "toc_structure": toc_structure,
-            "line_count": toc_line_count,
-        }
+        try:
+            await self._corpus_linker.unindex_file(file_id)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup corpus index for failed file {file_id}: {e}")
 
-    # Các tiêu đề header/footer phổ biến của văn bản hành chính VN — không có giá trị tra cứu
-    _BLACKLISTED_TOC_ENTRIES = {
-        "đại học quốc gia tp. hcm",
-        "đại học quốc gia tp.hcm",
-        "đại học quốc gia thành phố hồ chí minh",
-        "cộng hòa xã hội chủ nghĩa việt nam",
-        "trường đại học khoa học tự nhiên",
-        "độc lập tự do hạnh phúc",
-        "độc lập - tự do - hạnh phúc",
-        "trường đh khoa học tự nhiên",
-        "đhqg-hcm",
-        "đhqg tp.hcm",
-        "đhqg tp. hcm",
-    }
+        await self._cleanup_local_artifacts(file_id)
 
-    def _extract_flat_toc(self, structure: list[dict[str, Any]]) -> list[str]:
-        """Flatten PageIndex tree structure into a simple list of headings."""
-        toc = []
-
-        def _is_blacklisted(title: str) -> bool:
-            normalized = " ".join(title.lower().split())
-            return normalized in self._BLACKLISTED_TOC_ENTRIES
-
-        def traverse(nodes):
-            for node in nodes:
-                title = node.get("title")
-                if title and not _is_blacklisted(title):
-                    toc.append(title)
-                if node.get("nodes"):
-                    traverse(node["nodes"])
-
-        traverse(structure)
-        return toc
-
-    async def cleanup_local_artifacts(self, file_id: str):
-        """Delete local markdown file after ingestion."""
-        workspace_dir = Path(settings.PAGEINDEX_WORKSPACE).resolve()
-        md_file_path = workspace_dir / f"{file_id}.md"
-        if md_file_path.exists():
-            md_file_path.unlink()
-            logger.info(f"Cleaned up local markdown artifact: {md_file_path}")
+    async def _cleanup_local_artifacts(self, file_id: str) -> None:
+        try:
+            await self._document_parser.cleanup_local_artifacts(file_id)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup markdown artifacts for {file_id}: {e}")
 
 
-_ingestion_service_instance: Optional[IngestionService] = None
+_ingestion_service_instance: IngestionService | None = None
+
 
 def get_ingestion_service() -> IngestionService:
     global _ingestion_service_instance

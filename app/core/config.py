@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     FAQ_MATCHER_MODEL: Optional[str] = None
     # None -> falls back to GEMINI_MODEL.
     CORPUS_TOPIC_MODEL: Optional[str] = None
+
+    # Cohere Rerank v2 for file candidates and FAQ context ranking.
+    COHERE_API_KEY: Optional[str] = None
+    COHERE_RERANK_ENABLED: bool = True
+    COHERE_RERANK_MODEL: str = "rerank-v4.0-fast"
+    COHERE_RERANK_MAX_CANDIDATES: int = 20
+    COHERE_RERANK_MAX_TOKENS_PER_DOC: int = 1024
+    COHERE_RERANK_TIMEOUT_SECONDS: float = 10.0
+
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
     FAQ_SYNTHESIS_ENABLED: bool = False
     FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7

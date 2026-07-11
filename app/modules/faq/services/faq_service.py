@@ -5,25 +5,24 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from google.genai import types
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.exceptions import ValidationException, ConflictException
 from app.core.pagination import PagedResult
-from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.dtos.create_faq import FaqBulkCreateItem
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.models.faq_candidate import FaqCandidateDocument
 from app.modules.faq.repositories.faq_candidate_repository import FaqCandidateRepository
 from app.modules.faq.repositories.faq_repository import FaqRepository
 from app.modules.faq.repositories.interaction_log_repository import InteractionLogRepository
-from app.modules.faq.services.faq_matcher import FaqMatchEntry, FaqMatcher
+from app.modules.rag.query.answering.faq_answering import FaqAnswerService
 from app.modules.metadata.models.value_objects import FaqMetadata
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.metadata.utils.filter_builder import get_filter_builder
+from app.modules.corpus.utils.prefilter import build_faq_prefilter_query
+from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
 from app.utils.format_utils import markdown_to_rich_text, rich_text_to_markdown
-from app.utils.retry import async_retry
 from app.utils.text_utils import remove_accents
 
 
@@ -38,24 +37,6 @@ class FaqService:
         self._faq_repo = FaqRepository()
         self._candidate_repo = FaqCandidateRepository()
         self._log_repo = InteractionLogRepository()
-
-    # ------------------------------------------------------------------
-    # LLM adapter
-    # ------------------------------------------------------------------
-
-    async def _gemini_match(self, prompt: str) -> str:
-        """Adapter: run the FAQ matcher prompt through Gemini, return raw JSON text."""
-        model = settings.FAQ_MATCHER_MODEL or settings.GEMINI_MODEL
-        resp = await async_retry(
-            gemini_client.client.aio.models.generate_content,
-            model=model,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                response_mime_type="application/json",
-            ),
-        )
-        return resp.text or "{}"
 
     # ------------------------------------------------------------------
     # CRUD
@@ -95,19 +76,30 @@ class FaqService:
         )
         try:
             created = await self._faq_repo.create(doc)
-            # Corpus graph index — best-effort
-            try:
-                from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-                await get_corpus_index_service().index_faq(
-                    str(created.id),
-                    question=question,
-                    answer_markdown=answer_markdown,
-                )
-            except Exception as _corpus_err:
-                logger.warning(f"[Corpus] index_faq skipped for {created.id}: {_corpus_err}")
-            return created
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{question}' already exists.")
+
+        # Index to corpus (must succeed)
+        try:
+            corpus_linker = get_corpus_linker()
+
+            topic_keys = await corpus_linker.index_faq(
+                str(created.id),
+                question=question,
+                answer_markdown=answer_markdown,
+            )
+            if not topic_keys:
+                raise ValueError("LLM could not assign the FAQ to any topic in the corpus catalog.")
+        except Exception as e:
+            # Rollback: first clean up any partial corpus links, then delete the Mongo doc
+            try:
+                await corpus_linker.unindex_faq(str(created.id))
+            except Exception:
+                pass  # best-effort cleanup; DB rollback always proceeds
+            await self._faq_repo.delete(created)
+            raise e
+
+        return created
 
     async def check_duplicate_question(self, question: str) -> Optional[FaqDocument]:
         return await self._faq_repo.find_by_unaccented_question(remove_accents(question))
@@ -169,6 +161,18 @@ class FaqService:
         if not doc:
             return None
 
+        # Keep original fields for rollback
+        original_fields = {
+            "is_active": doc.is_active,
+            "lecturer_only": doc.lecturer_only,
+            "question": doc.question,
+            "question_unaccented": doc.question_unaccented,
+            "answer_markdown": doc.answer_markdown,
+            "answer_rich_text": doc.answer_rich_text,
+            "answer_unaccented": doc.answer_unaccented,
+            "metadata_filter": doc.metadata_filter.model_copy() if doc.metadata_filter else None
+        }
+
         if "is_active" in data:
             doc.is_active = data["is_active"]
 
@@ -200,36 +204,73 @@ class FaqService:
 
         try:
             saved = await self._faq_repo.save(doc)
-            # Re-index in corpus only when metadata changed — best-effort
-            if "metadata_filter" in data:
-                try:
-                    from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-                    await get_corpus_index_service().index_faq(
-                        faq_id,
-                        question=saved.question or "",
-                        answer_markdown=saved.answer_markdown or "",
-                    )
-                except Exception as _corpus_err:
-                    logger.warning(f"[Corpus] re-index faq skipped for {faq_id}: {_corpus_err}")
-            return saved
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
+
+        # Determine index actions
+        needs_unindex = data.get("is_active") is False or (doc.is_active is False and "is_active" not in data)
+        needs_reindex = doc.is_active and (
+            "question" in data
+            or "answer_rich_text" in data
+            or "answer_markdown" in data
+            or "metadata_filter" in data
+            or data.get("is_active") is True
+        )
+
+        try:
+            if needs_unindex:
+                await get_corpus_linker().unindex_faq(faq_id)
+            elif needs_reindex:
+                corpus_linker = get_corpus_linker()
+
+                topic_keys = await corpus_linker.index_faq(
+                    faq_id,
+                    question=saved.question or "",
+                    answer_markdown=saved.answer_markdown or "",
+                )
+                if not topic_keys:
+                    raise ValueError("LLM could not assign the FAQ to any topic in the corpus catalog.")
+        except Exception as e:
+            # Rollback MongoDB fields
+            for k, v in original_fields.items():
+                setattr(doc, k, v)
+            await self._faq_repo.save(doc)
+            # Best-effort: restore corpus tree to old state using original question/answer
+            try:
+                await get_corpus_linker().index_faq(
+                    faq_id,
+                    question=original_fields.get("question", "") or "",
+                    answer_markdown=original_fields.get("answer_markdown", "") or "",
+                )
+            except Exception:
+                pass  # corpus state may be inconsistent; backfill can fix later
+            raise e
+
+        return saved
 
     async def delete_faq(self, faq_id: str) -> bool:
         doc = await self._faq_repo.find_by_id(faq_id)
         if not doc:
             return False
-        # Corpus graph unindex — best-effort
-        try:
-            from app.modules.rag.corpus.services.corpus_index_service import get_corpus_index_service
-            await get_corpus_index_service().unindex_faq(faq_id)
-        except Exception as _corpus_err:
-            logger.warning(f"[Corpus] unindex_faq skipped for {faq_id}: {_corpus_err}")
+        # Corpus tree unindex — must succeed before deletion
+        await get_corpus_linker().unindex_faq(faq_id)
         await self._faq_repo.delete(doc)
         return True
 
     async def get_faq(self, faq_id: str) -> Optional[FaqDocument]:
         return await self._faq_repo.find_by_id(faq_id)
+
+    async def find_ids_for_corpus(
+        self,
+        metadata_filter: Optional[Dict[str, Any]],
+        user_role: Optional[str],
+    ) -> set[str]:
+        """Return active FAQ IDs allowed for corpus traversal."""
+        query = await build_faq_prefilter_query(metadata_filter, user_role)
+        return await self._faq_repo.find_ids_by_query(query)
+
+    async def get_faqs_by_ids(self, faq_ids: List[str]) -> List[FaqDocument]:
+        return await self._faq_repo.find_by_ids(faq_ids)
 
     async def list_faqs(
         self,
@@ -257,32 +298,27 @@ class FaqService:
         return PagedResult(items=items, total=total, page=page, limit=limit)
 
     # ------------------------------------------------------------------
-    # Vectorless FAQ matching
+    # FAQ answer debugging
     # ------------------------------------------------------------------
 
-    async def find_best_match(
+    async def answer_from_faq_catalog(
         self,
         question: str,
         metadata_filter: Dict[str, Any],
-        threshold: Optional[float] = None,
-        top_k: int = 5,
-    ) -> Optional[FaqDocument]:
-        """Find the best matching active FAQ for *question* via one LLM pass.
+        *,
+        increment_view_count: bool = False,
+    ):
+        """Answer from active FAQs filtered by metadata via the RAG FAQ answering step.
 
-        Replaces Qdrant cosine similarity search. Flow:
-        1. MongoDB query: fetch active FAQs filtered by metadata (the "folder" layer).
-        2. Build a compact catalog of FAQ questions.
-        3. One LLM call: relevance classification → best match or null.
-        4. Return the matching FaqDocument (or None) and bump view_count.
+        This is used by the admin debug endpoint; it returns the generated FAQ answer
+        plus every FAQ the LLM used instead of collapsing multi-FAQ answers to one FAQ.
         """
-        # 1. Build metadata-based MongoDB filter
         mongo_filter: Optional[dict] = None
         if metadata_filter:
             builder = get_filter_builder()
             mongo_filter = await builder.build_mongo_filter(
                 metadata_filter, mongo_prefix="metadata_filter"
             )
-        # Đường này phục vụ luồng email (người gửi là sinh viên) → luôn ẩn FAQ lecturer_only
         mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
 
         faqs, _ = await self._faq_repo.list_faqs(
@@ -295,39 +331,22 @@ class FaqService:
             logger.info(f"[FAQ] No active FAQs in catalog for metadata {metadata_filter}")
             return None
 
-        # 2. Build catalog entries
-        entries: List[FaqMatchEntry] = []
-        faq_by_index: Dict[int, FaqDocument] = {}
-        for i, faq in enumerate(faqs, 1):
-            meta = faq.metadata_filter
-            ey = meta.enrollment_year.model_dump() if meta.enrollment_year else None
-            ay = meta.academic_year.model_dump() if meta.academic_year else None
-            entries.append(FaqMatchEntry(
-                faq_id=str(faq.id),
-                question=faq.question,
-                enrollment_year=ey,
-                academic_year=ay,
-            ))
-            faq_by_index[i] = faq
-
-        # 3. One LLM pass
-        matcher = FaqMatcher(self._gemini_match)
-        result = await matcher.match(question, entries)
-        if not result:
+        faq_answer_service = FaqAnswerService()
+        faq_answer_service._faq_repo = self._faq_repo
+        answer = await faq_answer_service.answer(
+            question,
+            faqs,
+            increment_view_count=increment_view_count,
+        )
+        if not answer:
             logger.info(f"[FAQ] LLM found no match for: '{question[:80]}'")
             return None
 
-        matched_faq_id = result["entry"].faq_id
-        matched_faq = next((f for f in faqs if str(f.id) == matched_faq_id), None)
-        if not matched_faq or not matched_faq.is_active:
-            return None
-
         logger.info(
-            f"[FAQ] Match: '{matched_faq.question}' (score={result['score']}) "
-            f"reason={result['reason']}"
+            "[FAQ] Answered from FAQ ids=%s",
+            [str(getattr(faq, "id", "")) for faq in answer.matched_faqs],
         )
-        asyncio.create_task(self._faq_repo.increment_view_count(matched_faq_id))
-        return matched_faq
+        return answer
 
     # ------------------------------------------------------------------
     # Interaction logging

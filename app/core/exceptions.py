@@ -113,6 +113,18 @@ class GeminiException(AppException):
         super().__init__(message, status_code=502, details=details)
 
 
+class CorpusTraversalError(AppException):
+    """Corpus traversal operation failed.
+
+    status_code can be set by callers to propagate upstream signals:
+      502 – generic LLM/backend error (default)
+      429 – upstream rate limit
+      503 – upstream service unavailable
+    """
+    def __init__(self, message: str, status_code: int = 502, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, status_code=status_code, details=details)
+
+
 class RabbitMQException(AppException):
     """RabbitMQ operation failed."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):

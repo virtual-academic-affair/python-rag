@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Union
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.email.models.email_types import SystemLabel, ClassRegistrationPayload, InquiryFilters
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 
 class LabelClassificationResponse(BaseSchema):

@@ -23,5 +23,5 @@ async def get_toc_tree(
         doc_name=toc_data.doc_name,
         doc_description=toc_data.doc_description,
         line_count=toc_data.line_count,
-        structure=toc_data.structure,
+        structure=[node.model_dump() for node in toc_data.structure],
     )

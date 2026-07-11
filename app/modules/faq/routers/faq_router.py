@@ -16,6 +16,7 @@ from app.modules.faq.dtos import (
     FaqSynthesisRequest,
     FaqSynthesisResponse,
     FaqMatchRequest,
+    FaqMatchResponse,
     FaqImportPreviewResponse,
     FaqBulkCreateRequest,
     FaqBulkCreateResponse,
@@ -23,7 +24,6 @@ from app.modules.faq.dtos import (
     FaqImportExcelRequest
 )
 from app.modules.faq.services.faq_service import get_faq_service, FaqService
-from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
 from app.modules.faq.utils.excel_parser import parse_excel_to_faq_rows, parse_csv_to_faq_rows
 from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
 from app.modules.metadata.services.metadata_service import get_metadata_service
@@ -94,18 +94,26 @@ async def create_faq(
     return FaqResponse.from_document(result)
 
 
-@router.post("/match", response_model=FaqResponse)
+@router.post("/match", response_model=FaqMatchResponse)
 async def debug_match_faq(
     request: FaqMatchRequest,
     admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
-    """Debug endpoint to test vectorless FAQ matching."""
+    """Debug endpoint to test FAQ-based answering."""
     meta = request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {}
-    faq = await faq_svc.find_best_match(request.question, meta, threshold=request.threshold)
-    if not faq:
-        raise HTTPException(status_code=404, detail="No matching FAQ found above threshold")
-    return FaqResponse.from_document(faq)
+    result = await faq_svc.answer_from_faq_catalog(
+        request.question,
+        meta,
+        increment_view_count=False,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="No matching FAQ found")
+    return FaqMatchResponse(
+        answer_markdown=result.answer_markdown,
+        faq_ids=[str(getattr(faq, "id", "")) for faq in result.matched_faqs],
+        questions=[getattr(faq, "question", "") for faq in result.matched_faqs],
+    )
 
 
 # ==========================================
@@ -172,20 +180,10 @@ async def trigger_synthesis(
     admin: JWTPayload = Depends(require_admin)
 ):
     """Manually trigger FAQ synthesis background job."""
-    synth_svc = await get_faq_synthesis_service()
-    
-    try:
-        result = await synth_svc.run(
-            date_from_str=request.date_from,
-            date_to_str=request.date_to,
-            sources=request.sources
-        )
-        return FaqSynthesisResponse(**result)
-    except Exception as e:
-        if isinstance(e, APIError):
-            raise handle_google_api_error(e, prefix="Synthesis failed: ")
-            
-        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
+    raise HTTPException(
+        status_code=501,
+        detail="FAQ synthesis is temporarily disabled pending architecture migration"
+    )
 
 
 @router.patch("/{faq_id}", response_model=FaqResponse)

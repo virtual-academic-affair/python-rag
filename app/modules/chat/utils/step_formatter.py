@@ -76,6 +76,17 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         else:
             content = "Không tìm thấy tài liệu liên quan nào trong cơ sở dữ liệu."
 
+    elif step_type == "faq_match":
+        questions = step.get("questions") or []
+        if not questions and step.get("question"):
+            questions = [step["question"]]
+        if len(questions) == 1:
+            content = f"Tìm thấy FAQ trả lời đầy đủ câu hỏi: '{questions[0]}'."
+        elif questions:
+            content = f"Tìm thấy {len(questions)} FAQ cùng trả lời đầy đủ câu hỏi."
+        else:
+            content = "Tìm thấy FAQ trả lời đầy đủ câu hỏi."
+
     elif step_type == "call":
         name = step.get("name")
         args = step.get("args") or {}

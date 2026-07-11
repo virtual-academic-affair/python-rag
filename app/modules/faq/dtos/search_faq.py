@@ -6,7 +6,11 @@ from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
 class FaqMatchRequest(BaseSchema):
     question: str
     metadata_filter: FaqMetadataSchema = Field(default_factory=FaqMetadataSchema)
-    threshold: Optional[float] = None
+
+class FaqMatchResponse(BaseSchema):
+    answer_markdown: str
+    faq_ids: List[str]
+    questions: List[str]
 
 class FaqSynthesisRequest(BaseSchema):
     date_from: Optional[str] = Field(None, description="ISO format date. Default is now - LOOKBACK_DAYS")

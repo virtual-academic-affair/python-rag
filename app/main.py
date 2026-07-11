@@ -21,7 +21,7 @@ from app.modules.faq.models.interaction_log import InteractionLogDocument
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
 from app.modules.forms.models.form import FormDocument
-from app.modules.rag.corpus.models.corpus_node import CorpusNodeDocument
+from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.modules.email import EmailWorkflowOrchestrator
@@ -32,7 +32,6 @@ from app.integrations.llm.gemini import gemini_client
 from app.integrations.redis.client import get_redis_client
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
-from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
 import uvicorn
 from google.genai.errors import APIError
 
@@ -225,10 +224,7 @@ async def lifespan(_: FastAPI):
     _cleanup_task = asyncio.create_task(_run_artifact_cleanup())
     
     _synthesis_task = None
-    if settings.FAQ_SYNTHESIS_ENABLED:
-        _synthesis_task = asyncio.create_task(_run_monthly_faq_synthesis())
-    else:
-        logger.info("ℹ️ FAQ synthesis background task is disabled via config")
+    logger.info("ℹ️ FAQ synthesis background task is temporarily disabled pending architecture migration")
 
     # 8. Initialize Redis
     if settings.REDIS_ENABLED:
