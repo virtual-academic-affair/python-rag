@@ -35,6 +35,21 @@ async def test_file_query_admin_skips_lecturer_only():
 
 
 @pytest.mark.asyncio
+async def test_admin_can_filter_exact_lecturer_only_value():
+    file_query = await build_file_prefilter_query(EY, "admin", True)
+    faq_query = await build_faq_prefilter_query(EY, "admin", False)
+
+    assert file_query["lecturer_only"] is True
+    assert faq_query["lecturer_only"] is False
+
+
+@pytest.mark.asyncio
+async def test_student_cannot_opt_into_lecturer_only_content():
+    query = await build_file_prefilter_query(EY, "student", True)
+    assert query["lecturer_only"] == {"$ne": True}
+
+
+@pytest.mark.asyncio
 async def test_file_query_none_role_filters_like_student():
     q = await build_file_prefilter_query(EY, None)
     assert q["lecturer_only"] == {"$ne": True}

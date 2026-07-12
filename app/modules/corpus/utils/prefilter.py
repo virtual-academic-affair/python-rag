@@ -19,9 +19,12 @@ def is_privileged(user_role: Optional[str]) -> bool:
 async def build_file_prefilter_query(
     metadata_filter: Optional[dict],
     user_role: Optional[str],
+    lecturer_only: Optional[bool] = None,
 ) -> dict[str, Any]:
     query: dict[str, Any] = {"status": FileStatus.READY.value}
-    if not is_privileged(user_role):
+    if lecturer_only is not None and is_privileged(user_role):
+        query["lecturer_only"] = lecturer_only
+    elif not is_privileged(user_role):
         query["lecturer_only"] = {"$ne": True}
     mongo_filter = await get_filter_builder().build_mongo_filter(
         metadata_filter or {},
@@ -34,9 +37,12 @@ async def build_file_prefilter_query(
 async def build_faq_prefilter_query(
     metadata_filter: Optional[dict],
     user_role: Optional[str],
+    lecturer_only: Optional[bool] = None,
 ) -> dict[str, Any]:
     query: dict[str, Any] = {"is_active": True}
-    if not is_privileged(user_role):
+    if lecturer_only is not None and is_privileged(user_role):
+        query["lecturer_only"] = lecturer_only
+    elif not is_privileged(user_role):
         query["lecturer_only"] = {"$ne": True}
     mongo_filter = await get_filter_builder().build_mongo_filter(
         metadata_filter or {},

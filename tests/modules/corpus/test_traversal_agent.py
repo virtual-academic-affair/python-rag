@@ -1,60 +1,65 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from app.modules.rag.query.retrieval.traversal.tools import build_traversal_tools
+
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+from app.modules.rag.query.retrieval.traversal.runtime.snapshot import build_filtered_snapshot_from_nodes
+from app.modules.rag.query.retrieval.traversal.tools import build_traversal_tools
 
 
-def _make_node(node_key, file_ids=None, faq_ids=None, title="", summary="",
-               child_keys=None, parent_key=None):
-    n = MagicMock(spec=CorpusNodeDocument)
-    n.node_key = node_key
-    n.direct_file_ids = file_ids or []
-    n.direct_faq_ids = faq_ids or []
-    n.subtree_file_ids = file_ids or []
-    n.subtree_faq_ids = faq_ids or []
-    n.title = title or node_key
-    n.summary = summary or ""
-    n.child_keys = child_keys or []
-    n.parent_key = parent_key
-    return n
+def _make_node(node_key, file_ids=None, faq_ids=None, title="", summary="", child_keys=None, parent_key=None):
+    node = MagicMock(spec=CorpusNodeDocument)
+    node.node_key = node_key
+    node.direct_file_ids = file_ids or []
+    node.direct_faq_ids = faq_ids or []
+    node.subtree_file_ids = file_ids or []
+    node.subtree_faq_ids = faq_ids or []
+    node.title = title or node_key
+    node.summary = summary
+    node.child_keys = child_keys or []
+    node.parent_key = parent_key
+    return node
 
 
 @pytest.mark.asyncio
-async def test_traversal_tools_filtering_and_expansion():
-    # Construct a small hierarchy:
-    # root (parent_key=None) -> child1 (has allowed file)
-    #                        -> child2 (has blocked file)
+async def test_tools_build_filtered_snapshot_expand_one_level_and_select_scope():
     root = _make_node("root", title="Gốc", child_keys=["child1", "child2"])
-    child1 = _make_node("child1", title="Con 1", file_ids=["f1"], parent_key="root")
-    child2 = _make_node("child2", title="Con 2", file_ids=["f2"], parent_key="root")
+    child1 = _make_node("child1", file_ids=["f1"], title="Con 1", parent_key="root")
+    child2 = _make_node("child2", file_ids=["f2"], title="Con 2", parent_key="root")
     root.subtree_file_ids = ["f1", "f2"]
+    snapshot = build_filtered_snapshot_from_nodes([root, child1, child2], {"f1"}, set())
 
-    mock_repo = MagicMock()
-    mock_repo.get_all = AsyncMock(return_value=[root, child1, child2])
+    list_roots, expand, _inspect, select, _no_match = build_traversal_tools(snapshot)
 
-    allowed_files = {"f1"}
-    allowed_faqs = set()
+    roots = await list_roots()
+    assert roots["status"] == "ok"
+    assert roots["topics"][0]["counts"] == {
+        "directFiles": 0,
+        "directFaqs": 0,
+        "subtreeFiles": 1,
+        "subtreeFaqs": 0,
+    }
 
-    tools = build_traversal_tools(mock_repo, allowed_files, allowed_faqs)
-    list_roots, expand, select = tools
+    children = await expand("root")
+    assert [item["nodeKey"] for item in children["topics"]] == ["child1"]
 
-    # 1. list_roots should only show root because it has child1 (which contains f1)
-    roots_str = await list_roots()
-    assert "root: Gốc" in roots_str
-    assert "[1 tổng cả phân mục con]" in roots_str
-    # child1 is visible because it has allowed content; child2 has f2 which is blocked
-    assert "Con 1" in roots_str
-    assert "Con 2" not in roots_str
+    selected = await select([{"node_key": "child1", "scope": "direct"}])
+    assert selected["status"] == "selected"
+    assert selected["totalFileCandidates"] == 1
 
-    # 2. expand_topic("root") should return child1 but not child2
-    expand_str = await expand("root")
-    assert "child1" in expand_str
-    assert "[1 mục trực tiếp]" in expand_str
-    assert "child2" not in expand_str
 
-    # 3. select_topics validates the final selection
-    selection = await select(["child1", "child2", "missing"])
-    assert selection["selected"] == ["child1"]
-    assert selection["invalid"] == ["child2", "missing"]
-    assert selection["expand_stack"] == ["root"]
-    assert selection["total_files"] == 1
+@pytest.mark.asyncio
+async def test_tools_reject_unrevealed_or_overlapping_selection():
+    root = _make_node("root", child_keys=["child"])
+    child = _make_node("child", file_ids=["f1"], parent_key="root")
+    root.subtree_file_ids = ["f1"]
+    snapshot = build_filtered_snapshot_from_nodes([root, child], {"f1"}, set())
+    list_roots, expand, _inspect, select, _no_match = build_traversal_tools(snapshot)
+
+    assert (await expand("root"))["status"] == "invalid"
+    await list_roots()
+    await expand("root")
+    result = await select([
+        {"node_key": "root", "scope": "subtree"},
+        {"node_key": "child", "scope": "direct"},
+    ])
+    assert result["status"] == "invalid"

@@ -16,7 +16,7 @@ def test_seed_topics_structure():
         assert summary, "summary must not be empty"
 
 
-def test_seed_topic_keys_are_unique():
+def test_seed_slugs_are_unique():
     slugs = [slug for slug, _, _, _ in SEED_TOPICS]
     assert len(slugs) == len(set(slugs)), "duplicate slugs in SEED_TOPICS"
 

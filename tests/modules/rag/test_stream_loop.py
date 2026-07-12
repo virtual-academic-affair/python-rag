@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from google.genai import types
 
-from app.modules.rag.query.answering.pageindex.stream_loop import stream_agent_loop
+from app.modules.rag.query.answering.pageindex_agent.stream_loop import stream_pageindex_agent_loop
 
 
 class _AsyncStream:
@@ -30,7 +30,7 @@ def _chunk(parts):
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_loop_emits_tool_text_and_final_result():
+async def test_stream_pageindex_agent_loop_emits_tool_text_and_final_result():
     async def tool(**_kwargs):
         return "{}"
 
@@ -46,17 +46,17 @@ async def test_stream_agent_loop_emits_tool_text_and_final_result():
     ])
 
     with patch(
-        "app.modules.rag.query.answering.pageindex.stream_loop.get_agent_config",
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.get_agent_config",
         return_value=([], {"get_document_structure": tool}, object()),
     ), patch(
-        "app.modules.rag.query.answering.pageindex.stream_loop.async_retry",
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.async_retry",
         retry_mock,
     ), patch(
-        "app.modules.rag.query.answering.pageindex.stream_loop.build_sources_from_steps",
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.build_sources_from_steps",
         AsyncMock(return_value=[]),
     ):
         events = []
-        async for event in stream_agent_loop(
+        async for event in stream_pageindex_agent_loop(
             candidate_files=[{"file_id": "file-1", "file_name": "Quy chế", "doc_description": ""}],
             prompt_contents=[],
         ):

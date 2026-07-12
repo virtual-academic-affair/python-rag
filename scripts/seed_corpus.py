@@ -78,6 +78,7 @@ async def main():
     )
     repo = CorpusNodeRepository()
     created = await seed_corpus(repo)
+    await repo.assert_integrity()
     print(f"Import complete! Created {created} topic nodes.")
     await Database.disconnect()
 

@@ -1,11 +1,11 @@
 from app.modules.rag.query.retrieval.retrieval_service import (
-    RetrievalContext,
+    RetrievalSeeds,
     RetrievalService,
     get_retrieval_service,
 )
 
 __all__ = [
-    "RetrievalContext",
+    "RetrievalSeeds",
     "RetrievalService",
     "get_retrieval_service",
 ]

@@ -1,7 +1,7 @@
 """
-Step Formatter — Chuyển đổi pipeline step sang schema thống nhất {type, content}.
+Step Formatter — Chuyển đổi raw pipeline activity sang schema public {type, content}.
 
-Tất cả step (query_analysis, retrieval, call) đều được trả về dưới dạng:
+Tất cả public step đều được trả về dưới dạng:
     {"type": "<loại>", "content": "<mô tả ngôn ngữ tự nhiên tiếng Việt>"}
 
 Hàm này là pure function (không có side effect, không I/O) và có thể được
@@ -68,24 +68,55 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         else:
             content = f"Phân tích câu hỏi: '{original}' (Không cần tra cứu tài liệu)."
 
-    elif step_type == "retrieval":
+    elif step_type == "corpus_traversal":
+        action = step.get("action")
+        if action == "list_roots":
+            content = f"Đã tìm thấy {step.get('topic_count', 0)} nhóm chủ đề có dữ liệu phù hợp."
+        elif action == "expand":
+            content = f"Đã mở chủ đề {step.get('node_title', 'đã chọn')} và tìm thấy {step.get('child_count', 0)} chủ đề con."
+        elif action == "inspect":
+            scope = "chủ đề này" if step.get("scope") == "direct" else "toàn bộ nhánh chủ đề"
+            content = (
+                f"Đã kiểm tra {step.get('sample_file_count', 0)} tài liệu và "
+                f"{step.get('sample_faq_count', 0)} FAQ mẫu trong {scope} {step.get('node_title', 'đã chọn')}."
+            )
+        elif action == "select":
+            topics = step.get("topics") or []
+            titles = [item.get("nodeTitle") or item.get("nodeKey") for item in topics if isinstance(item, dict)]
+            topic_text = ", ".join(filter(None, titles)) or "các chủ đề liên quan"
+            content = (
+                f"Đã chọn {topic_text}: {step.get('file_count', 0)} tài liệu và "
+                f"{step.get('faq_count', 0)} FAQ ứng viên."
+            )
+        else:
+            content = "Không tìm thấy chủ đề phù hợp trong Corpus."
+
+    elif step_type == "faq_retrieval":
+        count = step.get("faq_count", 0)
+        if count:
+            content = f"Đã chọn {count} FAQ liên quan để kiểm tra câu trả lời."
+        else:
+            content = "Không tìm thấy FAQ phù hợp."
+
+    elif step_type == "faq_answer":
+        questions = step.get("questions") or []
+        if step.get("answered"):
+            if len(questions) == 1:
+                content = f"FAQ đã trả lời đầy đủ câu hỏi: '{questions[0]}'."
+            elif questions:
+                content = f"{len(questions)} FAQ đã cùng trả lời đầy đủ câu hỏi."
+            else:
+                content = "FAQ đã trả lời đầy đủ câu hỏi."
+        else:
+            content = "FAQ chưa đủ để trả lời toàn bộ câu hỏi, tiếp tục tra cứu tài liệu."
+
+    elif step_type == "file_retrieval":
         files = step.get("candidate_files") or []
         file_names = [f.get("file_name") for f in files if f.get("file_name")]
         if file_names:
             content = f"Tìm thấy {len(file_names)} tài liệu liên quan: {', '.join(file_names)}."
         else:
             content = "Không tìm thấy tài liệu liên quan nào trong cơ sở dữ liệu."
-
-    elif step_type == "faq_match":
-        questions = step.get("questions") or []
-        if not questions and step.get("question"):
-            questions = [step["question"]]
-        if len(questions) == 1:
-            content = f"Tìm thấy FAQ trả lời đầy đủ câu hỏi: '{questions[0]}'."
-        elif questions:
-            content = f"Tìm thấy {len(questions)} FAQ cùng trả lời đầy đủ câu hỏi."
-        else:
-            content = "Tìm thấy FAQ trả lời đầy đủ câu hỏi."
 
     elif step_type == "call":
         name = step.get("name")
@@ -120,4 +151,5 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         # Giữ nguyên content nếu đây là loại step không cần chuyển đổi (reasoning, text, v.v.)
         content = step.get("content", "")
 
-    return {"type": step_type, "content": content}
+    public_type = "document_read" if step_type == "call" else step_type
+    return {"type": public_type, "content": content}

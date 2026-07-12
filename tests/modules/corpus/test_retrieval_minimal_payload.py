@@ -3,21 +3,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.exceptions import AppException
-from app.modules.corpus.dtos.traversal import Candidate
-from app.modules.corpus.dtos.traversal import TraversalResult
-from app.modules.rag.query.answering.pageindex.citation import build_sources_from_steps
+from app.modules.corpus.contracts import FaqCandidate, FileCandidate, TraversalResult
+from app.modules.rag.query.answering.pageindex_agent.citations.source_builder import build_sources_from_steps
 from app.modules.rag.query.retrieval.retrieval_service import FAQ_CONTEXT_LIMIT
-from app.modules.rag.query.retrieval.retrieval_service import RetrievalContext, RetrievalService
+from app.modules.rag.query.retrieval.retrieval_service import RetrievalService
 
 
 @pytest.mark.asyncio
 async def test_retrieval_service_returns_minimal_candidate_payload():
     svc = RetrievalService.__new__(RetrievalService)
     svc._reranker = MagicMock()
-    svc._reranker.rerank_files = AsyncMock(side_effect=lambda _q, candidates: candidates)
+    svc._reranker.rerank_files = AsyncMock(side_effect=lambda _q, candidates, *, limit: candidates)
 
     with patch(
-        "app.modules.rag.query.retrieval.retrieval_service.hydrate_agent_file_candidates",
+        "app.modules.rag.query.retrieval.retrieval_service.hydrate_pageindex_candidate_files",
         AsyncMock(return_value=[{
             "file_id": "file1",
             "file_name": "Quy chế",
@@ -25,7 +24,7 @@ async def test_retrieval_service_returns_minimal_candidate_payload():
         }]),
     ):
         result = await svc._prepare_file_candidates(
-            [Candidate("file", "file1")],
+            [FileCandidate("file1")],
             question="hỏi gì đó",
         )
 
@@ -38,54 +37,45 @@ async def test_retrieval_service_returns_minimal_candidate_payload():
     assert "table_of_contents" not in result[0]
     assert "storage_path" not in result[0]
     assert "markdown_storage_path" not in result[0]
-    svc._reranker.rerank_files.assert_awaited_once_with("hỏi gì đó", result)
+    svc._reranker.rerank_files.assert_awaited_once_with("hỏi gì đó", result, limit=5)
 
 
 @pytest.mark.asyncio
-async def test_retrieval_service_retrieve_context_orchestrates_traversal_files_and_faqs():
+async def test_retrieval_service_traverse_and_faq_context_are_separate():
     svc = RetrievalService.__new__(RetrievalService)
     svc._reranker = MagicMock()
-    svc._reranker.rerank_files = AsyncMock(side_effect=lambda _q, candidates: candidates)
     svc._reranker.rerank_faqs = AsyncMock(side_effect=lambda _q, faqs, *, limit: faqs[:limit])
     traversal_result = TraversalResult(
-        file_candidates=[Candidate("file", "file1")],
-        supporting_faqs=[Candidate("faq", "faq1")],
-        traversal_order=["topic-1"],
-        prefilter={"allowed_files": 1, "allowed_faqs": 1},
+        file_candidates=[FileCandidate("file1")],
+        faq_candidates=[FaqCandidate("faq1")],
+        traversal_node_keys=["topic-1"],
+        prefilter={"allowed_file_count": 1, "allowed_faq_count": 1},
     )
     faq_doc = object()
 
     with patch(
         "app.modules.rag.query.retrieval.retrieval_service.run_corpus_traversal_pipeline",
         AsyncMock(return_value=traversal_result),
-    ) as traversal_mock, patch(
-        "app.modules.rag.query.retrieval.retrieval_service.hydrate_agent_file_candidates",
-        AsyncMock(return_value=[{
-            "file_id": "file1",
-            "file_name": "Quy chế",
-            "doc_description": "Mô tả ngắn",
-        }]),
-    ), patch(
-        "app.modules.rag.query.retrieval.retrieval_service.fetch_supporting_faqs",
-        AsyncMock(return_value=[faq_doc]),
-    ) as faq_mock:
-        context = await svc.retrieve_context(
+    ) as traversal_mock:
+        seeds = await svc.traverse_query(
             "câu hỏi",
             metadata_filter={"enrollment_year": {"from_year": 2022, "to_year": 2022}},
             user_role="student",
         )
 
-    assert isinstance(context, RetrievalContext)
-    assert context.candidate_files == [{
-        "file_id": "file1",
-        "file_name": "Quy chế",
-        "doc_description": "Mô tả ngắn",
-    }]
-    assert context.faq_docs == [faq_doc]
-    assert context.prefilter == {"allowed_files": 1, "allowed_faqs": 1}
-    assert context.traversal_order == ["topic-1"]
+    with patch(
+        "app.modules.rag.query.retrieval.retrieval_service.hydrate_faq_candidate_docs",
+        AsyncMock(return_value=[faq_doc]),
+    ) as faq_mock:
+        faq_docs = await svc.retrieve_faq_context("câu hỏi", seeds.faq_candidates)
+
+    assert seeds.file_candidates == [FileCandidate("file1")]
+    assert seeds.faq_candidates == [FaqCandidate("faq1")]
+    assert seeds.prefilter == {"allowed_file_count": 1, "allowed_faq_count": 1}
+    assert seeds.traversal_node_keys == ["topic-1"]
+    assert faq_docs == [faq_doc]
     traversal_mock.assert_awaited_once()
-    faq_mock.assert_awaited_once_with([Candidate("faq", "faq1")], limit=20)
+    faq_mock.assert_awaited_once_with([FaqCandidate("faq1")], limit=1000)
     svc._reranker.rerank_faqs.assert_awaited_once_with(
         "câu hỏi",
         [faq_doc],
@@ -94,20 +84,16 @@ async def test_retrieval_service_retrieve_context_orchestrates_traversal_files_a
 
 
 @pytest.mark.asyncio
-async def test_retrieval_service_traversal_failure_returns_empty_context():
+async def test_retrieval_service_traversal_failure_is_not_swallowed():
     svc = RetrievalService.__new__(RetrievalService)
     svc._reranker = MagicMock()
 
     with patch(
         "app.modules.rag.query.retrieval.retrieval_service.run_corpus_traversal_pipeline",
         AsyncMock(side_effect=RuntimeError("down")),
-    ), patch(
-        "app.modules.rag.query.retrieval.retrieval_service.fetch_supporting_faqs",
-        AsyncMock(return_value=[]),
     ):
-        context = await svc.retrieve_context("câu hỏi")
-
-    assert context == RetrievalContext()
+        with pytest.raises(RuntimeError):
+            await svc.traverse_query("câu hỏi")
 
 
 @pytest.mark.asyncio
@@ -120,7 +106,7 @@ async def test_retrieval_service_app_exception_is_not_swallowed():
         AsyncMock(side_effect=AppException("bad", status_code=400)),
     ):
         with pytest.raises(AppException):
-            await svc.retrieve_context("câu hỏi")
+            await svc.traverse_query("câu hỏi")
 
 
 @pytest.mark.asyncio
@@ -135,7 +121,7 @@ async def test_build_sources_from_minimal_candidates_hydrates_accessed_file():
     }]
 
     with patch(
-        "app.modules.rag.query.answering.pageindex.citation.hydrate_source_files",
+        "app.modules.rag.query.answering.pageindex_agent.citations.source_builder.hydrate_source_files",
         AsyncMock(return_value={
             "file1": {
                 "file_id": "file1",

@@ -12,7 +12,7 @@ from app.modules.forms.dtos import (
     FormBulkCreateResponse
 )
 from app.modules.forms.services.form_service import get_form_service, FormService
-from app.modules.forms.utils.excel_parser import parse_excel_to_form_rows, parse_csv_to_form_rows
+from app.modules.forms.services.form_import_service import get_form_import_service
 
 router = APIRouter(prefix="/forms", tags=["Forms"])
 
@@ -94,32 +94,15 @@ async def import_preview(
     content_link_col: str = Form("2"),
     notes_col: Optional[str] = Form("3"),
     admin: JWTPayload = Depends(require_admin),
-    form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
-    if file.filename and file.filename.lower().endswith('.csv'):
-        result = parse_csv_to_form_rows(
-            file_bytes=content,
-            document_type_col=document_type_col,
-            content_link_col=content_link_col,
-            notes_col=notes_col,
-            start_row=int(start_row),
-            preview_limit=10
-        )
-    else:
-        result = parse_excel_to_form_rows(
-            file_bytes=content,
-            document_type_col=document_type_col,
-            content_link_col=content_link_col,
-            notes_col=notes_col,
-            start_row=int(start_row),
-            preview_limit=10
-        )
-    if result.get("error"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    return FormImportPreviewResponse(
-        rows=[item.model_dump(by_alias=True) for item in result["rows"]],
-        total_previewed=result["total_previewed"]
+    return await get_form_import_service().preview_import(
+        filename=file.filename,
+        file_bytes=content,
+        start_row=start_row,
+        document_type_col=document_type_col,
+        content_link_col=content_link_col,
+        notes_col=notes_col,
     )
 
 @router.post("/import", response_model=FormBulkCreateResponse)
@@ -130,31 +113,13 @@ async def import_forms(
     content_link_col: str = Form("2"),
     notes_col: Optional[str] = Form("3"),
     admin: JWTPayload = Depends(require_admin),
-    form_svc: FormService = Depends(get_form_service)
 ):
     content = await file.read()
-    if file.filename and file.filename.lower().endswith('.csv'):
-        result = parse_csv_to_form_rows(
-            file_bytes=content,
-            document_type_col=document_type_col,
-            content_link_col=content_link_col,
-            notes_col=notes_col,
-            start_row=int(start_row)
-        )
-    else:
-        result = parse_excel_to_form_rows(
-            file_bytes=content,
-            document_type_col=document_type_col,
-            content_link_col=content_link_col,
-            notes_col=notes_col,
-            start_row=int(start_row)
-        )
-    if result.get("error"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    
-    count = await form_svc.upsert_many(result["rows"])
-    return FormBulkCreateResponse(
-        message=f"Imported/updated {count} form templates successfully.",
-        count=count,
-        created=count
+    return await get_form_import_service().import_forms(
+        filename=file.filename,
+        file_bytes=content,
+        start_row=start_row,
+        document_type_col=document_type_col,
+        content_link_col=content_link_col,
+        notes_col=notes_col,
     )

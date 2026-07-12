@@ -1,0 +1,7 @@
+interface:
+  display_name: "Python RAG App Maintainer"
+  short_description: "Maintain python-rag app modules and APIs"
+  default_prompt: "Use $python-rag-app-maintainer to update normal app modules, API DTOs, docs, and tests while preserving project boundaries."
+
+policy:
+  allow_implicit_invocation: true

@@ -14,9 +14,9 @@ ACTIVE = [
 @patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
 async def test_assign_topics_selects_valid(mock_call):
     mock_call.return_value = json.dumps({"selected": ["chuan-dau-ra-ngoai-ngu"], "new_topics": []})
-    selected, new = await assign_topics("QĐ ngoại ngữ", "Tiếng Anh B1", ACTIVE)
-    assert selected == ["chuan-dau-ra-ngoai-ngu"]
-    assert new == []
+    result = await assign_topics("QĐ ngoại ngữ", "Tiếng Anh B1", ACTIVE)
+    assert result.selected_node_keys == ["chuan-dau-ra-ngoai-ngu"]
+    assert result.new_topic_proposals == []
 
 
 @pytest.mark.asyncio
@@ -26,37 +26,56 @@ async def test_assign_topics_new_topic(mock_call):
         "selected": [],
         "new_topics": [{"slug": "xet-chinh-sach", "title": "Xét chính sách", "summary": "Mô tả"}],
     })
-    selected, new = await assign_topics("Chính sách học phí", "Nội dung", ACTIVE)
-    assert selected == []
-    assert len(new) == 1
-    assert new[0].slug == "xet-chinh-sach"
-    assert new[0].title == "Xét chính sách"
+    result = await assign_topics("Chính sách học phí", "Nội dung", ACTIVE)
+    assert result.selected_node_keys == []
+    assert len(result.new_topic_proposals) == 1
+    assert result.new_topic_proposals[0].slug == "xet-chinh-sach"
+    assert result.new_topic_proposals[0].title == "Xét chính sách"
+
+
+@pytest.mark.asyncio
+@patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
+async def test_assign_topics_duplicate_new_slug_becomes_selected(mock_call):
+    mock_call.return_value = json.dumps({
+        "selected": [],
+        "new_topics": [{
+            "slug": "hoc-phi-mien-giam",
+            "title": "Học phí & miễn giảm",
+            "summary": "Trùng topic hiện có",
+        }],
+    })
+
+    result = await assign_topics("Học phí", "Nội dung", ACTIVE)
+
+    assert result.selected_node_keys == ["hoc-phi-mien-giam"]
+    assert result.new_topic_proposals == []
+    assert result.ignored_duplicate_proposals == ["hoc-phi-mien-giam"]
 
 
 @pytest.mark.asyncio
 @patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
 async def test_assign_topics_bad_json_returns_empty(mock_call):
     mock_call.return_value = "not json at all"
-    selected, new = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
-    assert selected == []
-    assert new == []
+    result = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
+    assert result.selected_node_keys == []
+    assert result.new_topic_proposals == []
 
 
 @pytest.mark.asyncio
 @patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
 async def test_assign_topics_non_object_json_returns_empty(mock_call):
     mock_call.return_value = json.dumps(["not", "an", "object"])
-    selected, new = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
-    assert selected == []
-    assert new == []
+    result = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
+    assert result.selected_node_keys == []
+    assert result.new_topic_proposals == []
 
 
 @pytest.mark.asyncio
 @patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
 async def test_assign_topics_filters_unknown_keys(mock_call):
     mock_call.return_value = json.dumps({"selected": ["does-not-exist"], "new_topics": []})
-    selected, new = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
-    assert selected == []
+    result = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
+    assert result.selected_node_keys == []
 
 
 @pytest.mark.asyncio
@@ -69,12 +88,12 @@ async def test_assign_topics_empty_catalog_bootstraps_root_topics(mock_call):
         ],
     })
 
-    selected, new = await assign_topics("Tài liệu", "Nội dung", [])
+    result = await assign_topics("Tài liệu", "Nội dung", [])
 
-    assert selected == []
-    assert len(new) == 1
-    assert new[0].slug == "hoc-phi"
-    assert new[0].parent is None
+    assert result.selected_node_keys == []
+    assert len(result.new_topic_proposals) == 1
+    assert result.new_topic_proposals[0].slug == "hoc-phi"
+    assert result.new_topic_proposals[0].parent is None
     mock_call.assert_called_once()
 
 
@@ -82,8 +101,8 @@ async def test_assign_topics_empty_catalog_bootstraps_root_topics(mock_call):
 @patch("app.modules.rag.ingestion.corpus_linker.call_corpus_llm")
 async def test_assign_topics_empty_content_uses_name_only(mock_call):
     mock_call.return_value = json.dumps({"selected": ["chuan-dau-ra-ngoai-ngu"], "new_topics": []})
-    selected, new = await assign_topics("QĐ ngoại ngữ", "", ACTIVE)
-    assert selected == ["chuan-dau-ra-ngoai-ngu"]
+    result = await assign_topics("QĐ ngoại ngữ", "", ACTIVE)
+    assert result.selected_node_keys == ["chuan-dau-ra-ngoai-ngu"]
 
 
 @pytest.mark.asyncio
@@ -96,8 +115,8 @@ async def test_assign_topics_new_topic_with_valid_parent(mock_call):
             "summary": "Mô tả", "parent": "hoc-phi-mien-giam",
         }],
     })
-    _, new = await assign_topics("QĐ học bổng", "Nội dung", ACTIVE)
-    assert new[0].parent == "hoc-phi-mien-giam"
+    result = await assign_topics("QĐ học bổng", "Nội dung", ACTIVE)
+    assert result.new_topic_proposals[0].parent == "hoc-phi-mien-giam"
 
 
 @pytest.mark.asyncio
@@ -110,8 +129,8 @@ async def test_assign_topics_new_topic_invalid_parent_becomes_none(mock_call):
             "summary": "Mô tả", "parent": "khong-ton-tai",
         }],
     })
-    _, new = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
-    assert new[0].parent is None
+    result = await assign_topics("Tài liệu", "Nội dung", ACTIVE)
+    assert result.new_topic_proposals[0].parent is None
 
 
 @pytest.mark.asyncio
@@ -125,9 +144,9 @@ async def test_assign_topics_empty_catalog_caps_new_topics_at_eight(mock_call):
         ],
     })
 
-    _, new = await assign_topics("Tài liệu", "Nội dung", [])
+    result = await assign_topics("Tài liệu", "Nội dung", [])
 
-    assert len(new) == 8
+    assert len(result.new_topic_proposals) == 8
 
 
 @pytest.mark.asyncio
@@ -145,11 +164,11 @@ async def test_assign_topics_caps_after_validating_new_topics(mock_call):
         ],
     })
 
-    _, new = await assign_topics("Tài liệu", "Nội dung", [])
+    result = await assign_topics("Tài liệu", "Nội dung", [])
 
-    assert len(new) == 8
-    assert new[0].slug == "chu-de-hop-le-0"
-    assert new[-1].slug == "chu-de-hop-le-7"
+    assert len(result.new_topic_proposals) == 8
+    assert result.new_topic_proposals[0].slug == "chu-de-hop-le-0"
+    assert result.new_topic_proposals[-1].slug == "chu-de-hop-le-7"
 
 
 @pytest.mark.asyncio
@@ -160,11 +179,11 @@ async def test_assign_topics_new_topic_slug_only_uses_slug_as_title(mock_call):
         "new_topics": [{"slug": "hoc-phi-moi", "summary": "Mô tả"}],
     })
 
-    _, new = await assign_topics("Tài liệu", "Nội dung", [])
+    result = await assign_topics("Tài liệu", "Nội dung", [])
 
-    assert len(new) == 1
-    assert new[0].slug == "hoc-phi-moi"
-    assert new[0].title == "hoc-phi-moi"
+    assert len(result.new_topic_proposals) == 1
+    assert result.new_topic_proposals[0].slug == "hoc-phi-moi"
+    assert result.new_topic_proposals[0].title == "hoc-phi-moi"
 
 
 @pytest.mark.asyncio
@@ -185,7 +204,7 @@ async def test_index_file_uses_doc_description_before_full_toc():
     indexer = CorpusLinker.__new__(CorpusLinker)
     indexer._ensure_topic_nodes = AsyncMock(return_value=["hoc-phi"])
     indexer._corpus_service = MagicMock()
-    indexer._corpus_service.reindex_leaf = AsyncMock(return_value=["hoc-phi"])
+    indexer._corpus_service.reindex_payload = AsyncMock(return_value=["hoc-phi"])
 
     await indexer.index_file(
         "file1",
@@ -198,6 +217,6 @@ async def test_index_file_uses_doc_description_before_full_toc():
         "Quy định học phí",
         "Tài liệu mô tả học phí.\nI. Tổng quan\nII. Miễn giảm\nIII. Hoàn phí",
     )
-    indexer._corpus_service.reindex_leaf.assert_awaited_once_with(
+    indexer._corpus_service.reindex_payload.assert_awaited_once_with(
         "file", "file1", ["hoc-phi"]
     )

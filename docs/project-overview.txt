@@ -117,7 +117,7 @@ app/
 │   ├── files/                : Quản lý tệp tin, upload, delete, metadata sync.
 │   │   └── toc_tree/         : Repo & Model chuyên biệt cho cấu trúc tài liệu.
 │   ├── chat/                 : Controller của Agentic Chat & SSE Streaming.
-│   ├── corpus/               : Corpus Topic Tree, prefilter, debug traversal APIs.
+│   ├── corpus/               : Corpus Topic Tree, admin APIs, prefilter, debug preview APIs.
 │   ├── rag/                  : Ingestion và shared query pipeline.
 │   ├── email/                : Hệ thống phân loại & Workflows xử lý (Inquiry, etc.).
 │   ├── metadata/             : Quản lý Metadata Types & Validation.
@@ -228,7 +228,7 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 8.2. INQUIRY SERVICE:
 - B1: `EmailQueryAnalyzerService` trích xuất câu hỏi chuẩn, inquiry types và metadata filter từ subject/body email.
 - B2: `InquiryService` gọi shared `RagQueryPipeline.answer_email(...)` với behavior email: không dùng chat analyzer, không direct reply, citation link mặc định là file gốc.
-- B3: Pipeline chạy Corpus Tree retrieval, Cohere rerank file/FAQ riêng, rồi cho LLM đọc FAQ trước. Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả lời source=`faq`; nếu không đủ, PageIndex agent đọc tài liệu.
+- B3: Pipeline chạy Corpus Tree traversal, hydrate/rerank FAQ trước rồi cho LLM đọc FAQ. Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả lời source=`faq`; nếu không đủ mới hydrate/rerank file và chạy PageIndex agent.
 - B4: Gemini/PageIndex soạn câu trả lời email Markdown. Trích dẫn `(^...)` được resolve sang link file gốc (`citation_link_type="original"`). Nếu `to_rich_text=True`, email layer convert Markdown sang HTML.
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
@@ -245,7 +245,7 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 Dịch vụ này không phải là API public, nó là trái tim của Inquiry Workflow.
 
 CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_SYSTEM_PROMPT):
-- Vị trí: `app/modules/rag/query/answering/pageindex/prompts.py`.
+- Vị trí: `app/modules/rag/query/answering/pageindex_agent/prompts.py`.
 - Vai trò: Tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
 - Quy tắc bắt buộc:
   1. Dùng base system prompt chung cho chat/email, bổ sung khác biệt email như văn phong chính thức và đi thẳng vào nội dung.
@@ -351,7 +351,7 @@ PHÂN LOẠI METADATA (Hardened Schema):
 
 QUY TẮC VALIDATION (MetadataService):
 - Hệ thống sử dụng một Schema cứng (Hardened Schema) định nghĩa sẵn các trường metadata.
-- Mọi API Request/Response đều bắt buộc sử dụng camelCase (vd: enrollmentYear thay vì enrollment_year).
+- Mọi API request/response dùng camelCase. DTO Python vẫn khai báo snake_case nội bộ qua `BaseSchema`, alias tự chuyển sang camelCase khi nhận/trả JSON.
 - Metadata object-based: Các trường năm học được bọc trong object YearRange để hỗ trợ tìm kiếm khoảng giao thoa.
 - Defaults: Nếu không cung cấp metadata khi upload, hệ thống tự động gán giá trị mặc định an toàn (0, 9999, cong_van).
 11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY):
@@ -395,13 +395,13 @@ QUY TRÌNH CHUNG:
 3.  Retrieval:
     - Pre-filter MongoDB theo metadata + user role để có file/FAQ allowed.
     - Corpus Tree Traversal dùng LLM chọn topic/subtree liên quan.
-    - Hydrate file candidates và supporting FAQ docs.
-    - Cohere Rerank file candidates riêng, FAQ docs riêng; không trộn hai nhóm.
+    - Hydrate supporting FAQ docs trước, rồi Cohere rerank FAQ riêng.
 4.  FAQ answering:
     - LLM đọc một hoặc nhiều FAQ đã retrieval/rerank.
     - Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả `source="faq"` và token usage từ FAQ LLM call.
     - Nếu FAQ chỉ trả lời được một phần, pipeline tiếp tục PageIndex thay vì trả lời thiếu.
 5.  PageIndex answering:
+    - Chỉ khi FAQ không đủ trả lời toàn bộ câu hỏi, pipeline mới hydrate và Cohere rerank file candidates.
     - Nếu có file candidates, PageIndex agent đọc cấu trúc/nội dung tài liệu bằng tool loop và trả answer Markdown + sources.
     - Nếu không có file candidates và FAQ không đủ, trả no-candidate fallback với `source="bypass"`.
 
@@ -443,23 +443,22 @@ CHAT NON-STREAM:
 CHAT STREAM:
 - `ChatStreamService.stream_chat_response()` gọi `stream_chat` và map internal events sang JSON SSE hiện tại.
 - Stream giữ Markdown/text event realtime, không hỗ trợ rich text conversion.
-- Reasoning/tool/text events chỉ stream; persisted steps chỉ giữ các step structural như query_analysis, retrieval, faq_match, call.
+- Raw reasoning/tool output không được persist. Steps công khai giữ timeline an toàn: query_analysis, corpus_traversal, faq_retrieval, faq_answer, file_retrieval, document_read.
 
 STEPS/SOURCES:
-- `query_analysis`: câu hỏi gốc, effective question, needs_rag, metadata_filter.
-- `retrieval`: file candidates sau Corpus Tree traversal + Cohere rerank.
-- `faq_match`: chỉ xuất hiện khi LLM FAQ answering đủ để trả lời.
-- `call`: PageIndex tool calls khi cần đọc tài liệu.
+- `query_analysis`: step public có dạng `{type, content}`; dữ liệu phân tích chi tiết là contract nội bộ của RagQueryPipeline.
+- `corpus_traversal`: một step cho mỗi Corpus tool call thành công (list, expand, inspect, select hoặc no-match), được stream realtime.
+- `faq_retrieval` và `faq_answer`: chỉ xuất hiện khi Corpus traversal trả FAQ candidates; FAQ được chọn và kết quả đủ/chưa đủ để trả lời.
+- `file_retrieval`: file candidates sau Cohere rerank; `document_read`: PageIndex đọc cấu trúc hoặc nội dung tài liệu.
 - `sources`: citation metadata từ PageIndex tool usage; citation resolver có thể sinh markdown/original URLs theo request.
 
 17.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
 - Content-Type: `text/event-stream`.
-- Format: `data: {"type": "text|reasoning|call|query_analysis|retrieval|faq_match", "content": "...", "done": false}`.
+- Format: `data: {"type": "text|reasoning|query_analysis|corpus_traversal|faq_retrieval|faq_answer|file_retrieval|document_read", "content": "...", "done": false}`.
 - Final: `data: {"done": true, "sources": [...], "steps": [...], "tokenUsage": {...}, "processingTimeMs": N}`.
-- Luồng thường gặp: query_analysis → retrieval → text → done nếu FAQ đủ; hoặc query_analysis → retrieval → [reasoning → call] x N → text → done nếu cần đọc tài liệu.
-  (Mỗi lần gọi tool, Agent tự viết câu lập luận tiếng Việt trước khi phát event call)
+- Luồng thường gặp: query_analysis → corpus_traversal × N → faq_retrieval → faq_answer → text → done nếu FAQ đủ; hoặc tiếp tục file_retrieval → document_read × N → text → done.
 - CHAT_SYSTEM_PROMPT & EMAIL_SYSTEM_PROMPT dùng base prompt chung, rồi bổ sung khác biệt văn phong/format theo kênh.
-- Stream giữ reasoning/tool events realtime; non-stream chỉ trả final answer.
+- Corpus traversal và document_read activities được stream realtime; non-stream trả toàn bộ timeline trong response cuối.
 - [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
 
 
@@ -474,7 +473,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
 2.  Gửi gRPC request: `AuthService.VerifyToken(VerifyTokenRequest(token=token))`.
 3.  Nest-api thực hiện verify nội bộ. Kết quả trả về `VerifyTokenResponse`.
 4.  Payload mapping:
-    - `user_id` -> sub
+    - `userId` -> sub
     - `user_role` -> role (admin/lecture/student)
     - `access_metadata` -> cohort/department của chính user đó.
 5.  Logic:
@@ -534,7 +533,7 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - answer_rich_text    : str (HTML/Rich text trả lời)
   - answer_markdown     : str (Markdown trả lời)
   - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
-  - metadata_filter     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
+  - metadataFilter      : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
   - isActive           : bool
   - viewCount          : int
   - source              : str (manual, synthesized, seed)
@@ -642,6 +641,21 @@ PHÂN HỆ CHAT:
 PHÂN HỆ METADATA (Hardened):
 - GET /api/metadata/schema      : Lấy định nghĩa Schema metadata hiện tại của hệ thống.
 
+PHÂN HỆ CORPUS:
+- GET /api/corpus/stats         : Thống kê Corpus Tree theo node/root node và direct links.
+- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, metadata, lecturerOnly và updatedAt. Hỗ trợ enrollmentYear, academicYear và lecturerOnly; khi lọc, IDs/counts được tính lại và nhánh rỗng bị ẩn.
+- GET /api/corpus/topics        : List topic dạng flat.
+- GET /api/corpus/topics/{topicKey} : Chi tiết topic.
+- GET/PUT /api/corpus/files/{fileId}/topics : Xem hoặc thay thế topic assignments của file.
+- GET/PUT /api/corpus/faqs/{faqId}/topics : Xem hoặc thay thế topic assignments của FAQ.
+- POST /api/corpus/topics       : Tạo topic.
+- PATCH /api/corpus/topics/{topicKey} : Cập nhật topic.
+- POST /api/corpus/topics/{sourceKey}/merge : Merge topic vào target.
+- DELETE /api/corpus/topics/{topicKey} : Xóa topic.
+- POST /api/corpus/backfill     : Backfill READY files và active FAQs vào Corpus Tree.
+- POST /api/debug/corpus/traverse : Preview traversal typed candidates (`fileCandidates`, `faqCandidates`, `totalFileCandidates`, `totalFaqCandidates`) cùng trace `status`, `selectedTopics`, `expandedNodeKeys`, `inspectedNodeKeys`, `terminationReason`, `turnCount`, `tokenUsage`.
+- POST /api/debug/corpus/chat-preview : Preview luồng RagQueryPipeline.answer_chat (`pipelineResult.fileCandidates`, `pipelineResult.faqDocs`).
+
 PHÂN HỆ HEALTH & SYSTEM:
 - GET /health                   : Trạng thái kết nối DB, R2, RabbitMQ, gRPC.
 - GET /                         : Root check.
@@ -718,8 +732,9 @@ Tất cả các prompt tại dự án được viết theo cấu trúc:
 
 LƯU Ý QUAN TRỌNG:
 Prompt hiện được đặt gần domain sử dụng:
-- Chat/email query prompts: `app/modules/rag/query/prompts.py`.
-- PageIndex answering prompts: `app/modules/rag/query/answering/pageindex/prompts.py`.
+- PageIndex prompt builder: `app/modules/rag/query/answering/pageindex_agent/prompt_builder.py`.
+- PageIndex answering prompts: `app/modules/rag/query/answering/pageindex_agent/prompts.py`.
+- FAQ answering prompts: `app/modules/rag/query/answering/faq_answering/prompts.py`.
 - Corpus traversal prompts: `app/modules/rag/query/retrieval/traversal/prompts.py`.
 - Email/chat analyzers: `app/modules/rag/query/analyzer/*_query_analyzer_service.py`.
 - Email classification/workflow prompts vẫn nằm trong module email tương ứng.
@@ -727,7 +742,7 @@ Prompt hiện được đặt gần domain sử dụng:
 Chat stream giữ reasoning/tool events realtime. Chat/email non-stream trả final answer Markdown, sau đó service layer có thể convert sang HTML nếu `to_rich_text=True`.
 
 --------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.5.0 (RAG Query Refactor).
+Xác nhận bản thảo Overview Version 5.6.0 (Corpus API/DTO Refactor).
 --------------------------------------------------------------------------------
 
 ================================================================================

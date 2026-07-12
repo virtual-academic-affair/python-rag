@@ -19,7 +19,7 @@ async def _fetch_file_and_toc_maps(file_ids: list[str]):
     return file_map, toc_map
 
 
-async def hydrate_agent_file_candidates(candidate_ids: list[str]) -> list[dict]:
+async def hydrate_pageindex_candidate_files(candidate_ids: list[str]) -> list[dict]:
     """Hydrate traversal file IDs into the minimal payload used by rerank/agent."""
     if not candidate_ids:
         return []

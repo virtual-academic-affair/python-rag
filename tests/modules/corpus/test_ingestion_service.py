@@ -44,7 +44,7 @@ async def test_ingest_file_uploads_markdown_persists_toc_and_links_corpus():
         table_of_contents=["Mục 1", "Mục 2"],
         summary="Mô tả",
         line_count=12,
-        topic_keys=["topic-1"],
+        node_keys=["topic-1"],
     )
     svc._document_parser.ingest_file.assert_awaited_once_with(
         file_id="file1",

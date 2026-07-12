@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 
 QueryMode = Literal["chat", "email"]
+AnalyzerMode = Literal["chat", "email", "none"]
 RagQuerySource = Literal["llm", "faq", "bypass"]
 
 
@@ -27,7 +28,7 @@ class RagQueryInput:
 @dataclass
 class RagQueryBehavior:
     mode: QueryMode
-    run_chat_analyzer: bool
+    analyzer_mode: AnalyzerMode
     allow_direct_reply: bool
     allow_enrollment_fallback: bool
     include_reasoning: bool
@@ -44,6 +45,7 @@ class RagQueryAnalysis:
     needs_rag: bool
     metadata_filter: dict[str, Any]
     usage: dict[str, Any] | None = None
+    inquiry_types: list[str] = field(default_factory=list)
 
     def as_step(self) -> dict[str, Any]:
         return {
@@ -52,6 +54,7 @@ class RagQueryAnalysis:
             "effective_question": self.effective_question,
             "needs_rag": self.needs_rag,
             "metadata_filter": self.metadata_filter,
+            "inquiry_types": self.inquiry_types,
         }
 
 

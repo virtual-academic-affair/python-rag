@@ -23,6 +23,13 @@ class TopicProposal:
     parent: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class TopicAssignmentResult:
+    selected_node_keys: list[str]
+    new_topic_proposals: list[TopicProposal]
+    ignored_duplicate_proposals: list[str]
+
+
 def _new_topic_limit(active_topic_count: int) -> int:
     if active_topic_count == 0:
         return 8
@@ -96,24 +103,26 @@ def _parse_assignment_response(
     raw: str,
     valid_keys: set[str],
     new_topic_limit: int,
-) -> tuple[list[str], list[TopicProposal]]:
+) -> TopicAssignmentResult:
     try:
         data = json.loads(raw)
     except Exception:
         logger.warning(f"[TopicAssigner] JSON parse error: {raw[:200]}")
-        return [], []
+        return TopicAssignmentResult([], [], [])
 
     if not isinstance(data, dict):
         logger.warning(f"[TopicAssigner] JSON root must be an object: {raw[:200]}")
-        return [], []
+        return TopicAssignmentResult([], [], [])
 
     raw_selected = data.get("selected") or []
-    selected = [
-        k for k in raw_selected
-        if isinstance(k, str) and k in valid_keys
-    ] if isinstance(raw_selected, list) else []
+    selected: list[str] = []
+    if isinstance(raw_selected, list):
+        for key in raw_selected:
+            if isinstance(key, str) and key in valid_keys and key not in selected:
+                selected.append(key)
 
     new_topics: list[TopicProposal] = []
+    ignored_duplicates: list[str] = []
     raw_new_topics = data.get("new_topics") or []
     if not isinstance(raw_new_topics, list):
         raw_new_topics = []
@@ -126,6 +135,12 @@ def _parse_assignment_response(
         raw_slug_source = raw_slug or raw_title
         normalized_slug = slugify_topic(raw_slug_source)
         if not normalized_slug:
+            continue
+
+        if normalized_slug in valid_keys:
+            if normalized_slug not in selected:
+                selected.append(normalized_slug)
+            ignored_duplicates.append(normalized_slug)
             continue
 
         parent = t.get("parent")
@@ -142,14 +157,18 @@ def _parse_assignment_response(
         if len(new_topics) >= new_topic_limit:
             break
 
-    return selected, new_topics
+    return TopicAssignmentResult(
+        selected_node_keys=selected,
+        new_topic_proposals=new_topics,
+        ignored_duplicate_proposals=ignored_duplicates,
+    )
 
 
 async def assign_topics(
     display_name: str,
     content_text: str,
     active_topics: list[tuple[str, str, str]],  # (node_key, title, summary)
-) -> tuple[list[str], list[TopicProposal]]:
+) -> TopicAssignmentResult:
     """
     Ask LLM to assign topic node_keys to a document/FAQ.
     """
@@ -157,12 +176,16 @@ async def assign_topics(
     new_topic_limit = _new_topic_limit(len(active_topics))
     prompt = _build_assignment_prompt(display_name, content_text, active_topics)
     raw = await call_corpus_llm(prompt)
-    selected, new_topics = _parse_assignment_response(raw, valid_keys, new_topic_limit)
+    result = _parse_assignment_response(raw, valid_keys, new_topic_limit)
 
     logger.info(
-        f"[TopicAssigner] '{display_name}': selected={selected} new={[t.slug for t in new_topics]}"
+        "[TopicAssigner] '%s': selected=%s new=%s ignored_duplicates=%s",
+        display_name,
+        result.selected_node_keys,
+        [t.slug for t in result.new_topic_proposals],
+        result.ignored_duplicate_proposals,
     )
-    return selected, new_topics
+    return result
 
 
 class CorpusLinker:
@@ -189,31 +212,27 @@ class CorpusLinker:
         all_nodes = await self._corpus_service.get_all_nodes()
         active_topics = [(n.node_key, n.title, n.summary) for n in all_nodes]
 
-        selected_keys, new_topics = await assign_topics(
+        assignment = await assign_topics(
             display_name=display_name,
             content_text=content_text,
             active_topics=active_topics,
         )
 
-        new_topic_keys = []
-        for t in new_topics:
+        new_node_keys = []
+        for t in assignment.new_topic_proposals:
             node_key = t.slug
-            # Auto-create the topic node in DB
             await self._corpus_service.repo.upsert_node(
                 node_key,
                 title=t.title,
                 summary=t.summary,
                 parent_key=t.parent,
             )
-            new_topic_keys.append(node_key)
+            new_node_keys.append(node_key)
             logger.info(f"[CorpusLinker] Auto-created topic node: {node_key} (parent={t.parent})")
 
-        if new_topic_keys:
-            self._corpus_service.clear_cache()
-
-        all_keys = selected_keys + new_topic_keys
-        logger.info(f"[CorpusLinker] Final topic assignment for '{display_name[:60]}': {all_keys}")
-        return all_keys
+        node_keys = assignment.selected_node_keys + new_node_keys
+        logger.info(f"[CorpusLinker] Final node assignment for '{display_name[:60]}': {node_keys}")
+        return node_keys
 
     async def index_file(
         self,
@@ -227,8 +246,8 @@ class CorpusLinker:
             content_parts.append(doc_description)
         content_parts.extend(toc_headings or [])
         content_text = "\n".join(content_parts)
-        topic_keys = await self._ensure_topic_nodes(display_name, content_text)
-        return await self._corpus_service.reindex_leaf("file", file_id, topic_keys)
+        node_keys = await self._ensure_topic_nodes(display_name, content_text)
+        return await self._corpus_service.reindex_payload("file", file_id, node_keys)
 
     async def index_faq(
         self,
@@ -237,8 +256,8 @@ class CorpusLinker:
         answer_markdown: str = "",
     ) -> list[str]:
         content_text = f"Câu hỏi: {question}\nTrả lời: {answer_markdown}" if question else ""
-        topic_keys = await self._ensure_topic_nodes(question or "", content_text)
-        return await self._corpus_service.reindex_leaf("faq", faq_id, topic_keys)
+        node_keys = await self._ensure_topic_nodes(question or "", content_text)
+        return await self._corpus_service.reindex_payload("faq", faq_id, node_keys)
 
     async def unindex_file(self, file_id: str) -> None:
         await self._corpus_service.unindex_file(file_id)

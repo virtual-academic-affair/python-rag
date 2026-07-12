@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.modules.rag.query.analyzer.chat_query_analyzer_service import ChatQueryAnalyzer
-    from app.modules.rag.query.analyzer.contracts import EmailQueryAnalysis
+    from app.modules.rag.query.analyzer.contracts import ChatQueryAnalysis, EmailQueryAnalysis
     from app.modules.rag.query.analyzer.email_query_analyzer_service import EmailQueryAnalyzer
 
 
 __all__ = [
     "ChatQueryAnalyzer",
+    "ChatQueryAnalysis",
     "get_chat_query_analyzer",
     "EmailQueryAnalysis",
     "EmailQueryAnalyzer",
@@ -34,10 +35,13 @@ def __getattr__(name: str) -> Any:
             "get_chat_query_analyzer": get_chat_query_analyzer,
         }[name]
 
-    if name == "EmailQueryAnalysis":
-        from app.modules.rag.query.analyzer.contracts import EmailQueryAnalysis
+    if name in {"ChatQueryAnalysis", "EmailQueryAnalysis"}:
+        from app.modules.rag.query.analyzer.contracts import ChatQueryAnalysis, EmailQueryAnalysis
 
-        return EmailQueryAnalysis
+        return {
+            "ChatQueryAnalysis": ChatQueryAnalysis,
+            "EmailQueryAnalysis": EmailQueryAnalysis,
+        }[name]
 
     if name in {"EmailQueryAnalyzer", "get_email_query_analyzer"}:
         from app.modules.rag.query.analyzer.email_query_analyzer_service import (

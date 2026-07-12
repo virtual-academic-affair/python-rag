@@ -4,9 +4,9 @@ source "$(dirname "$0")/common.sh"
 log_header "FORMS — Smoke"
 
 TS=$(date +%s)
-FORMS_SAMPLE_FILE="scripts/test/sample_forms_${TS}.csv"
+FORMS_SAMPLE_FILE="$REPO_ROOT/scripts/test/sample_forms_${TS}.csv"
 cleanup_forms_smoke() {
-    rm -f "$FORMS_SAMPLE_FILE" scripts/test/sample_forms.csv
+    rm -f "$FORMS_SAMPLE_FILE" "$REPO_ROOT/scripts/test/sample_forms.csv"
 }
 trap 'cleanup_forms_smoke; trap - RETURN' RETURN
 
@@ -23,7 +23,6 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/forms/import-pre
     -F "document_type_col=Loại văn bản" \
     -F "content_link_col=Liên kết" \
     -F "notes_col=Ghi chú" \
-    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}" \
     2>/dev/null || echo -e "\n000")
 if check_response "$RESPONSE" "200" "Preview Forms Import"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -39,7 +38,6 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/forms/import" \
     -F "document_type_col=Loại văn bản" \
     -F "content_link_col=Liên kết" \
     -F "notes_col=Ghi chú" \
-    -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}" \
     2>/dev/null || echo -e "\n000")
 if check_response "$RESPONSE" "200" "Import Forms"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -47,6 +45,17 @@ if check_response "$RESPONSE" "200" "Import Forms"; then
         && log_success "  -> Import created one valid form" \
         || { log_error "  -> Import count mismatch"; return 1; }
 fi
+
+log_info "POST /api/forms/import-preview — invalid start_row"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/forms/import-preview" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -F "file=@${FORMS_SAMPLE_FILE}" \
+    -F "start_row=abc" \
+    -F "document_type_col=Loại văn bản" \
+    -F "content_link_col=Liên kết" \
+    -F "notes_col=Ghi chú" \
+    2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "400" "Reject invalid Forms import start_row"
 
 log_info "POST /api/forms — create"
 CREATE_JSON="{\"documentType\":\"Biểu mẫu xin nghỉ phép (${TS})\",\"contentLink\":\"https://example.com\",\"notes\":\"Ghi chú\"}"

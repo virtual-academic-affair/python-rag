@@ -127,7 +127,7 @@
                 "query"
               ]
             },
-            "description": "Process a user question with Corpus Tree RAG traversal and return a complete answer.",
+            "description": "Process a user question with Corpus Tree RAG traversal and return a complete answer. FAQ retrieval/answering runs only when traversal returns FAQ candidates; the response timeline otherwise proceeds to file retrieval and document reads.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}",
@@ -156,7 +156,7 @@
                 "stream"
               ]
             },
-            "description": "Stream chat response with RAG using Server-Sent Events (SSE).",
+            "description": "Stream chat response with RAG using SSE. Corpus traversal activities are emitted in realtime as corpus_traversal steps; final steps use query_analysis, corpus_traversal, faq_retrieval, faq_answer, file_retrieval, and document_read.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\"\n}",
@@ -327,7 +327,7 @@
       ]
     },
     {
-      "name": "Debug Corpus",
+      "name": "Corpus",
       "item": [
         {
           "name": "Corpus tree statistics",
@@ -335,13 +335,12 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/debug/corpus/stats",
+              "raw": "{{base_url}}/api/corpus/stats",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
-                "debug",
                 "corpus",
                 "stats"
               ]
@@ -356,21 +355,277 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/debug/corpus/tree?include_leaf_ids=false",
+              "raw": "{{base_url}}/api/corpus/tree?enrollmentYear={{enrollmentYear}}&academicYear={{academicYear}}&lecturerOnly=false",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
-                "debug",
                 "corpus",
                 "tree"
+              ],
+              "query": [
+                {"key": "enrollmentYear", "value": "{{enrollmentYear}}", "disabled": true},
+                {"key": "academicYear", "value": "{{academicYear}}", "disabled": true},
+                {"key": "lecturerOnly", "value": "false", "disabled": true}
               ]
             },
-            "description": "Return nested Corpus Topic Tree. Set include_leaf_ids=true to include direct/subtree file and FAQ ids."
+            "description": "Return nested Corpus Topic Tree. directFiles/directFaqs contain {id,name,metadata,lecturerOnly,updatedAt}. Optional enrollmentYear and academicYear use metadata range overlap; lecturerOnly=true/false filters exact visibility and omitted means all. Filtered empty branches are hidden and counts/ids are recomputed."
           },
           "response": []
         },
+        {
+          "name": "List Corpus Topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics"
+              ]
+            },
+            "description": "List all Corpus topics with file/FAQ counts."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Corpus Topic",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics/{{topicKey}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics",
+                "{{topicKey}}"
+              ]
+            },
+            "description": "Get full details for a Corpus topic, including direct/subtree file and FAQ ids."
+          },
+          "response": []
+        },
+        {
+          "name": "Get File Corpus Topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/files/{{fileId}}/topics",
+              "host": ["{{base_url}}"],
+              "path": ["api", "corpus", "files", "{{fileId}}", "topics"]
+            },
+            "description": "Return the direct Corpus topic assignments for one file."
+          },
+          "response": []
+        },
+        {
+          "name": "Replace File Corpus Topics",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/files/{{fileId}}/topics",
+              "host": ["{{base_url}}"],
+              "path": ["api", "corpus", "files", "{{fileId}}", "topics"]
+            },
+            "description": "Replace all direct Corpus topic assignments for one file. An empty nodeKeys array unlinks it from every topic.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nodeKeys\": [\"{{topicKey}}\"]\n}",
+              "options": {"raw": {"language": "json"}}
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get FAQ Corpus Topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/faqs/{{faqId}}/topics",
+              "host": ["{{base_url}}"],
+              "path": ["api", "corpus", "faqs", "{{faqId}}", "topics"]
+            },
+            "description": "Return the direct Corpus topic assignments for one FAQ."
+          },
+          "response": []
+        },
+        {
+          "name": "Replace FAQ Corpus Topics",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/faqs/{{faqId}}/topics",
+              "host": ["{{base_url}}"],
+              "path": ["api", "corpus", "faqs", "{{faqId}}", "topics"]
+            },
+            "description": "Replace all direct Corpus topic assignments for one FAQ. An empty nodeKeys array unlinks it from every topic.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nodeKeys\": [\"{{topicKey}}\"]\n}",
+              "options": {"raw": {"language": "json"}}
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Corpus Topic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics"
+              ]
+            },
+            "description": "Manually create a Corpus topic.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"hoc-phi\",\n  \"title\": \"Học phí\",\n  \"summary\": \"Các quy định về học phí\",\n  \"parentKey\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Corpus Topic",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics/{{topicKey}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics",
+                "{{topicKey}}"
+              ]
+            },
+            "description": "Update a Corpus topic title, summary, or parentKey.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Học phí cập nhật\",\n  \"summary\": \"Các quy định học phí mới nhất\",\n  \"parentKey\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Merge Corpus Topic Into Target",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics/{{sourceKey}}/merge",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics",
+                "{{sourceKey}}",
+                "merge"
+              ]
+            },
+            "description": "Move source topic links/children into target topic and delete source.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetKey\": \"{{targetKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Corpus Topic",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/topics/{{topicKey}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "topics",
+                "{{topicKey}}"
+              ]
+            },
+            "description": "Delete a Corpus topic."
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Corpus Backfill",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/corpus/backfill",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "corpus",
+                "backfill"
+              ]
+            },
+            "description": "Start background backfill: seed Corpus Tree and index READY files + active FAQs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Debug Corpus",
+      "item": [
         {
           "name": "Test Corpus Traversal",
           "request": {
@@ -388,7 +643,7 @@
                 "traverse"
               ]
             },
-            "description": "Run Corpus Tree traversal for a question and return selected file/FAQ ids.",
+            "description": "Run Corpus Tree traversal for a question and return typed candidates plus traversal trace: status, selectedTopics, expandedNodeKeys, inspectedNodeKeys, terminationReason, turnCount, and tokenUsage.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022,\n  \"academicYear\": 2024\n}",
@@ -418,7 +673,7 @@
                 "chat-preview"
               ]
             },
-            "description": "Dry-run chat query analysis and retrieval without PageIndex answering.",
+            "description": "Dry-run the shared RagQueryPipeline.answer_chat flow without a real JWT. Response pipelineResult uses fileCandidates and faqDocs.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022\n}",
@@ -428,185 +683,6 @@
                 }
               }
             }
-          },
-          "response": []
-        },
-        {
-          "name": "List Corpus Nodes",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/nodes?skip=0&limit=50",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "nodes"
-              ]
-            },
-            "description": "List topic nodes as a flat paginated list."
-          },
-          "response": []
-        },
-        {
-          "name": "Get Corpus Node",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/nodes/{{node_key}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "nodes",
-                "{{node_key}}"
-              ]
-            },
-            "description": "Get full details for a Corpus Topic Tree node."
-          },
-          "response": []
-        },
-        {
-          "name": "Trigger Corpus Backfill",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/backfill",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "backfill"
-              ]
-            },
-            "description": "Start background backfill: seed Corpus Tree and index READY files + active FAQs.",
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "List Corpus Topics",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/topics",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "topics"
-              ]
-            },
-            "description": "List all Corpus Topic Tree nodes with file/FAQ counts."
-          },
-          "response": []
-        },
-        {
-          "name": "Create Corpus Topic",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/topics",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "topics"
-              ]
-            },
-            "description": "Manually create a Corpus Topic Tree node.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"slug\": \"hoc-phi\",\n  \"title\": \"Học phí\",\n  \"summary\": \"Các quy định về học phí\",\n  \"parentKey\": null\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Merge Corpus Topic Into Target",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/topics/{{node_key}}/merge-into/{{target_key}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "topics",
-                "{{node_key}}",
-                "merge-into",
-                "{{target_key}}"
-              ]
-            },
-            "description": "Move source topic links/children into target topic and delete source.",
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Delete Corpus Node",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/debug/corpus/nodes/{{node_key}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "debug",
-                "corpus",
-                "nodes",
-                "{{node_key}}"
-              ]
-            },
-            "description": "Delete a Corpus Topic Tree node."
           },
           "response": []
         }

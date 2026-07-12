@@ -1,0 +1,7 @@
+interface:
+  display_name: "Python RAG Knowledge Maintainer"
+  short_description: "Maintain python-rag ingestion and query flows"
+  default_prompt: "Use $python-rag-knowledge-maintainer to update ingestion, retrieval, RAG query, PageIndex, rerank, FAQ answering, and related tests."
+
+policy:
+  allow_implicit_invocation: true

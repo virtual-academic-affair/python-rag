@@ -60,7 +60,7 @@ async def test_process_file_background_uses_ingestion_service_and_marks_ready():
         table_of_contents=["Mục 1"],
         summary="Mô tả",
         line_count=12,
-        topic_keys=["topic-1"],
+        node_keys=["topic-1"],
     ))
     ingestion.cleanup_file_artifacts = AsyncMock()
 

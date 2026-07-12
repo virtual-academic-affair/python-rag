@@ -37,7 +37,7 @@ async def test_analyze_query_normalizes_needs_rag(raw_value, expected):
         patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.extract_metadata_from_text", AsyncMock(return_value=None)):
         result = await analyzer.analyze_query("q", [])
 
-    assert result["needs_rag"] is expected
+    assert result.needs_rag is expected
 
 
 @pytest.mark.asyncio

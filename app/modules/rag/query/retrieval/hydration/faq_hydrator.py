@@ -12,19 +12,19 @@ from app.modules.faq.services.faq_service import get_faq_service
 logger = logging.getLogger(__name__)
 
 
-async def fetch_supporting_faqs(supporting_faqs: list, limit: int = 3) -> list:
+async def hydrate_faq_candidate_docs(faq_candidates: list, limit: int = 3) -> list:
     """
-    Fetch FaqDocument cho các Candidate(kind='faq') từ traversal.
+    Fetch FaqDocument cho các FaqCandidate từ traversal.
     Corpus prefilter đã lọc FAQ active trước traversal; ở đây chỉ hydrate theo ID
     và giữ thứ tự ưu tiên từ traversal. Best-effort: FAQ lỗi/không tồn tại thì bỏ qua.
     """
-    if not supporting_faqs:
+    if not faq_candidates:
         return []
 
     valid_ids = []
-    for cand in supporting_faqs[:limit]:
-        if cand.leaf_id:
-            valid_ids.append(cand.leaf_id)
+    for cand in faq_candidates[:limit]:
+        if cand.faq_id:
+            valid_ids.append(cand.faq_id)
 
     if not valid_ids:
         return []
@@ -33,13 +33,13 @@ async def fetch_supporting_faqs(supporting_faqs: list, limit: int = 3) -> list:
         faq_svc = await get_faq_service()
         faqs = await faq_svc.get_faqs_by_ids(valid_ids)
     except Exception as e:
-        logger.warning("[FAQ] Failed to hydrate supporting FAQs: %s", e)
+        logger.warning("[FAQ] Failed to hydrate FAQ candidates: %s", e)
         return []
 
     faq_map = {str(faq.id): faq for faq in faqs}
     faq_docs = []
-    for cand in supporting_faqs[:limit]:
-        faq = faq_map.get(cand.leaf_id)
+    for cand in faq_candidates[:limit]:
+        faq = faq_map.get(cand.faq_id)
         if faq:
             faq_docs.append(faq)
 

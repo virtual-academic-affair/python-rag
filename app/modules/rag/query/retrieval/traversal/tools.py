@@ -1,173 +1,88 @@
 from __future__ import annotations
+
 import logging
-from typing import Callable, Optional
-from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
-from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+from typing import Any, Callable
+
+from app.core.config import settings
+from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot, TraversalSession
+from app.modules.rag.query.retrieval.traversal.runtime.inspection import inspect_samples
+from app.modules.rag.query.retrieval.traversal.runtime.presentation import node_payload
+from app.modules.rag.query.retrieval.traversal.runtime.selection import select_topics as validate_and_select_topics
 
 logger = logging.getLogger(__name__)
 
 
-def build_traversal_tools(
-    repo: CorpusNodeRepository,
-    allowed_files: set[str],
-    allowed_faqs: set[str],
-) -> list[Callable]:
-    """
-    Build bound tools for the corpus traversal agent.
-    Pre-filters nodes so only subtrees with allowed content are presented to the agent.
-    """
-    # We will fetch all nodes once to construct parent-child maps and content flags
-    _all_nodes: list[CorpusNodeDocument] = []
-    _node_map: dict[str, CorpusNodeDocument] = {}
-    _has_content: dict[str, bool] = {}
-    _counts: dict[str, tuple[int, int]] = {}
-    _descendant_title_cache: dict[str, list[str]] = {}
-    _expand_stack: list[str] = []
+def build_traversal_tools(snapshot: FilteredCorpusSnapshot) -> list[Callable]:
+    """Build only the agent-callable Corpus traversal tools for one snapshot."""
+    session: TraversalSession | None = None
 
-    async def _lazy_init():
-        nonlocal _all_nodes, _node_map, _has_content, _counts, _descendant_title_cache
-        if _all_nodes:
-            return
-        _all_nodes = await repo.get_all()
-        _node_map = {n.node_key: n for n in _all_nodes}
+    async def _session() -> TraversalSession:
+        nonlocal session
+        if session is None:
+            session = TraversalSession(snapshot=snapshot)
+        return session
 
-        def _count_allowed(node: CorpusNodeDocument) -> tuple[int, int]:
-            direct_count = (
-                sum(1 for fid in node.direct_file_ids if fid in allowed_files)
-                + sum(1 for qid in node.direct_faq_ids if qid in allowed_faqs)
-            )
-            subtree_count = (
-                sum(1 for fid in node.subtree_file_ids if fid in allowed_files)
-                + sum(1 for qid in node.subtree_faq_ids if qid in allowed_faqs)
-            )
-            return direct_count, subtree_count
-
-        _has_content = {
-            n.node_key: False for n in _all_nodes
-        }
-        _counts = {}
-        for node in _all_nodes:
-            direct_count, subtree_count = _count_allowed(node)
-            _counts[node.node_key] = (direct_count, subtree_count)
-            _has_content[node.node_key] = subtree_count > 0
-        _descendant_title_cache = {}
-
-    def _descendant_titles(key: str, seen: set[str]) -> list[str]:
-        cached = _descendant_title_cache.get(key)
-        if cached is not None:
-            return cached
-        titles: list[str] = []
-        node = _node_map.get(key)
-        if not node:
-            return titles
-        for ck in node.child_keys:
-            if ck in seen:
-                continue
-            seen.add(ck)
-            child = _node_map.get(ck)
-            if child and _has_content.get(ck):
-                titles.append(child.title or ck)
-                titles.extend(_descendant_titles(ck, seen))
-        _descendant_title_cache[key] = titles
-        return titles
-
-    def _format_node(node: CorpusNodeDocument) -> str:
-        line = f"- {node.node_key}: {node.title} — {node.summary}"
-        direct_count, subtree_count = _counts.get(node.node_key, (0, 0))
-        if direct_count > 0:
-            line += f" [{direct_count} mục trực tiếp]"
-        if subtree_count > direct_count:
-            line += f" [{subtree_count} tổng cả phân mục con]"
-        kids = _descendant_titles(node.node_key, {node.node_key})
-        if kids:
-            line += f" (chủ đề con có tài liệu: {', '.join(kids[:12])})"
-        else:
-            line += " (không có chủ đề con)"
-        return line
-
-    async def list_root_topics() -> str:
-        """
-        List all top-level (root) topic folders that contain documents. Call this first.
-        """
-        await _lazy_init()
-        roots = [
-            n for n in _all_nodes
-            if n.parent_key is None and _has_content.get(n.node_key)
-        ]
-        if not roots:
-            return "Không tìm thấy chủ đề gốc nào có chứa tài liệu phù hợp."
-        return "Danh sách các chủ đề gốc ở tầng 1:\n" + "\n".join(_format_node(n) for n in roots)
-
-    async def expand_topic(node_key: str) -> str:
-        """
-        Expand a specific topic to view its sub-topics.
-        Args:
-            node_key: The unique slug key of the topic to expand (e.g. 'tot-nghiep').
-        """
-        await _lazy_init()
-        node = _node_map.get(node_key)
-        if not node:
-            return f"Không tìm thấy chủ đề với node_key: {node_key}"
-        if node_key not in _expand_stack:
-            _expand_stack.append(node_key)
-        children = [
-            _node_map[ck] for ck in node.child_keys
-            if ck in _node_map and _has_content.get(ck)
-        ]
-        if not children:
-            return f"Chủ đề '{node.title}' ({node_key}) không có chủ đề con nào chứa tài liệu phù hợp."
-        return (
-            f"Danh sách chủ đề con của '{node.title}':\n"
-            + "\n".join(_format_node(n) for n in children)
-        )
-
-    async def select_topics(node_keys: list[str]) -> dict:
-        """
-        Finalize selection: select all relevant topics that contain the files or FAQs needed. Calling this ends the traversal.
-        Args:
-            node_keys: List of topic node_keys selected as containing relevant documents.
-        """
-        await _lazy_init()
-        if not isinstance(node_keys, list):
-            return {"selected": [], "invalid": ["node_keys must be a list"], "total_files": 0, "total_faqs": 0}
-
-        selected: list[str] = []
-        invalid: list[str] = []
-        for key in node_keys:
-            normalized_key = str(key).strip() if key is not None else ""
-            if not normalized_key:
-                continue
-            if normalized_key not in _node_map or not _has_content.get(normalized_key):
-                invalid.append(normalized_key)
-                continue
-            if normalized_key not in selected:
-                selected.append(normalized_key)
-
-        selected_files = {
-            fid
-            for key in selected
-            for fid in _node_map[key].subtree_file_ids
-            if fid in allowed_files
-        }
-        selected_faqs = {
-            qid
-            for key in selected
-            for qid in _node_map[key].subtree_faq_ids
-            if qid in allowed_faqs
-        }
-
+    async def list_root_topics() -> dict[str, Any]:
+        """List eligible root topics. This must be the first traversal tool call."""
+        active = await _session()
+        active.roots_listed = True
+        active.revealed_node_keys.update(active.snapshot.visible_root_keys)
+        logger.info("[RAG][%s][traversal.tool.list_roots] roots=%s", active.snapshot.trace_id, active.snapshot.visible_root_keys)
         return {
-            "selected": selected,
-            "invalid": invalid,
-            "expand_stack": list(_expand_stack),
-            "total_files": len(selected_files),
-            "total_faqs": len(selected_faqs),
+            "status": "ok",
+            "topics": [node_payload(active.snapshot, key) for key in active.snapshot.visible_root_keys],
         }
 
-    # We attach the closure attributes so they can be read by loop.py if needed
-    list_root_topics._lazy_init = _lazy_init
-    list_root_topics._get_has_content = lambda: _has_content
-    list_root_topics._get_node_map = lambda: _node_map
-    list_root_topics._get_expand_stack = lambda: list(_expand_stack)
+    async def expand_topic(node_key: str) -> dict[str, Any]:
+        """Reveal immediate eligible children of a topic previously returned by a tool."""
+        active = await _session()
+        if node_key not in active.revealed_node_keys:
+            return {"status": "invalid", "reason": "node_key was not revealed by this traversal"}
+        child_keys = active.snapshot.visible_child_keys_by_parent.get(node_key, [])
+        active.revealed_node_keys.update(child_keys)
+        if node_key not in active.expanded_node_keys:
+            active.expanded_node_keys.append(node_key)
+        logger.info("[RAG][%s][traversal.tool.expand] node=%s children=%s", active.snapshot.trace_id, node_key, child_keys)
+        return {
+            "status": "ok",
+            "nodeKey": node_key,
+            "topics": [node_payload(active.snapshot, key) for key in child_keys],
+        }
 
-    return [list_root_topics, expand_topic, select_topics]
+    async def inspect_topic(
+        node_key: str,
+        scope: str = "subtree",
+        sample_limit: int = settings.CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
+        """Inspect eligible sample files and FAQs from a previously revealed topic."""
+        active = await _session()
+        if node_key not in active.revealed_node_keys:
+            return {"status": "invalid", "reason": "node_key was not revealed by this traversal"}
+        if scope not in {"direct", "subtree"}:
+            return {"status": "invalid", "reason": "scope must be direct or subtree"}
+        if not isinstance(sample_limit, int) or sample_limit < 1:
+            return {"status": "invalid", "reason": "sample_limit must be a positive integer"}
+        node = active.snapshot.node_map[node_key]
+        if node_key not in active.inspected_node_keys:
+            active.inspected_node_keys.append(node_key)
+        logger.info("[RAG][%s][traversal.tool.inspect] node=%s scope=%s sample_limit=%d", active.snapshot.trace_id, node_key, scope, sample_limit)
+        samples = await inspect_samples(active, node, scope, min(sample_limit, settings.CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT))
+        return {"status": "ok", "node": node_payload(active.snapshot, node_key), "scope": scope, **samples}
+
+    async def select_topics(selections: list[dict[str, Any]]) -> dict[str, Any]:
+        """Finalize revealed topics using direct or subtree payload scope."""
+        active = await _session()
+        result = validate_and_select_topics(active, selections)
+        logger.info("[RAG][%s][traversal.tool.select] selections=%s status=%s files=%s faqs=%s reason=%s", active.snapshot.trace_id, selections, result.get("status"), result.get("totalFileCandidates"), result.get("totalFaqCandidates"), result.get("reason"))
+        return result
+
+    async def select_no_match(reason: str) -> dict[str, Any]:
+        """Explicitly end traversal only when no revealed topic can answer the question."""
+        active = await _session()
+        if not active.roots_listed:
+            return {"status": "invalid", "reason": "list_root_topics must be called before no-match selection"}
+        logger.info("[RAG][%s][traversal.tool.no_match] reason=%r", active.snapshot.trace_id, str(reason)[:300])
+        return {"status": "no_match", "reason": str(reason or "agent found no relevant topic")}
+
+    list_root_topics._get_session = _session
+    return [list_root_topics, expand_topic, inspect_topic, select_topics, select_no_match]

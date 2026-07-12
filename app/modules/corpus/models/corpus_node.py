@@ -16,7 +16,6 @@ class CorpusNodeDocument(BaseDocument):
     node_key: str = Field(..., description="Unique slug ID, e.g. 'tot-nghiep'")
     title: str = ""
     summary: str = ""
-    keywords: list[str] = Field(default_factory=list)
     direct_file_ids: list[str] = Field(default_factory=list)
     direct_faq_ids: list[str] = Field(default_factory=list)
     subtree_file_ids: list[str] = Field(default_factory=list)

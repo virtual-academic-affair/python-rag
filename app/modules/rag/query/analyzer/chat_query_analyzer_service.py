@@ -10,6 +10,7 @@ from app.modules.chat.dtos import ChatHistoryItem
 from app.utils.json_utils import parse_json_safely
 from app.utils.retry import async_retry
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
+from app.modules.rag.query.analyzer.contracts import ChatQueryAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -85,29 +86,21 @@ class ChatQueryAnalyzer:
         self,
         question: str,
         history: List[ChatHistoryItem],
-    ) -> Dict[str, Any]:
-        """
-        Phân tích câu hỏi và trả về:
-        {
-          "needs_rag": bool,
-          "effective_question": str,
-          "metadata_filter": dict | None,
-          "usage": dict | None
-        }
-        """
-        fallback_res = {
-            "needs_rag": True,
-            "effective_question": question,
-            "metadata_filter": None,
-            "usage": None,
-        }
+    ) -> ChatQueryAnalysis:
+        """Analyze chat query for rewrite, RAG gate, metadata filter, and usage."""
+        fallback_res = ChatQueryAnalysis(
+            needs_rag=True,
+            effective_question=question,
+            metadata_filter=None,
+            usage=None,
+        )
 
         async def fallback_regex():
             try:
                 regex_filter = await extract_metadata_from_text(question)
                 if regex_filter:
                     logger.info(f"[Analyzer] Fallback to regex metadata extraction for chat query: {regex_filter}")
-                    fallback_res["metadata_filter"] = regex_filter
+                    fallback_res.metadata_filter = regex_filter
             except Exception as fe:
                 logger.warning(f"[Analyzer] Failed during fallback regex extraction: {fe}")
             return fallback_res
@@ -174,12 +167,12 @@ class ChatQueryAnalyzer:
                     "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0) or 0,
                 }
 
-            return {
-                "needs_rag": needs_rag,
-                "effective_question": effective_question,
-                "metadata_filter": metadata_filter,
-                "usage": usage,
-            }
+            return ChatQueryAnalysis(
+                needs_rag=needs_rag,
+                effective_question=effective_question,
+                metadata_filter=metadata_filter,
+                usage=usage,
+            )
 
         except Exception as e:
             logger.error(f"[Analyzer] Error during analyze_query: {e}", exc_info=True)

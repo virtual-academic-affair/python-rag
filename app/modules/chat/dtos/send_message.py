@@ -31,6 +31,6 @@ class ChatQueryResponse(BaseSchema):
     session_id: str = Field(..., description="Chat session ID")
     source: str = Field(default="llm", description="Source of the answer: 'llm' | 'faq' | 'bypass'")
     sources: Optional[List[SourceCitation]] = Field(default=None, description="Document citations")
-    steps: Optional[List[dict]] = Field(default=None, description="Agent reasoning steps (thoughts/calls)")
+    steps: Optional[List[dict]] = Field(default=None, description="RAG activity timeline: analysis, Corpus traversal, FAQ/file retrieval, and document reads")
     token_usage: Optional[TokenUsage] = Field(default=None, description="Token consumption statistics")
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")

@@ -73,7 +73,8 @@ class ChatService:
         answer_markdown = rag_result.answer_markdown
         final_answer = markdown_to_rich_text(answer_markdown) if to_rich_text else answer_markdown
         token_usage_obj = self._token_usage_obj(rag_result.token_usage)
-        simplified_steps = [simplify_step(s, candidate_files) for s in rag_result.steps if s.get("type") in PERSISTED_STEP_TYPES]
+        simplified_steps = [simplify_step(s, candidate_files) for s in rag_result.steps]
+        simplified_steps = [step for step in simplified_steps if step.get("type") in PERSISTED_STEP_TYPES]
 
         if rag_result.is_direct_reply:
             return {

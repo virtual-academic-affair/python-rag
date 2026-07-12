@@ -1,66 +1,30 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query, BackgroundTasks, Request
-from fastapi.responses import StreamingResponse
-from typing import Optional, List, Dict, Any
-from datetime import datetime
-import tempfile
-import os
-import logging
-import json
-import urllib.parse
-from io import BytesIO
+from __future__ import annotations
 
+import logging
+import urllib.parse
+from typing import List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
+
+from app.core.auth import JWTPayload
+from app.core.dependencies import from_form, require_admin, require_auth
+from app.core.exceptions import AppException
 from app.modules.files.dtos import (
-    FileUploadResponse,
+    BatchFileUploadRequest,
+    BatchFileUploadResponse,
     FileDetailResponse,
     FileListResponse,
-    BatchFileUploadResponse,
-    BatchFileUploadResult,
-    UpdateFileRequest,
     FileUploadRequest,
-    BatchFileUploadRequest
+    FileUploadResponse,
+    UpdateFileRequest,
 )
-from app.modules.metadata.dtos import FileMetadataResponse
-from app.modules.files.services.file_service import get_file_service
-from app.modules.metadata.services.metadata_service import get_metadata_service
-from app.modules.files.utils.notifier import get_file_status_notifier
-from app.modules.files.utils.file_helpers import get_download_url
-from app.core.auth import JWTPayload
-from app.core.exceptions import AppException, NotFoundException
-from app.core.dependencies import require_admin, require_auth, from_form
-from app.modules.files.models.file import FileStatus
+from app.modules.files.services.file_api_service import get_file_api_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
-
-def _to_file_detail_response(file_doc) -> FileDetailResponse:
-    return FileDetailResponse(
-        file_id=str(file_doc.id),
-        original_filename=file_doc.original_filename,
-        display_name=file_doc.display_name,
-        file_size=file_doc.file_size,
-        mime_type=file_doc.mime_type,
-        storage_path=file_doc.storage_path,
-        status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
-        lecturer_only=file_doc.lecturer_only,
-        custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
-        file_url=get_download_url(file_doc.storage_path),
-        markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
-        table_of_contents=file_doc.table_of_contents,
-        created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
-        updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
-    )
-
-async def _background_process(file_id: str, bg_file_path: str, bg_display_name: str, bg_metadata: Dict[str, Any], progress_cb=None):
-    file_svc = get_file_service()
-    await file_svc.process_file_background(
-        file_id=file_id,
-        file_path=bg_file_path,
-        display_name=bg_display_name,
-        custom_metadata=bg_metadata,
-        progress_callback=progress_cb
-    )
 
 @router.post(
     "",
@@ -75,73 +39,20 @@ async def upload_file(
     req: FileUploadRequest = Depends(from_form(FileUploadRequest)),
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """Upload sync-to-R2 then continue parse/vector steps in background."""
-    temp_file_path = None
-    file_svc = get_file_service()
-
     try:
-        metadata_dict = {}
-        if req.custom_metadata:
-            try:
-                metadata_dict = json.loads(req.custom_metadata)
-            except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid custom_metadata JSON format",
-                )
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
-            contents = await file.read()
-            temp_file.write(contents)
-            temp_file_path = temp_file.name
-
-        notifier = get_file_status_notifier()
-        async def _progress_callback(payload: Dict[str, Any]):
-            if req.client_id:
-                await notifier.notify(req.client_id, payload)
-
-        file_doc, bg_payload = await file_svc.upload_file_quick(
-            file_path=temp_file_path,
-            original_filename=file.filename,
-            display_name=req.display_name,
-            custom_metadata=metadata_dict,
-            lecturer_only=req.lecturer_only,
-            progress_callback=_progress_callback,
-        )
-
-        background_tasks.add_task(
-            _background_process,
-            bg_payload["file_id"],
-            temp_file_path,
-            bg_payload["display_name"],
-            bg_payload["custom_metadata"],
-            _progress_callback
-        )
-
-        return FileUploadResponse(
-            file_id=str(file_doc.id),
-            original_filename=file_doc.original_filename,
-            display_name=file_doc.display_name,
-            file_size=file_doc.file_size,
-            mime_type=file_doc.mime_type,
-            status=file_doc.status.value if hasattr(file_doc.status, 'value') else str(file_doc.status),
-            custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
-            created_at=file_doc.created_at.isoformat() if file_doc.created_at else datetime.now().isoformat(),
-            file_url=get_download_url(file_doc.storage_path),
-            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
-            message="File uploaded to storage. Background processing started.",
-        )
-
+        file_api_svc = get_file_api_service()
+        outcome = await file_api_svc.upload_file(file=file, request=req)
+        for task in outcome.background_tasks:
+            background_tasks.add_task(file_api_svc.process_background_task, task)
+        return outcome.response
     except AppException:
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
         raise
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error during file upload: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(exc)}") from exc
 
-    except Exception as e:
-        logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}")
 
 @router.get(
     "",
@@ -155,67 +66,23 @@ async def list_files(
     keywords: Optional[str] = Query(None, description="Search by display name"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    _user: JWTPayload = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     try:
-        file_svc = get_file_service()
-
-        status_enum = None
-        if file_status:
-            try:
-                status_enum = FileStatus(file_status.lower())
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status: {file_status}")
-
-        custom_metadata_filter = None
-        if metadata_filter:
-            try:
-                custom_metadata_filter = json.loads(metadata_filter)
-                metadata_svc = get_metadata_service()
-                is_valid, errors = metadata_svc.validate_unified_filter(custom_metadata_filter)
-                if not is_valid:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {', '.join(errors)}")
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid metadataFilter JSON format")
-
-        # Role-based access: student không thấy file lecturer_only và bị filter theo enrollmentYear
-        role_filter: Optional[Dict[str, Any]] = None
-        if _user.role == "student":
-            role_filter = {"lecturer_only": {"$ne": True}}
-            if _user.enrollment_year:
-                ey = _user.enrollment_year
-                # Files without year metadata are visible to all students;
-                # files with year metadata must include the student's enrollment year
-                role_filter["$and"] = [{"$or": [
-                    {"custom_metadata.enrollment_year_from": {"$exists": False}},
-                    {
-                        "custom_metadata.enrollment_year_from": {"$lte": ey},
-                        "custom_metadata.enrollment_year_to": {"$gte": ey},
-                    },
-                ]}]
-
-        skip = (page - 1) * limit
-        files, total = await file_svc.list_files(
-            status=status_enum,
-            custom_metadata_filter=custom_metadata_filter,
+        return await get_file_api_service().list_files(
+            file_status=file_status,
+            metadata_filter=metadata_filter,
             keywords=keywords,
-            role_filter=role_filter,
-            skip=skip,
-            limit=limit,
-        )
-
-        return FileListResponse(
-            files=[_to_file_detail_response(f) for f in files],
-            total=total,
             page=page,
             limit=limit,
+            user=user,
         )
-
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error listing files: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list files: {str(e)}")
+    except Exception as exc:
+        logger.error("Error listing files: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list files: {str(exc)}") from exc
+
 
 @router.post(
     "/batch",
@@ -231,98 +98,22 @@ async def batch_upload_files(
     req: BatchFileUploadRequest = Depends(from_form(BatchFileUploadRequest)),
     _admin: JWTPayload = Depends(require_admin),
 ):
-    """Batch upload multiple files to R2 storage and queue background processing."""
-    file_svc = get_file_service()
-
     try:
-        names_list = []
-        if req.display_names:
-            try:
-                names_list = json.loads(req.display_names)
-                if not isinstance(names_list, list):
-                    raise HTTPException(status_code=400, detail="display_names must be a list")
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid display_names JSON")
-
-        meta_list = []
-        if req.metadata_list:
-            try:
-                meta_list = json.loads(req.metadata_list)
-                if not isinstance(meta_list, list):
-                    raise HTTPException(status_code=400, detail="metadata_list must be a list")
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid metadata_list JSON")
-
-        results = []
-        successful = 0
-        failed = 0
-
-        for idx, file in enumerate(files):
-            temp_file_path = None
-            try:
-                display_name = names_list[idx] if idx < len(names_list) and names_list[idx] is not None else None
-                metadata_dict = {}
-                if idx < len(meta_list) and meta_list[idx] is not None:
-                    if not isinstance(meta_list[idx], dict):
-                        raise ValueError(f"Metadata at index {idx} must be a JSON object (dict)")
-                    metadata_dict = meta_list[idx]
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1], mode="wb") as temp_file:
-                    contents = await file.read()
-                    temp_file.write(contents)
-                    temp_file_path = temp_file.name
-
-                client_id = request.headers.get("X-Client-ID")
-                notifier = get_file_status_notifier()
-                
-                async def _progress_callback_bound(payload: Dict[str, Any], cid=client_id):
-                    if cid:
-                        await notifier.notify(cid, payload)
-
-                file_doc, bg_payload = await file_svc.upload_file_quick(
-                    file_path=temp_file_path,
-                    original_filename=file.filename,
-                    display_name=display_name,
-                    custom_metadata=metadata_dict,
-                    progress_callback=_progress_callback_bound,
-                )
-
-                background_tasks.add_task(
-                    _background_process,
-                    bg_payload["file_id"],
-                    temp_file_path,
-                    bg_payload["display_name"],
-                    bg_payload["custom_metadata"],
-                    _progress_callback_bound
-                )
-
-                results.append(BatchFileUploadResult(
-                    original_filename=file.filename,
-                    success=True,
-                    file_id=str(file_doc.id),
-                    display_name=file_doc.display_name,
-                    file_url=get_download_url(file_doc.storage_path),
-                    message="Uploaded successfully, background processing started.",
-                ))
-                successful += 1
-
-            except Exception as e:
-                logger.error(f"Failed to upload file {file.filename}: {e}")
-                results.append(BatchFileUploadResult(original_filename=file.filename, success=False, error=str(e)))
-                failed += 1
-                if temp_file_path and os.path.exists(temp_file_path):
-                    try:
-                        os.unlink(temp_file_path)
-                    except Exception as unlink_err:
-                        logger.warning(f"Failed to clean up temp file on error: {unlink_err}")
-
-        return BatchFileUploadResponse(total=len(files), successful=successful, failed=failed, results=results)
-
+        file_api_svc = get_file_api_service()
+        outcome = await file_api_svc.batch_upload_files(
+            files=files,
+            request=req,
+            client_id=request.headers.get("X-Client-ID"),
+        )
+        for task in outcome.background_tasks:
+            background_tasks.add_task(file_api_svc.process_background_task, task)
+        return outcome.response
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Batch upload error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Batch upload error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 @router.get(
     "/{file_id}",
@@ -331,18 +122,14 @@ async def batch_upload_files(
 )
 async def get_file(file_id: str, _user: JWTPayload = Depends(require_auth)):
     try:
-        file_svc = get_file_service()
-        file_doc = await file_svc.get_file_by_id(file_id)
-        if not file_doc:
-            raise NotFoundException("File", file_id)
-
-        return _to_file_detail_response(file_doc)
+        return await get_file_api_service().get_file_detail(file_id)
     except HTTPException:
         raise
     except AppException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 @router.get(
     "/{file_id}/download",
@@ -350,37 +137,26 @@ async def get_file(file_id: str, _user: JWTPayload = Depends(require_auth)):
     description="Download the original uploaded file or its markdown version.",
 )
 async def download_file_endpoint(
-    file_id: str, 
+    file_id: str,
     format: str = Query("original", description="Download format: original | markdown"),
-    _user: JWTPayload = Depends(require_auth)
+    _user: JWTPayload = Depends(require_auth),
 ):
     try:
-        allowed_formats = {"original", "markdown"}
-        requested_format = format.lower()
-        if requested_format not in allowed_formats:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid format. Allowed values: original, markdown",
-            )
-
-        file_svc = get_file_service()
-        file_obj, filename, mime_type = await file_svc.download_file(
-            file_id,
-            file_format=requested_format,
-        )
+        file_obj, filename, mime_type = await get_file_api_service().download_file(file_id, format)
         encoded_filename = urllib.parse.quote(filename)
         return StreamingResponse(
             file_obj,
             media_type=mime_type,
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"}
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
         )
     except HTTPException:
         raise
     except AppException:
         raise
-    except Exception as e:
-        logger.error(f"Error downloading file {file_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Error downloading file %s: %s", file_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 @router.patch(
     "/{file_id}",
@@ -390,30 +166,17 @@ async def download_file_endpoint(
 async def update_file(
     file_id: str,
     request: UpdateFileRequest,
-    _admin: JWTPayload = Depends(require_admin)
+    _admin: JWTPayload = Depends(require_admin),
 ):
     try:
-        file_svc = get_file_service()
-        file_doc = await file_svc.update_file(
-            file_id=file_id,
-            display_name=request.display_name,
-            custom_metadata=(
-                request.custom_metadata.model_dump(exclude_unset=True, by_alias=False)
-                if request.custom_metadata
-                else None
-            ),
-            lecturer_only=request.lecturer_only,
-        )
-        if not file_doc:
-            raise NotFoundException("File", file_id)
-
-        return _to_file_detail_response(file_doc)
+        return await get_file_api_service().update_file(file_id, request)
     except HTTPException:
         raise
     except AppException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 @router.delete(
     "/{file_id}",
@@ -422,10 +185,9 @@ async def update_file(
 )
 async def delete_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
     try:
-        file_svc = get_file_service()
-        await file_svc.delete_file(file_id)
+        await get_file_api_service().delete_file(file_id)
         return
     except AppException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

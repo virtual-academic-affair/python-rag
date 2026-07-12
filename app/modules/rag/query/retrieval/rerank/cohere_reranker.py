@@ -5,13 +5,14 @@ from typing import Any, Callable, Optional, TypeVar
 import yaml
 
 from app.core.config import settings
+from app.core.exceptions import ExternalServiceException
 from app.integrations.cohere import CohereRerankClient
 from app.integrations.cohere import get_cohere_rerank_client
 
 T = TypeVar("T")
 
 
-class CohereReranker:
+class CohereRetrievalReranker:
     """Rerank retrieval candidates with Cohere Rerank v2."""
 
     def __init__(self, client: Optional[CohereRerankClient] = None):
@@ -21,11 +22,14 @@ class CohereReranker:
         self,
         question: str,
         candidates: list[dict[str, Any]],
+        *,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         return await self._rerank(
             question,
             candidates,
             document_builder=self._file_document,
+            top_n=limit,
         )
 
     async def rerank_faqs(
@@ -54,15 +58,18 @@ class CohereReranker:
         if not self._enabled(question, items):
             return items
 
-        limited = items[: settings.COHERE_RERANK_MAX_CANDIDATES]
-        tail = items[settings.COHERE_RERANK_MAX_CANDIDATES :]
-        if not limited:
+        if len(items) > settings.COHERE_RERANK_MAX_CANDIDATES:
+            raise ValueError(
+                "Candidate pool exceeds COHERE_RERANK_MAX_CANDIDATES; "
+                "traversal must refine before reranking."
+            )
+        if not items:
             return items
 
-        requested_top_n = min(top_n or len(limited), len(limited))
+        requested_top_n = min(top_n or len(items), len(items))
         documents = [
             yaml.dump(document_builder(item), sort_keys=False, allow_unicode=True)
-            for item in limited
+            for item in items
         ]
         indexes = await self._client.rerank(
             query=question,
@@ -70,12 +77,13 @@ class CohereReranker:
             top_n=requested_top_n,
         )
         if indexes is None:
+            if requested_top_n < len(items) and self._enabled(question, items):
+                raise ExternalServiceException(
+                    "Cohere rerank failed for a candidate pool larger than the requested output."
+                )
             return items
 
-        ranked = [limited[index] for index in indexes]
-        if requested_top_n < len(limited):
-            return ranked
-        return ranked + tail
+        return [items[index] for index in indexes]
 
     @staticmethod
     def _enabled(question: str, items: list[Any]) -> bool:
@@ -108,11 +116,11 @@ class CohereReranker:
         }
 
 
-_cohere_reranker_instance: Optional[CohereReranker] = None
+_cohere_reranker_instance: Optional[CohereRetrievalReranker] = None
 
 
-def get_cohere_reranker() -> CohereReranker:
+def get_cohere_reranker() -> CohereRetrievalReranker:
     global _cohere_reranker_instance
     if _cohere_reranker_instance is None:
-        _cohere_reranker_instance = CohereReranker()
+        _cohere_reranker_instance = CohereRetrievalReranker()
     return _cohere_reranker_instance

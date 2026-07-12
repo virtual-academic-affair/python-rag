@@ -1,12 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from app.modules.rag.query.answering.faq_answering import (
-    FaqAnswerEntry,
-    FaqAnswerService,
-    build_faq_answer_prompt,
-    parse_faq_answer_response,
-)
+from app.modules.rag.query.answering.faq_answering.contracts import FaqAnswerEntry
+from app.modules.rag.query.answering.faq_answering.parser import parse_faq_answer_response
+from app.modules.rag.query.answering.faq_answering.prompts import build_faq_answer_prompt
+from app.modules.rag.query.answering.faq_answering.service import FaqAnswerService
 
 
 def test_faq_answer_prompt_rejects_partial_multi_intent_matches():

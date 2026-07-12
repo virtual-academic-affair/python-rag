@@ -4,10 +4,29 @@ source "$(dirname "$0")/common.sh"
 log_header "5. FILE MANAGEMENT — Smoke"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-UPLOADS_DIR="scripts/uploads"
+UPLOADS_DIR="$REPO_ROOT/scripts/uploads"
 mkdir -p "$UPLOADS_DIR"
 TEST_FILE="${UPLOADS_DIR}/test_doc_${TIMESTAMP}.txt"
-echo "Content of test doc ${TIMESTAMP}" > "$TEST_FILE"
+cat > "$TEST_FILE" << EOF
+QUY ĐỊNH XÉT TỐT NGHIỆP VÀ ĐĂNG KÝ GIẤY CHỨNG NHẬN SINH VIÊN
+
+Mã tài liệu smoke test: ${TIMESTAMP}
+
+1. Điều kiện xét tốt nghiệp
+Sinh viên được xét tốt nghiệp khi tích lũy đủ số tín chỉ theo chương trình đào tạo,
+hoàn thành các học phần bắt buộc, không còn nợ học phí, và đạt điểm trung bình tích lũy
+theo quy định của nhà trường.
+
+2. Giấy chứng nhận sinh viên
+Sinh viên có thể đăng ký giấy chứng nhận sinh viên tại Phòng Giáo vụ hoặc qua cổng
+thông tin sinh viên. Hồ sơ thường cần mã số sinh viên, họ tên, khóa tuyển sinh và mục
+đích sử dụng giấy chứng nhận.
+
+3. Học phí và năm học
+Các thông báo liên quan đến học phí, công nợ và thời hạn đóng học phí được áp dụng theo
+từng năm học. Sinh viên cần kiểm tra thông báo chính thức của Phòng Giáo vụ trước khi
+nộp hồ sơ tốt nghiệp.
+EOF
 
 log_info "POST /api/files — admin upload"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
@@ -24,7 +43,7 @@ fi
 
 BODY=$(echo "$RESPONSE" | sed '$d')
 FILE_ID=$(echo "$BODY" | jq -r '.fileId // empty')
-echo "$FILE_ID" > scripts/test_results/last_file_id.txt
+echo "$FILE_ID" > "$OUTPUT_DIR/last_file_id.txt"
 log_info "  -> file_id = $FILE_ID"
 
 log_info "Waiting for file $FILE_ID to be ready..."
@@ -47,7 +66,7 @@ fi
 log_success "File $FILE_ID is ready"
 
 FILTER_JSON='{"academicYear":{"fromYear":2025,"toYear":2026}}'
-ENCODED_FILTER=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
+ENCODED_FILTER=$("$PYTHON_BIN" -c "import urllib.parse; print(urllib.parse.quote('''$FILTER_JSON'''))")
 log_info "GET /api/files — student list with keyword/status/metadata filters"
 RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/files?limit=5&keywords=Test%20Doc&fileStatus=ready&metadataFilter=${ENCODED_FILTER}" \
     -H "${STUDENT_AUTH_HEADER}" \

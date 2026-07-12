@@ -199,11 +199,12 @@ class FileService(FileUploadMixin):
         self,
         metadata_filter: Optional[Dict[str, Any]],
         user_role: Optional[str],
+        lecturer_only: Optional[bool] = None,
     ) -> set[str]:
         """Return READY file IDs allowed for corpus traversal."""
         from app.modules.corpus.utils.prefilter import build_file_prefilter_query
 
-        query = await build_file_prefilter_query(metadata_filter, user_role)
+        query = await build_file_prefilter_query(metadata_filter, user_role, lecturer_only)
         return await self.file_repo.find_ids_by_query(query)
 
     async def get_files_by_ids(self, file_ids: list[str]) -> list[FileDocument]:

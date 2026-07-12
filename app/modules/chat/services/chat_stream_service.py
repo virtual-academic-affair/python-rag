@@ -54,15 +54,16 @@ class ChatStreamService(ChatService):
                 pipeline_steps.append(step)
                 yield json.dumps({**simplify_step(step), "done": False})
                 continue
-            if event.get("type") == "_retrieval_start":
-                yield json.dumps({"type": "retrieval", "content": event.get("content", ""), "done": False})
+            if event.get("type") == "_corpus_traversal":
+                step = event.get("step") or {}
+                pipeline_steps.append(step)
+                yield json.dumps({**simplify_step(step, candidate_files), "done": False})
                 continue
-            if event.get("type") == "_retrieval":
+            if event.get("type") == "_pipeline_step":
                 candidate_files = event.get("candidate_files") or []
-                logger.info(f"[Chat-Stream] Retrieval done | found={len(candidate_files)} files")
-                retrieval_step = event.get("step") or {"type": "retrieval", "candidate_files": []}
-                pipeline_steps.append(retrieval_step)
-                yield json.dumps({**simplify_step(retrieval_step, candidate_files), "done": False})
+                step = event.get("step") or {}
+                pipeline_steps.append(step)
+                yield json.dumps({**simplify_step(step, candidate_files), "done": False})
                 continue
             if event.get("type") == "_pipeline_result":
                 answer_text = event.get("answer_markdown") or "Không tìm thấy tài liệu phù hợp."
@@ -121,7 +122,10 @@ class ChatStreamService(ChatService):
             logger.warning(f"[Chat-Stream] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
             
         stream_steps = agent_result["steps"]
-        filtered_stream_steps = [s for s in stream_steps if s.get("type") in PERSISTED_STEP_TYPES]
+        simplified_stream_steps = [simplify_step(step, candidate_files) for step in stream_steps]
+        filtered_stream_steps = [
+            step for step in simplified_stream_steps if step.get("type") in PERSISTED_STEP_TYPES
+        ]
         token_usage = agent_result["token_usage"]
 
         token_usage_obj = TokenUsage(
@@ -134,7 +138,7 @@ class ChatStreamService(ChatService):
             "done": True,
             "source": "llm",
             "sources": [SourceCitation(**s).model_dump(by_alias=True) for s in agent_result["sources"]] if agent_result["sources"] else [],
-            "steps": [simplify_step(s, candidate_files) for s in (pipeline_steps + filtered_stream_steps)],
+            "steps": [simplify_step(s, candidate_files) for s in pipeline_steps] + filtered_stream_steps,
             "tokenUsage": token_usage_obj.model_dump(by_alias=True),
             "processingTimeMs": processing_time_ms,
         })

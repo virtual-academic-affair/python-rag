@@ -83,13 +83,13 @@ class FaqService:
         try:
             corpus_linker = get_corpus_linker()
 
-            topic_keys = await corpus_linker.index_faq(
+            node_keys = await corpus_linker.index_faq(
                 str(created.id),
                 question=question,
                 answer_markdown=answer_markdown,
             )
-            if not topic_keys:
-                raise ValueError("LLM could not assign the FAQ to any topic in the corpus catalog.")
+            if not node_keys:
+                raise ValueError("LLM could not assign the FAQ to any node in the corpus catalog.")
         except Exception as e:
             # Rollback: first clean up any partial corpus links, then delete the Mongo doc
             try:
@@ -223,13 +223,13 @@ class FaqService:
             elif needs_reindex:
                 corpus_linker = get_corpus_linker()
 
-                topic_keys = await corpus_linker.index_faq(
+                node_keys = await corpus_linker.index_faq(
                     faq_id,
                     question=saved.question or "",
                     answer_markdown=saved.answer_markdown or "",
                 )
-                if not topic_keys:
-                    raise ValueError("LLM could not assign the FAQ to any topic in the corpus catalog.")
+                if not node_keys:
+                    raise ValueError("LLM could not assign the FAQ to any node in the corpus catalog.")
         except Exception as e:
             # Rollback MongoDB fields
             for k, v in original_fields.items():
@@ -264,9 +264,10 @@ class FaqService:
         self,
         metadata_filter: Optional[Dict[str, Any]],
         user_role: Optional[str],
+        lecturer_only: Optional[bool] = None,
     ) -> set[str]:
         """Return active FAQ IDs allowed for corpus traversal."""
-        query = await build_faq_prefilter_query(metadata_filter, user_role)
+        query = await build_faq_prefilter_query(metadata_filter, user_role, lecturer_only)
         return await self._faq_repo.find_ids_by_query(query)
 
     async def get_faqs_by_ids(self, faq_ids: List[str]) -> List[FaqDocument]:

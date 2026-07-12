@@ -82,9 +82,18 @@ class Settings(BaseSettings):
     COHERE_API_KEY: Optional[str] = None
     COHERE_RERANK_ENABLED: bool = True
     COHERE_RERANK_MODEL: str = "rerank-v4.0-fast"
-    COHERE_RERANK_MAX_CANDIDATES: int = 20
+    # The traversal selection contract prevents pools larger than this value.
+    # Cohere recommends keeping a rerank request at or below 1,000 documents.
+    COHERE_RERANK_MAX_CANDIDATES: int = 1000
     COHERE_RERANK_MAX_TOKENS_PER_DOC: int = 1024
     COHERE_RERANK_TIMEOUT_SECONDS: float = 10.0
+
+    # Agentic Corpus Tree traversal budgets.
+    CORPUS_TRAVERSAL_MAX_TURNS: int = 10
+    CORPUS_TRAVERSAL_MAX_SELECTED_TOPICS: int = 5
+    CORPUS_TRAVERSAL_SOFT_FILE_LIMIT: int = 100
+    CORPUS_TRAVERSAL_SOFT_FAQ_LIMIT: int = 50
+    CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT: int = 5
 
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
     FAQ_SYNTHESIS_ENABLED: bool = False

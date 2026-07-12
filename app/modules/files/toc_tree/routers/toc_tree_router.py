@@ -19,9 +19,4 @@ async def get_toc_tree(
 ):
     svc = get_toc_tree_service()
     toc_data = await svc.get_toc_tree(file_id)
-    return TocTreeResponse(
-        doc_name=toc_data.doc_name,
-        doc_description=toc_data.doc_description,
-        line_count=toc_data.line_count,
-        structure=[node.model_dump() for node in toc_data.structure],
-    )
+    return TocTreeResponse.from_model(toc_data)

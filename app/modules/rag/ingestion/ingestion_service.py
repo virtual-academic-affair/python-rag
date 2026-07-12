@@ -18,7 +18,7 @@ class FileIngestionResult:
     table_of_contents: list[str]
     summary: str
     line_count: int
-    topic_keys: list[str]
+    node_keys: list[str]
 
 
 class IngestionService:
@@ -71,17 +71,17 @@ class IngestionService:
             )
 
             logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{display_name}') vào corpus tree")
-            topic_keys = await self._corpus_linker.index_file(
+            node_keys = await self._corpus_linker.index_file(
                 file_id,
                 display_name=display_name,
                 doc_description=ingest_result.get("summary", "") or "",
                 toc_headings=ingest_result.get("table_of_contents", []),
             )
-            if not topic_keys:
-                raise ValueError("LLM could not assign the file to any topic in the corpus catalog.")
+            if not node_keys:
+                raise ValueError("LLM could not assign the file to any node in the corpus catalog.")
 
             logger.info(
-                f"[Corpus] Index file {file_id} xong — gán vào {len(topic_keys)} topic: {topic_keys}"
+                f"[Corpus] Index file {file_id} xong — gán vào {len(node_keys)} node: {node_keys}"
             )
 
             return FileIngestionResult(
@@ -90,7 +90,7 @@ class IngestionService:
                 table_of_contents=ingest_result.get("table_of_contents", []),
                 summary=ingest_result.get("summary", ""),
                 line_count=ingest_result.get("line_count", 0),
-                topic_keys=topic_keys,
+                node_keys=node_keys,
             )
         finally:
             await self._cleanup_local_artifacts(file_id)

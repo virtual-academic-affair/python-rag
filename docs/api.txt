@@ -21,7 +21,7 @@ ROLE LEVELS:
   - 🔒 auth    : Sinh viên đã xác thực (role=student).
                  Chỉ thấy tệp tin và FAQ có lecturerOnly=false.
                  Nếu JWT có enrollmentYear: chỉ thấy file không có metadata
-                 năm học HOẶC file có enrollment_year_from ≤ year ≤ enrollment_year_to.
+                 năm học HOẶC file có enrollmentYearFrom ≤ year ≤ enrollmentYearTo.
 
 GHI CHÚ: `lecturerOnly` là 1 trong 3 key metadata chuẩn áp dụng đồng nhất cho cả
 tệp tin lẫn FAQ (cùng với enrollmentYear, academicYear) — dùng để pre-filter
@@ -124,7 +124,7 @@ MỤC LỤC
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. AI Triage: Phân loại email (inquiry | registration | task | other).     │
 │   2. Unified Extraction: 1 lần gọi LLM trích câu hỏi, loại thắc mắc và       │
-│      metadata_filter (khóa/năm học), có regex + cohort fallback.            │
+│      metadataFilter (khóa/năm học), có regex + cohort fallback.             │
 │   3. Shared RagQueryPipeline: pre-filter metadata/role, duyệt Corpus Tree,  │
 │      rerank file và FAQ riêng bằng Cohere.                                   │
 │   4. FAQ Answering: LLM đọc FAQ liên quan. Nếu FAQ đủ bao phủ toàn bộ câu   │
@@ -182,7 +182,7 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
     "mimeType": "application/pdf",
     "storagePath": "...",
     "status": "ready",
-    "lecturerOnly": false,       ← true: chỉ admin/lecturer được thấy
+    "lecturerOnly": false,       ← true: chỉ admin/lecture được thấy
     "customMetadata": { ... },
     "fileUrl": "https://...",
     "markdownFileUrl": "https://...",
@@ -200,7 +200,7 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   - file: <binary>                                                           │
 │   - displayName: "Văn bản A"                                                 │
 │   - lecturerOnly: bool (mặc định: false)                                     │
-│     true = chỉ admin/lecturer thấy tệp này khi gọi GET /api/files            │
+│     true = chỉ admin/lecture thấy tệp này khi gọi GET /api/files             │
 │   - customMetadata: JSON string                                              │
 │     (VD: '{"enrollmentYear":{"fromYear":2020,"toYear":2020},                 │
 │            "academicYear":{"fromYear":2025,"toYear":2026}, "type":"cong_van"}')│
@@ -245,8 +245,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │     (a) Ẩn tất cả tệp có lecturerOnly=true.                                  │
 │     (b) Nếu JWT có enrollmentYear=Y:                                         │
 │         • Các file không có metadata năm học → vẫn hiện.                     │
-│         • Các file có enrollment_year_from/to → chỉ hiện nếu                 │
-│           enrollment_year_from ≤ Y ≤ enrollment_year_to.                     │
+│         • Các file có enrollmentYearFrom/To → chỉ hiện nếu                   │
+│           enrollmentYearFrom ≤ Y ≤ enrollmentYearTo.                         │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
 │   { "files": [FileDetailResponse], "total": 22, "page": 1, "limit": 50 }    │
@@ -364,8 +364,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │                                                                              │
 │ GHI CHÚ: Nếu không truyền `sessionId`, hệ thống sẽ tự tạo session mới.       │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id` từ claim `sub`, trích xuất tự động         │
-│      `enrollment_year` từ JWT (cohort/enrollmentyear) làm bộ lọc mặc định.   │
+│   1. Xác thực JWT -> lấy `userId` từ claim `sub`, trích xuất tự động          │
+│      `enrollmentYear` từ JWT (cohort/enrollmentYear) làm bộ lọc mặc định.    │
 │   2. Tự động load lịch sử trò chuyện (6 tin nhắn gần nhất) từ MongoDB.       │
 │   3. QueryAnalyzer phân tích câu hỏi + history để tạo câu hỏi tối ưu         │
 │      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
@@ -384,43 +384,24 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ 1. QUERY_ANALYSIS — Phân tích & chuẩn hóa câu hỏi (bước đầu tiên luôn có)   │
 │    {                                                                         │
 │      "type": "query_analysis",                                               │
-│      "original_question": "Cho hỏi học phí CLC?",                            │
-│      "effective_question": "Học phí chương trình chất lượng cao là bao nhiêu?"│
-│      "needs_rag": true,     ← false nếu câu hỏi không cần tra tài liệu      │
-│      "metadata_filter": {   ← Bộ lọc tài liệu được trích xuất từ ngữ cảnh  │
-│        "academic_year": {"from_year": 2024, "to_year": 2025},               │
-│        "enrollment_year": {"from_year": 2021, "to_year": 2021}              │
-│      }                                                                       │
+│      "content": "Phân tích câu hỏi: ..."                                     │
 │    }                                                                         │
 │                                                                              │
-│ 2. FAQ_MATCH — LLM đọc FAQ liên quan và đủ trả lời câu hỏi                  │
-│    {                                                                         │
-│      "type": "faq_match",                                                    │
-│      "faq_ids": ["..."],                                                     │
-│      "questions": ["Học phí CLC?"]                                           │
-│    }                                                                         │
-│    Lưu ý: Nếu FAQ không đủ bao phủ toàn bộ câu hỏi, step này không xuất hiện │
-│    và pipeline tiếp tục đọc tài liệu bằng PageIndex.                         │
+│ 2. CORPUS_TRAVERSAL — Một hành động duyệt cây Corpus của agent              │
+│    list roots, expand, inspect, select hoặc no-match; mỗi tool thành công   │
+│    sinh một step realtime.                                                    │
 │                                                                              │
-│ 3. RETRIEVAL — Kết quả tra cứu tài liệu qua Navigator                       │
-│    {                                                                         │
-│      "type": "retrieval",                                                    │
-│      "candidate_files": [                                                    │
-│        {"file_id": "abc123", "file_name": "Quy chế ĐT", "doc_score": 0.92}  │
-│      ]                                                                       │
-│    }                                                                         │
+│ 3. FAQ_RETRIEVAL / FAQ_ANSWER — FAQ được chọn và kết quả đủ/chưa đủ để trả lời.│
+│    Hai step này chỉ xuất hiện khi Corpus traversal có FAQ candidate.         │
 │                                                                              │
-│ 4. CALL — Agent gọi một công cụ (tool call)                                  │
-│    {                                                                         │
-│      "type": "call",                                                         │
-│      "name": "get_page_content",   ← tên hàm tool được gọi                 │
-│      "args": {"file_id": "1", "pages": "449-464"}  ← tham số của tool call │
-│    }                                                                         │
+│ 4. FILE_RETRIEVAL — Tài liệu được hydrate/rerank sau khi FAQ chưa đủ.       │
 │                                                                              │
-│ 5. TOOL_OUTPUT — Kết quả trả về thô của tool (Không lưu, không stream)      │
+│ 5. DOCUMENT_READ — Một PageIndex tool call đọc cấu trúc hoặc nội dung file. │
+│                                                                              │
+│ 6. TOOL_OUTPUT — Kết quả trả về thô của tool (Không lưu, không stream)      │
 │    Lưu ý: Bị loại bỏ hoàn toàn khỏi cả stream lẫn DB để tiết kiệm băng thông │
 │                                                                              │
-│ 6. REASONING — Suy luận tổng hợp của Agent (chỉ stream, không lưu DB)       │
+│ 7. REASONING — Suy luận tổng hợp của Agent (chỉ stream, không lưu DB)       │
 │    Nguồn: (a) part.thought nội bộ từ Gemini API, hoặc                        │
 │           (b) Status text từ service.py khi gọi tool (tiếng Việt thân thiện) │
 │           (c) Văn bản Agent tự viết trước thẻ <answer> theo system prompt    │
@@ -428,18 +409,17 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │            "content": "Đang tra cứu mục lục của 'Quy chế đào tạo ĐH 2021'...",│
 │            "done": false}                                                    │
 │                                                                              │
-│ 7. TEXT — Nội dung câu trả lời cuối cùng (chỉ trong /stream)                │
+│ 8. TEXT — Nội dung câu trả lời cuối cùng (chỉ trong /stream)                │
 │    {"type": "text", "content": "Học phí CLC năm 2025 là...", "done": false} │
 │                                                                              │
 │ THỨ TỰ ĐIỂN HÌNH CỦA CÁC EVENT TRONG MỘT /stream REQUEST:                  │
-│   query_analysis → retrieval                                                 │
-│   → faq_match nếu FAQ đủ, hoặc                                               │
-│   → reasoning(status) + call (lặp lại cho mỗi tool)                         │
+│   query_analysis → corpus_traversal × N → faq_retrieval → faq_answer        │
+│   → text nếu FAQ đủ, hoặc file_retrieval → document_read × N                │
 │   → reasoning(kết luận) → text(s) → done                                    │
 │                                                                              │
 │ LƯU VÀO MONGODB:                                                             │
-│   Chỉ các bước pipeline cấp cao được lưu: query_analysis, faq_match,        │
-│   retrieval, call. Không lưu tool_output, reasoning, text.                   │
+│   query_analysis, corpus_traversal, faq_retrieval, faq_answer,              │
+│   file_retrieval, document_read. Không lưu tool_output, reasoning, text.     │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -472,21 +452,16 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │              "content":"Phân tích câu hỏi: ... (Bộ lọc: Khóa 2022)","done":false}│
 │        ← Completed status của Query Analysis                                 │
 │                                                                              │
-│   [3] data: {"type":"retrieval","content":"Tìm kiếm tài liệu và câu hỏi liên quan...","done":false}│
-│        ← Pending status của Retrieval                                        │
-│   [4] data: {"type":"retrieval",                                             │
-│              "content":"Tìm thấy 1 tài liệu: Quy chế đào tạo...","done":false} │
-│        ← Completed status của Retrieval                                      │
+│   [3] data: {"type":"corpus_traversal","content":"Đã mở chủ đề Đào tạo...","done":false}│
+│        ← Một Corpus agent tool call hoàn tất                                 │
+│   [4] data: {"type":"faq_retrieval","content":"Đã chọn FAQ liên quan...","done":false}│
 │                                                                              │
 │   [5A] data: {"type":"text","content":"...","done":false}                   │
 │        ← Nếu FAQ đủ trả lời, pipeline stream answer FAQ rồi DONE source=faq  │
 │                                                                              │
-│   [5B] data: {"type":"reasoning",                                            │
-│              "content":"Tôi sẽ dùng get_document_structure để xem mục lục Quy chế",│
-│              "done":false}                                                   │
-│        ← Lập luận tiếng Việt của Agent (bao gồm cả model thought nội bộ)      │
+│   [5B] data: {"type":"file_retrieval","content":"Đã chọn tài liệu liên quan...","done":false}│
 │                                                                              │
-│   [6] data: {"type":"call",                                                  │
+│   [6] data: {"type":"document_read",                                         │
 │              "content":"Đang tra cứu cấu trúc mục lục của 'Quy chế...'",     │
 │              "done":false}                                                   │
 │        ← Đang gọi tool (đã map sang tên hiển thị thân thiện trên UI)         │
@@ -498,9 +473,10 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   [DONE] data: {"done":true, "source":"llm",                                 │
 │                 "sources":[{"citationId":1,"fileName":"...","title":"..."}], │
 │                 "steps":[{"type":"query_analysis","content":"..."},          │
-│                          {"type":"faq_match","content":"..."},               │
-│                          {"type":"retrieval","content":"..."},               │
-│                          {"type":"call","content":"..."}],                   │
+│                          {"type":"corpus_traversal","content":"..."},        │
+│                          {"type":"faq_retrieval","content":"..."},           │
+│                          {"type":"file_retrieval","content":"..."},          │
+│                          {"type":"document_read","content":"..."}],          │
 │                 "tokenUsage":{"promptTokens":N,"completionTokens":N,         │
 │                               "totalTokens":N},                              │
 │                 "processingTimeMs":1234}                                     │
@@ -511,11 +487,11 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │   - reasoning/text chỉ stream, KHÔNG lưu vào steps[].                        │
 │   - Mọi step trong steps[] và stream đều chỉ có 2 thuộc tính type và content.│
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id` và trích xuất `enrollment_year` tự động.  │
+│   1. Xác thực JWT -> lấy `userId` và trích xuất `enrollmentYear` tự động.    │
 │   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
-│   3. Phát lần lượt: query_analysis → retrieval dưới dạng SSE.               │
+│   3. Phát query_analysis, rồi corpus_traversal realtime theo từng tool call.│
 │   4. Nếu FAQ đủ trả lời: stream text và DONE source=faq.                    │
-│   5. Nếu cần tài liệu: forward reasoning/tool/text từ PageIndex stream.      │
+│   5. Nếu cần tài liệu: phát file_retrieval và document_read từ PageIndex.    │
 │   6. Lưu structural steps vào MongoDB (chat_messages) khi stream kết thúc.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -530,10 +506,10 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ RESPONSE 200:                                                                 │
 │   { "page": 1, "pageSize": 20, "total": 2, "items": [ ... ] }          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   1. Xác thực JWT -> lấy `userId`.                                            │
 │   2. Chuẩn hóa phân trang (`page>=1`, `1<=pageSize<=100`).                  │
 │   3. Resolve `statusFilter`: mặc định `active`, nếu có thì validate giá trị. │
-│   4. Query `chat_sessions` theo `user_id + status`, sort `last_message_at` ↓. │
+│   4. Query `chat_sessions` theo `userId + status`, sort `lastMessageAt` ↓.    │
 │   5. Trả về danh sách session + tổng số bản ghi.                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -576,17 +552,18 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
 │         "steps": [                                                            │
 │           {"type": "query_analysis", "content": "Phân tích câu hỏi..."},      │
-│           {"type": "retrieval", "content": "Tìm thấy 1 tài liệu liên quan..."},│
-│           {"type": "call", "content": "Đang đọc nội dung chi tiết..."}        │
+│           {"type": "corpus_traversal", "content": "Đã chọn chủ đề liên quan..."},│
+│           {"type": "file_retrieval", "content": "Đã chọn 1 tài liệu liên quan..."},│
+│           {"type": "document_read", "content": "Đang đọc nội dung chi tiết..."}│
 │         ],                                                                    │
 │         "processingTimeMs": 2450,                                             │
 │         "createdAt": "2025-01-01T08:00:02"                                   │
 │       }                                                                       │
 │     ] }                                                                          │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
+│   1. Xác thực JWT -> lấy `userId`.                                            │
 │   2. Chuẩn hóa phân trang.                                                    │
-│   3. Query `chat_messages` theo `session_id + user_id`.                       │
+│   3. Query `chat_messages` theo `sessionId + userId`.                         │
 │   4. Sort theo `sequence` tăng dần để giữ đúng thứ tự hội thoại.             │
 │   5. Mỗi message có `messageType` (`text` hoặc `thinking`) để FE render đúng.│
 │   6. Message assistant loại `text` chứa đầy đủ `steps[]`, `sources[]`.       │
@@ -600,8 +577,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ REQUEST: { "title": "Tư vấn học phí" }                                     │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Update `chat_sessions` theo `session_id + user_id` (set title, updatedAt).│
+│   1. Xác thực JWT -> lấy `userId`.                                            │
+│   2. Update `chat_sessions` theo `sessionId + userId` (set title, updatedAt). │
 │   3. Không tìm thấy session -> trả 404 `Session not found`.                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -611,8 +588,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ MÔ TẢ: Archive (lưu trữ mềm) một session chat.                                │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Update `chat_sessions` theo `session_id + user_id`:                      │
+│   1. Xác thực JWT -> lấy `userId`.                                            │
+│   2. Update `chat_sessions` theo `sessionId + userId`:                        │
 │      - `status = "archived"`                                                 │
 │      - cập nhật `updatedAt`.                                                  │
 │   3. Không tìm thấy session -> 404 `Session not found`.                       │
@@ -625,8 +602,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ MÔ TẢ: Bỏ archive, chuyển session về trạng thái active.                      │
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Update `chat_sessions` theo `session_id + user_id`:                      │
+│   1. Xác thực JWT -> lấy `userId`.                                            │
+│   2. Update `chat_sessions` theo `sessionId + userId`:                        │
 │      - `status = "active"`                                                   │
 │      - cập nhật `updatedAt`.                                                  │
 │   3. Không tìm thấy session -> 404 `Session not found`.                       │
@@ -639,8 +616,8 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ RESPONSE 200: { "sessionId": "...", "success": true }                    │
 │ RESPONSE 404: { "detail": "Session not found" }                            │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xác thực JWT -> lấy `user_id`.                                           │
-│   2. Xóa session trong `chat_sessions` theo `session_id + user_id`.           │
+│   1. Xác thực JWT -> lấy `userId`.                                            │
+│   2. Xóa session trong `chat_sessions` theo `sessionId + userId`.             │
 │   3. Xóa toàn bộ messages trong `chat_messages` theo cùng khóa.               │
 │   4. Nếu không có session để xóa -> trả 404.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -988,38 +965,59 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 
 
 ════════════════════════════════════════════════════════════════════════════════
-                        8. DEBUG & PREVIEW APIs
+                        8. CORPUS & DEBUG/PREVIEW APIs
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DEBUG CORPUS TREE ENDPOINTS [🔒 ADMIN]                                      │
+│ CORPUS TREE ENDPOINTS [🔒 ADMIN]                                            │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ GET    /api/debug/corpus/stats                                              │
-│        Thống kê số topic, root topics, direct file/FAQ links.               │
-│ GET    /api/debug/corpus/tree?include_leaf_ids=false                        │
-│        Trả cây chủ đề lồng nhau; có thể bật include_leaf_ids để debug links. │
-│ POST   /api/debug/corpus/traverse                                           │
-│        Chạy traversal thật cho question/role/enrollmentYear/academicYear.    │
-│ POST   /api/debug/corpus/chat-preview                                       │
-│        Dry-run chat query analysis + retrieval, không gọi PageIndex agent.   │
-│ GET    /api/debug/corpus/nodes?skip=0&limit=50                              │
-│        List topic nodes dạng flat, phân trang.                              │
-│ GET    /api/debug/corpus/nodes/{node_key}                                   │
-│        Chi tiết một topic node, gồm direct/subtree file/FAQ ids.             │
-│ POST   /api/debug/corpus/backfill                                           │
-│        Trigger background backfill READY files và active FAQs vào tree.      │
-│ GET    /api/debug/corpus/topics                                             │
+│ GET    /api/corpus/stats                                                    │
+│        Thống kê số node, root nodes, direct file/FAQ links.                 │
+│ GET    /api/corpus/tree                                                     │
+│        Trả cây topic lồng nhau. Mỗi node có directFiles/directFaqs dạng      │
+│        [{"id":"...","name":"...","metadata":{},"lecturerOnly":false,     │
+│          "updatedAt":"..."}] và vẫn giữ các trường IDs cũ.                    │
+│        Query: enrollmentYear?, academicYear?, lecturerOnly?.                │
+│        Metadata dùng range-overlap. lecturerOnly=true/false lọc chính xác;  │
+│        không truyền thì không lọc theo lecturerOnly. Nhánh rỗng bị ẩn.      │
+│ GET    /api/corpus/topics                                                   │
 │        List toàn bộ topic nodes với file/FAQ counts.                        │
-│ POST   /api/debug/corpus/topics                                             │
+│ GET    /api/corpus/topics/{topicKey}                                        │
+│        Chi tiết topic, gồm directFiles/directFaqs đã hydrate tên.            │
+│ GET    /api/corpus/files/{fileId}/topics                                    │
+│ PUT    /api/corpus/files/{fileId}/topics                                    │
+│ GET    /api/corpus/faqs/{faqId}/topics                                      │
+│ PUT    /api/corpus/faqs/{faqId}/topics                                      │
+│        Xem/thay thế toàn bộ topic assignments. PUT body: {"nodeKeys":[...]}.│
+│        nodeKeys=[] gỡ payload khỏi toàn bộ Corpus topics.                   │
+│ POST   /api/corpus/topics                                                   │
 │        Tạo topic node thủ công. Body: {slug,title,summary,parentKey}.        │
-│ POST   /api/debug/corpus/topics/{node_key}/merge-into/{target_key}          │
-│        Merge source topic vào target topic, rồi xóa source.                 │
-│ DELETE /api/debug/corpus/nodes/{node_key}                                   │
+│ PATCH  /api/corpus/topics/{topicKey}                                        │
+│        Cập nhật title, summary hoặc parentKey của topic.                    │
+│ POST   /api/corpus/topics/{sourceKey}/merge                                 │
+│        Merge source topic vào target topic. Body: {targetKey}.              │
+│ DELETE /api/corpus/topics/{topicKey}                                        │
 │        Xóa topic node khỏi Corpus Tree.                                     │
+│ POST   /api/corpus/backfill                                                 │
+│        Trigger background backfill READY files và active FAQs vào tree.      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DEBUG CORPUS PREVIEW ENDPOINTS [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ POST   /api/debug/corpus/traverse                                           │
+│        Chạy traversal thật cho question/role/metadataFilter.                │
+│        Response dùng fileCandidates/faqCandidates,                          │
+│        totalFileCandidates/totalFaqCandidates và trace additive: status,    │
+│        selectedTopics, expandedNodeKeys, inspectedNodeKeys,                  │
+│        terminationReason, turnCount, tokenUsage.                            │
+│ POST   /api/debug/corpus/chat-preview                                       │
+│        Dry-run luồng RagQueryPipeline.answer_chat không cần JWT thật.        │
+│        Response pipelineResult dùng fileCandidates và faqDocs.              │
 │                                                                              │
 │ REQUEST mẫu cho traverse/chat-preview:                                      │
-│   {"question":"Điều kiện tốt nghiệp?","role":"student",              │
-│    "enrollmentYear":2022,"academicYear":2024}                            │
+│   {"question":"Điều kiện tốt nghiệp?","role":"student",                     │
+│    "enrollmentYear":2022,"academicYear":2024}                               │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐

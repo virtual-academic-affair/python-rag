@@ -40,17 +40,18 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
                 },
             }
             yield {
-                "type": "_retrieval_start",
-                "content": "Tìm kiếm tài liệu và câu hỏi liên quan...",
+                "type": "_corpus_traversal",
+                "step": {
+                    "type": "corpus_traversal",
+                    "action": "list_roots",
+                    "topic_count": 2,
+                },
             }
             yield {
-                "type": "_retrieval",
+                "type": "_pipeline_step",
                 "step": {
-                    "type": "retrieval",
-                    "candidate_files": [{
-                        "file_id": "file-1",
-                        "file_name": "Quy chế",
-                    }],
+                    "type": "file_retrieval",
+                    "candidate_files": [{"file_id": "file-1", "file_name": "Quy chế"}],
                 },
                 "candidate_files": [{
                     "file_id": "file-1",
@@ -84,9 +85,12 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
         ))
 
     assert any(row.get("content") == "Đang tra cứu cấu trúc mục lục của 'Quy chế'." for row in rows)
+    assert any(row.get("type") == "corpus_traversal" for row in rows)
     assert any(row.get("content") == "Câu trả lời" for row in rows)
     final = rows[-1]
     assert final["done"] is True
+    assert [step["type"] for step in final["steps"]].count("corpus_traversal") == 1
+    assert "document_read" in [step["type"] for step in final["steps"]]
     assert final["tokenUsage"] == {"promptTokens": 1, "completionTokens": 2, "totalTokens": 3}
     assert final["sources"] == []
     assert fake_pipeline.requests[0].mode == "chat"
