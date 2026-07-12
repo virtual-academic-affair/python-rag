@@ -92,7 +92,8 @@ async def main(file_path: str = None):
                 question=question,
                 answer_rich_text=answer_rich_text,
                 metadata_filter=metadata_filter,
-                source="seed"
+                source="seed",
+                lecturer_only=bool(item.get("lecturer_only", False)),
             )
             success_count += 1
             print(f"[{i+1}/{len(faqs_data)}] Created: {question[:50]}...")

@@ -11,6 +11,7 @@ from app.modules.faq.dtos.update_faq import (
 )
 from app.modules.faq.dtos.search_faq import (
     FaqMatchRequest,
+    FaqMatchResponse,
     FaqSynthesisRequest,
     FaqSynthesisResponse,
 )

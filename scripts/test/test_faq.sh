@@ -66,10 +66,9 @@ if check_response "$RESPONSE" "200" "Update FAQ"; then
         || { log_error "  -> Updated FAQ missing new question"; return 1; }
 fi
 
-log_info "POST /api/faqs/match — semantic match"
+log_info "POST /api/faqs/match — FAQ answer debug"
 MATCH_DATA="{
     \"question\": \"Làm thế nào để đăng ký giấy chứng nhận sinh viên?\",
-    \"threshold\": 0.7,
     \"metadataFilter\": {
         \"academicYear\": {\"fromYear\": 2024, \"toYear\": 2025},
         \"enrollmentYear\": {\"fromYear\": 2020, \"toYear\": 2020}
@@ -88,8 +87,14 @@ else
     check_response "$RESPONSE" "200" "Match FAQ"
 fi
 
+FAQ_SAMPLE_FILE="$REPO_ROOT/scripts/test/sample_bulk_faq_unique_${TS}.xlsx"
+cleanup_faq_smoke() {
+    rm -f "$FAQ_SAMPLE_FILE" "$REPO_ROOT/scripts/test/sample_bulk_faq_unique.xlsx"
+}
+trap 'cleanup_faq_smoke; trap - RETURN' RETURN
+
 log_info "POST /api/faqs/import/preview — Excel preview"
-python3 -c "
+"$PYTHON_BIN" -c "
 import openpyxl, time
 wb = openpyxl.Workbook()
 ws = wb.active
@@ -97,11 +102,11 @@ ts = int(time.time())
 ws.append(['STT', 'Câu hỏi', 'Trả lời', 'Năm học', 'Khóa'])
 ws.append([1, f'Học phí năm học 2024 là bao nhiêu? ({ts})', 'Học phí là 30 triệu/năm.', '2024-2025', ''])
 ws.append([2, 'Q', 'Short', '', ''])
-wb.save('scripts/test/sample_bulk_faq_unique.xlsx')
+wb.save('$FAQ_SAMPLE_FILE')
 "
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import/preview" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-    -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
+    -F "file=@${FAQ_SAMPLE_FILE}" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
     -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}" \
@@ -116,7 +121,7 @@ fi
 log_info "POST /api/faqs/import — Excel import"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/import" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-    -F "file=@scripts/test/sample_bulk_faq_unique.xlsx" \
+    -F "file=@${FAQ_SAMPLE_FILE}" \
     -F "question_col=Câu hỏi" \
     -F "answer_col=Trả lời" \
     -F "metadataFilterJson={\"academicYear\": \"Năm học\", \"enrollmentYear\": \"Khóa\"}" \
@@ -134,4 +139,4 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/api/faqs/${FAQ_ID}
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "204" "Delete FAQ"
 
-rm -f scripts/test/sample_bulk_faq_unique.xlsx
+cleanup_faq_smoke

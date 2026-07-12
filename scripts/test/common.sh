@@ -10,7 +10,12 @@ BASE_URL=${AI_BASE_URL:-"http://localhost:8000"}
 
 # Load JWT config dynamically from .env to avoid hardcoding credentials
 DIR_OF_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$DIR_OF_COMMON/../../.env"
+REPO_ROOT="$(cd "$DIR_OF_COMMON/../.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+PYTHON_BIN=${PYTHON_BIN:-"$REPO_ROOT/.venv/bin/python"}
+if [ ! -x "$PYTHON_BIN" ]; then
+    PYTHON_BIN="python3"
+fi
 
 if [ -f "$ENV_FILE" ]; then
     if [ -z "$JWT_SECRET" ]; then
@@ -29,7 +34,7 @@ JWT_SECRET=$(echo "$JWT_SECRET" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/
 JWT_AUDIENCE=$(echo "$JWT_AUDIENCE" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
 JWT_ISSUER=$(echo "$JWT_ISSUER" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
 
-ADMIN_TOKEN=$(python3 -c "
+ADMIN_TOKEN=$("$PYTHON_BIN" -c "
 import jwt, time
 payload = {
     'sub': 'admin-sub',
@@ -44,7 +49,7 @@ payload = {
 print(jwt.encode(payload, '$JWT_SECRET', algorithm='HS256'))
 " 2>/dev/null)
 
-STUDENT_TOKEN=$(python3 -c "
+STUDENT_TOKEN=$("$PYTHON_BIN" -c "
 import jwt, time
 payload = {
     'sub': '57',
@@ -63,7 +68,7 @@ AUTH_HEADER="Authorization: Bearer ${ADMIN_TOKEN}"
 STUDENT_AUTH_HEADER="Authorization: Bearer ${STUDENT_TOKEN}"
 
 # Output file (if not inherited)
-OUTPUT_DIR="scripts/test_results"
+OUTPUT_DIR="$REPO_ROOT/scripts/test_results"
 mkdir -p "$OUTPUT_DIR"
 
 # Colors

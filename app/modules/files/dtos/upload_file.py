@@ -32,17 +32,3 @@ class FileParsePreviewResponse(BaseSchema):
     page_count: int
     pages: List[FileParsePreviewPage] = Field(default_factory=list)
 
-class FileChunkPreviewItem(BaseSchema):
-    chunk_index: int
-    page_index_start: int
-    page_index_end: int
-    section_path: Optional[str] = None
-    text: str
-
-class FileChunkPreviewResponse(BaseSchema):
-    filename: str
-    page_count: int
-    chunk_count: int
-    chunk_size_chars: int
-    chunk_overlap_chars: int
-    chunks: List[FileChunkPreviewItem] = Field(default_factory=list)

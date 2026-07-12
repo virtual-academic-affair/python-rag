@@ -30,7 +30,6 @@ class HealthCheckResponse(BaseSchema):
     gemini_api_connected: bool
     mongodb_connected: bool
     redis_connected: bool
-    qdrant_connected: bool
     email_consumer_running: Optional[bool] = None
 
 class ErrorResponse(BaseSchema):

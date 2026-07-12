@@ -96,3 +96,10 @@ class FileRepository(BeanieRepository[FileDocument]):
             return []
 
         return await FileDocument.find({"_id": {"$in": object_ids}}).to_list()
+
+    async def find_ids_by_query(self, query: Dict[str, Any]) -> set[str]:
+        ids: set[str] = set()
+        cursor = FileDocument.get_motor_collection().find(query, {"_id": 1})
+        async for row in cursor:
+            ids.add(str(row["_id"]))
+        return ids

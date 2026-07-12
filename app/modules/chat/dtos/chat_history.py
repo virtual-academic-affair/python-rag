@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.chat.dtos.send_message import TokenUsage
-from app.modules.rag.retrieval.dtos.retrieval_out import SourceCitation
+from app.modules.rag.query.dtos import SourceCitation
 
 class ChatPaginationRequest(BaseSchema):
     page: int = Field(default=1, ge=1, description="Page number")
@@ -30,7 +30,7 @@ class ChatMessageItem(BaseSchema):
     message_type: str = Field(default="text", description="Message type: text or thinking")
     token_usage: Optional[TokenUsage] = None
     sources: Optional[List[SourceCitation]] = Field(default=None)
-    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps persisted to DB: query_analysis, faq_check, retrieval, call")
+    steps: Optional[List[Dict[str, Any]]] = Field(default=None, description="Pipeline steps: query_analysis, corpus_traversal, FAQ/file retrieval, FAQ answer, document_read")
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
 

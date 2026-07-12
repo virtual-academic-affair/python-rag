@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status, File, UploadFile
 from typing import Optional
-import json
-import re
 
 from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin, require_auth, from_form
@@ -16,19 +14,18 @@ from app.modules.faq.dtos import (
     FaqSynthesisRequest,
     FaqSynthesisResponse,
     FaqMatchRequest,
+    FaqMatchResponse,
     FaqImportPreviewResponse,
     FaqBulkCreateRequest,
     FaqBulkCreateResponse,
-    FaqBulkCreateItem,
     FaqImportExcelRequest
 )
 from app.modules.faq.services.faq_service import get_faq_service, FaqService
-from app.modules.faq.services.faq_synthesizer_service import get_faq_synthesis_service
-from app.modules.faq.utils.excel_parser import parse_excel_to_faq_rows, parse_csv_to_faq_rows
-from app.modules.metadata.dtos.update_metadata import FaqMetadataSchema
+from app.modules.faq.services.faq_import_service import get_faq_import_service
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.core.exceptions import handle_google_api_error
 from google.genai.errors import APIError
+import json
 
 router = APIRouter(prefix="/faqs", tags=["FAQ"])
 
@@ -63,7 +60,8 @@ async def list_faqs(
         metadata_filter=meta,
         search=search,
         page=page,
-        limit=limit
+        limit=limit,
+        exclude_lecturer_only=user.role not in ("admin", "lecture"),
     )
     return FaqListResponse(
         items=[FaqResponse.from_document(item) for item in result.items],
@@ -87,25 +85,32 @@ async def create_faq(
         question=request.question,
         answer_rich_text=request.answer_rich_text,
         metadata_filter=request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {},
-        source="manual"
+        source="manual",
+        lecturer_only=request.lecturer_only,
     )
     return FaqResponse.from_document(result)
 
 
-@router.post("/match", response_model=FaqResponse)
+@router.post("/match", response_model=FaqMatchResponse)
 async def debug_match_faq(
     request: FaqMatchRequest,
     admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service)
 ):
-    """Debug endpoint to test semantic matching."""
-    vector = await faq_svc.embed(request.question)
+    """Debug endpoint to test FAQ-based answering."""
     meta = request.metadata_filter.model_dump(by_alias=False) if request.metadata_filter else {}
-    
-    faq = await faq_svc.find_best_match(vector, meta, threshold=request.threshold)
-    if not faq:
-        raise HTTPException(status_code=404, detail="No matching FAQ found above threshold")
-    return FaqResponse.from_document(faq)
+    result = await faq_svc.answer_from_faq_catalog(
+        request.question,
+        meta,
+        increment_view_count=False,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="No matching FAQ found")
+    return FaqMatchResponse(
+        answer_markdown=result.answer_markdown,
+        faq_ids=[str(getattr(faq, "id", "")) for faq in result.matched_faqs],
+        questions=[getattr(faq, "question", "") for faq in result.matched_faqs],
+    )
 
 
 # ==========================================
@@ -172,20 +177,10 @@ async def trigger_synthesis(
     admin: JWTPayload = Depends(require_admin)
 ):
     """Manually trigger FAQ synthesis background job."""
-    synth_svc = await get_faq_synthesis_service()
-    
-    try:
-        result = await synth_svc.run(
-            date_from_str=request.date_from,
-            date_to_str=request.date_to,
-            sources=request.sources
-        )
-        return FaqSynthesisResponse(**result)
-    except Exception as e:
-        if isinstance(e, APIError):
-            raise handle_google_api_error(e, prefix="Synthesis failed: ")
-            
-        raise HTTPException(status_code=500, detail=f"Synthesis failed: {str(e)}")
+    raise HTTPException(
+        status_code=501,
+        detail="FAQ synthesis is temporarily disabled pending architecture migration"
+    )
 
 
 @router.patch("/{faq_id}", response_model=FaqResponse)
@@ -228,6 +223,9 @@ async def get_faq(
     faq = await faq_svc.get_faq(faq_id)
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
+    if faq.lecturer_only and user.role not in ("admin", "lecture"):
+        # Student xin FAQ lecturer_only → coi như không tồn tại
+        raise HTTPException(status_code=404, detail="FAQ not found")
     return FaqResponse.from_document(faq)
 
 
@@ -242,50 +240,12 @@ async def preview_faq_import(
     """
     Upload Excel and preview extracted FAQ rows.
     """
-    try:
-        metadata_map = json.loads(req.metadata_filter_json) if req.metadata_filter_json else {}
-        if not isinstance(metadata_map, dict):
-            raise HTTPException(status_code=400, detail="metadata_filter_json must be a JSON object")
-        allowed_keys = set()
-        for name, field in FaqMetadataSchema.model_fields.items():
-            allowed_keys.add(name)
-            if field.alias:
-                allowed_keys.add(field.alias)
-            camel = re.sub(r'_([a-z])', lambda match: match.group(1).upper(), name)
-            allowed_keys.add(camel)
-            
-        for k in metadata_map.keys():
-            if k not in allowed_keys:
-                raise HTTPException(status_code=400, detail=f"Invalid metadata key: {k}")
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid metadata_filter_json: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid FAQ metadata: {e}")
-        
     content = await file.read()
-    try:
-        if file.filename and file.filename.lower().endswith('.csv'):
-            result = parse_csv_to_faq_rows(
-                file_bytes=content,
-                question_col=req.question_col,
-                answer_col=req.answer_col,
-                metadata_map=metadata_map,
-                skip_rows=req.skip_rows
-            )
-        else:
-            result = parse_excel_to_faq_rows(
-                file_bytes=content,
-                question_col=req.question_col,
-                answer_col=req.answer_col,
-                metadata_map=metadata_map,
-                sheet_name=req.sheet_name,
-                skip_rows=req.skip_rows
-            )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await get_faq_import_service().preview_import(
+        filename=file.filename,
+        file_bytes=content,
+        request=req,
+    )
 
 
 @router.post("/import", response_model=FaqBulkCreateResponse)
@@ -293,74 +253,16 @@ async def import_faqs_from_excel(
     file: UploadFile = File(...),
     req: FaqImportExcelRequest = Depends(from_form(FaqImportExcelRequest)),
     admin: JWTPayload = Depends(require_admin),
-    faq_svc: FaqService = Depends(get_faq_service)
 ):
     """
     Upload Excel and create FAQs in bulk.
     """
-    try:
-        metadata_map = json.loads(req.metadata_filter_json) if req.metadata_filter_json else {}
-        if not isinstance(metadata_map, dict):
-            raise HTTPException(status_code=400, detail="metadata_filter_json must be a JSON object")
-        allowed_keys = set()
-        for name, field in FaqMetadataSchema.model_fields.items():
-            allowed_keys.add(name)
-            if field.alias:
-                allowed_keys.add(field.alias)
-            camel = re.sub(r'_([a-z])', lambda match: match.group(1).upper(), name)
-            allowed_keys.add(camel)
-            
-        for k in metadata_map.keys():
-            if k not in allowed_keys:
-                raise HTTPException(status_code=400, detail=f"Invalid metadata key: {k}")
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid metadata_filter_json: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid FAQ metadata: {e}")
-        
     content = await file.read()
-    try:
-        if file.filename and file.filename.lower().endswith('.csv'):
-            parsed = parse_csv_to_faq_rows(
-                file_bytes=content,
-                question_col=req.question_col,
-                answer_col=req.answer_col,
-                metadata_map=metadata_map,
-                skip_rows=req.skip_rows
-            )
-        else:
-            parsed = parse_excel_to_faq_rows(
-                file_bytes=content,
-                question_col=req.question_col,
-                answer_col=req.answer_col,
-                metadata_map=metadata_map,
-                sheet_name=req.sheet_name,
-                skip_rows=req.skip_rows
-            )
-        
-        valid_items = [
-            FaqBulkCreateItem(
-                question=r["question"],
-                answer_rich_text=r["answer_rich_text"],
-                metadata_filter=r["metadata"],
-            )
-            for r in parsed["rows"] if r["is_valid"]
-        ]
-        
-        result = await faq_svc.bulk_create_faqs(valid_items, skip_duplicates=req.skip_duplicates)
-        
-        parser_errors = [
-            {"row_index": r["row_index"], "question": r["question"], "error": r["error"]}
-            for r in parsed["rows"] if not r["is_valid"]
-        ]
-        result["errors"].extend(parser_errors)
-        result["failed"] += len(parser_errors)
-        
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await get_faq_import_service().import_faqs(
+        filename=file.filename,
+        file_bytes=content,
+        request=req,
+    )
 
 
 @router.post("/bulk", response_model=FaqBulkCreateResponse)

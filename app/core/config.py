@@ -44,7 +44,6 @@ class Settings(BaseSettings):
 
     # RAG settings (from rag-service)
     GEMINI_MODEL: str = "gemini-2.5-flash"
-    GEMINI_EMBEDDING_MODEL: str = "models/gemini-embedding-001"
     GEMINI_TEMPERATURE: float = 0.7
     GEMINI_TOP_P: float = 0.95
     GEMINI_TOP_K: int = 40
@@ -57,15 +56,6 @@ class Settings(BaseSettings):
     LLAMA_PARSE_LANGUAGE: str = "vi"
     LLAMA_PARSE_USE_PREMIUM: bool = False
 
-    # Qdrant retrieval tuning
-    QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_API_KEY: Optional[str] = None
-    QDRANT_COLLECTION_NAME: str = "file_overviews"
-    QDRANT_TOP_K: int = 6
-    QDRANT_MIN_SCORE: float = 0.2
-    RETRIEVAL_MIN_DOC_SCORE: float = 0.4
-    QDRANT_VECTOR_SIZE: int = 3072
-    
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
     PAGEINDEX_MODEL: str = "gemma-4-31b-it" 
@@ -82,8 +72,29 @@ class Settings(BaseSettings):
     # ====================================
     # FAQ Configuration
     # ====================================
-    FAQ_QDRANT_COLLECTION: str = "faqs"
-    FAQ_SEMANTIC_THRESHOLD: float = 0.90
+    # FAQ_MATCHER_MODEL: None -> falls back to GEMINI_MODEL.
+    FAQ_MATCHER_MAX_CATALOG: int = 200
+    FAQ_MATCHER_MODEL: Optional[str] = None
+    # None -> falls back to GEMINI_MODEL.
+    CORPUS_TOPIC_MODEL: Optional[str] = None
+
+    # Cohere Rerank v2 for file candidates and FAQ context ranking.
+    COHERE_API_KEY: Optional[str] = None
+    COHERE_RERANK_ENABLED: bool = True
+    COHERE_RERANK_MODEL: str = "rerank-v4.0-fast"
+    # The traversal selection contract prevents pools larger than this value.
+    # Cohere recommends keeping a rerank request at or below 1,000 documents.
+    COHERE_RERANK_MAX_CANDIDATES: int = 1000
+    COHERE_RERANK_MAX_TOKENS_PER_DOC: int = 1024
+    COHERE_RERANK_TIMEOUT_SECONDS: float = 10.0
+
+    # Agentic Corpus Tree traversal budgets.
+    CORPUS_TRAVERSAL_MAX_TURNS: int = 10
+    CORPUS_TRAVERSAL_MAX_SELECTED_TOPICS: int = 5
+    CORPUS_TRAVERSAL_SOFT_FILE_LIMIT: int = 100
+    CORPUS_TRAVERSAL_SOFT_FAQ_LIMIT: int = 50
+    CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT: int = 5
+
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
     FAQ_SYNTHESIS_ENABLED: bool = False
     FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7

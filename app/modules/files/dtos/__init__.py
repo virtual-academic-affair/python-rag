@@ -1,6 +1,6 @@
 from app.modules.files.dtos.upload_file import (
     FileUploadRequest, FileUploadResponse, FileParsePreviewPage,
-    FileParsePreviewResponse, FileChunkPreviewItem, FileChunkPreviewResponse
+    FileParsePreviewResponse
 )
 from app.modules.files.dtos.batch_upload import (
     BatchFileUploadRequest, BatchFileUploadResult, BatchFileUploadResponse
@@ -16,8 +16,6 @@ __all__ = [
     "FileUploadResponse",
     "FileParsePreviewPage",
     "FileParsePreviewResponse",
-    "FileChunkPreviewItem",
-    "FileChunkPreviewResponse",
     "BatchFileUploadRequest",
     "BatchFileUploadResult",
     "BatchFileUploadResponse",

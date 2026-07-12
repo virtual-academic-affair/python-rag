@@ -11,7 +11,7 @@ class RetryableEmailError(Exception):
     """Transient error; consumer should retry up to MAX_RETRIES then route to DLQ.
 
     Examples: Gemini 429, timeout, gRPC UNAVAILABLE/DEADLINE_EXCEEDED,
-              Qdrant timeout, GetState unavailable.
+              GetState unavailable.
     """
 
 

@@ -52,20 +52,7 @@ class FileMetadata(BaseModel):
     academic_year: YearRange = Field(default_factory=YearRange)
     type: DocumentType = DocumentType.CONG_VAN
 
-    def to_qdrant_payload(self) -> dict:
-        payload = {}
-        payload.update(self.enrollment_year.to_flat_dict("enrollment_year"))
-        payload.update(self.academic_year.to_flat_dict("academic_year"))
-        payload["type"] = self.type.value
-        return payload
-
 class FaqMetadata(BaseModel):
     """Metadata that constrains which users a FAQ applies to."""
     enrollment_year: YearRange = YearRange()
     academic_year: YearRange = YearRange()
-
-    def to_qdrant_payload(self) -> dict:
-        payload = {}
-        payload.update(self.enrollment_year.to_flat_dict("enrollment_year"))
-        payload.update(self.academic_year.to_flat_dict("academic_year"))
-        return payload

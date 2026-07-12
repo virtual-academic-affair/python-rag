@@ -4,7 +4,6 @@ from typing import Optional, BinaryIO, Dict, Any, Literal
 
 from app.core.exceptions import (
     AppException,
-    ExternalServiceException,
     NotFoundException,
     StorageException,
     ValidationException,
@@ -12,12 +11,11 @@ from app.core.exceptions import (
 from app.modules.files.models.file import FileDocument, FileStatus
 from app.modules.files.repositories.file_repository import FileRepository
 from app.integrations.storage.client import r2_storage
-from app.integrations.pageindex.client import get_page_index_client
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.utils.text_utils import remove_accents
-from app.integrations.qdrant.indexer import get_qdrant_indexer
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.metadata.utils.filter_builder import get_filter_builder
+from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
 from app.modules.files.services.file_upload_service import FileUploadMixin
 
 logger = logging.getLogger(__name__)
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 class FileService(FileUploadMixin):
     """
     Service for file management operations.
-    Coordinates between Cloudflare R2 storage, MongoDB (Beanie), and Gemini/Qdrant.
+    Coordinates between Cloudflare R2 storage, MongoDB (Beanie), and Corpus Tree.
     """
 
     def __init__(self):
@@ -78,17 +76,19 @@ class FileService(FileUploadMixin):
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        # 1. Delete from Qdrant index, TOC, and PageIndex cache first
-        indexer = get_qdrant_indexer()
-        await indexer.delete_by_file_id(file_id)
+        # 1. Corpus tree unindex — must succeed before any destructive steps
+        await get_corpus_linker().unindex_file(file_id)
 
+        # 2. Delete from TOC and evict PageIndex cache
         toc_repo = FileTocTreeRepository()
         await toc_repo.delete_by_file_id(file_id)
+
+        from app.integrations.pageindex.client import get_page_index_client
 
         page_index_client = get_page_index_client()
         await page_index_client.evict_doc(file_id)
 
-        # 2. Delete DB record — after this point the file is logically gone
+        # 3. Delete DB record — after this point the file is logically gone
         await self.file_repo.delete(file_doc)
         logger.info(f"File {file_id} deleted from MongoDB")
 
@@ -120,22 +120,17 @@ class FileService(FileUploadMixin):
         custom_metadata: Optional[Dict[str, Any]] = None,
         lecturer_only: Optional[bool] = None,
     ) -> Optional[FileDocument]:
-        """Update file details (display name, metadata, lecturer_only) and syncs to Qdrant."""
+        """Update file details (display name, metadata, and/or lecturer_only flag)."""
         file_doc = await self.file_repo.find_by_id(file_id)
         if not file_doc:
             raise NotFoundException("File", file_id)
 
-        old_display_name = file_doc.display_name
-        old_metadata = file_doc.custom_metadata
-
-        display_name_changed = False
-        metadata_changed = False
-        lecturer_only_changed = False
+        changed = False
 
         if display_name is not None and display_name != file_doc.display_name:
             file_doc.display_name = display_name
             file_doc.display_name_unaccented = remove_accents(display_name)
-            display_name_changed = True
+            changed = True
 
         if custom_metadata is not None:
             validator = get_metadata_service()
@@ -145,42 +140,19 @@ class FileService(FileUploadMixin):
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged metadata: {', '.join(errors)}")
-            file_doc.custom_metadata = meta_model
-            metadata_changed = True
+            if meta_model != file_doc.custom_metadata:
+                file_doc.custom_metadata = meta_model
+                changed = True
 
         if lecturer_only is not None and lecturer_only != file_doc.lecturer_only:
             file_doc.lecturer_only = lecturer_only
-            lecturer_only_changed = True
+            changed = True
 
-        if not (display_name_changed or metadata_changed or lecturer_only_changed):
-            return file_doc
-
-        indexer = get_qdrant_indexer()
-
-        if display_name_changed or metadata_changed:
+        if changed:
             try:
-                await indexer.update_payload_by_file_id(
-                    file_id=file_id,
-                    new_metadata=file_doc.custom_metadata.model_dump(mode="json") if metadata_changed else None,
-                    file_name=file_doc.display_name if display_name_changed else None,
-                )
+                await self.file_repo.save(file_doc)
             except Exception as e:
-                logger.error(f"[FileService] Failed to update Qdrant for file {file_id}: {e}")
-                raise ExternalServiceException(f"Failed to update search index: {str(e)}")
-
-        try:
-            await self.file_repo.save(file_doc)
-        except Exception as e:
-            if display_name_changed or metadata_changed:
-                try:
-                    await indexer.update_payload_by_file_id(
-                        file_id=file_id,
-                        new_metadata=old_metadata.model_dump(mode="json") if metadata_changed and old_metadata else None,
-                        file_name=old_display_name if display_name_changed else None,
-                    )
-                except Exception as rollback_error:
-                    logger.warning(f"[FileService] Failed to rollback Qdrant update for file {file_id}: {rollback_error}")
-            raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
+                raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
 
         return file_doc
 
@@ -222,6 +194,21 @@ class FileService(FileUploadMixin):
                 filters["$and"] = filters.get("$and", []) + [{"$or": keyword_or}]
 
         return await self.file_repo.list_files(filters=filters, skip=skip, limit=limit)
+
+    async def find_ids_for_corpus(
+        self,
+        metadata_filter: Optional[Dict[str, Any]],
+        user_role: Optional[str],
+        lecturer_only: Optional[bool] = None,
+    ) -> set[str]:
+        """Return READY file IDs allowed for corpus traversal."""
+        from app.modules.corpus.utils.prefilter import build_file_prefilter_query
+
+        query = await build_file_prefilter_query(metadata_filter, user_role, lecturer_only)
+        return await self.file_repo.find_ids_by_query(query)
+
+    async def get_files_by_ids(self, file_ids: list[str]) -> list[FileDocument]:
+        return await self.file_repo.find_by_ids(file_ids)
 
     async def get_file_by_id(self, file_id: str) -> Optional[FileDocument]:
         """Get a single file by ID."""

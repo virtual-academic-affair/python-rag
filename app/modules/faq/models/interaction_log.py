@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 from pydantic import Field
 from pymongo import IndexModel, ASCENDING
 from app.core.base_document import BaseDocument
@@ -12,7 +12,6 @@ class InteractionLogDocument(BaseDocument):
     """
     question: str = Field(..., description="The user's question")
     question_unaccented: str = Field(..., description="Unaccented question, used for exact match deduplication")
-    question_vector: Optional[List[float]] = Field(None, description="Vector embedding of the question")
     answer_markdown: str = Field(..., description="The generated answer in Markdown format")
     metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Filters applied during query")
     source_type: str = Field(..., description="'chat' or 'inquiry_email'")

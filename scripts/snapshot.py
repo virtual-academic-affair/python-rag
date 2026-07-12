@@ -30,8 +30,6 @@ load_dotenv(project_root / ".env")
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qm
 from app.integrations.storage.client import r2_storage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,14 +39,9 @@ class SnapshotManager:
     def __init__(self):
         self.mongodb_url = os.getenv("MONGODB_URL")
         self.db_name = os.getenv("MONGODB_DB_NAME", "ai_service")
-        self.qdrant_url = settings.QDRANT_URL
-        self.qdrant_api_key = settings.QDRANT_API_KEY
-        self.collection_name = settings.QDRANT_COLLECTION_NAME
-        self.faq_collection_name = settings.FAQ_QDRANT_COLLECTION
-        
+
         self.mongo_client = AsyncIOMotorClient(self.mongodb_url)
         self.db = self.mongo_client[self.db_name]
-        self.qdrant_client = QdrantClient(url=self.qdrant_url, api_key=self.qdrant_api_key)
 
     async def export_data(self, output_path: str):
         logger.info(f"🚀 Exporting RAG snapshot to {output_path}...")
@@ -80,45 +73,7 @@ class SnapshotManager:
             snapshot_mongodb[coll_name] = docs
             logger.info(f"    ✓ Exported {len(docs)} documents from {coll_name}")
         
-        # 2. Export Qdrant
-        snapshot_qdrant = {}
-        for coll_name in [self.collection_name, self.faq_collection_name]:
-            if not coll_name:
-                continue
-            logger.info(f"  Exporting Qdrant points from {coll_name}...")
-            points = []
-            offset = None
-            
-            # Check if collection exists first
-            collections = self.qdrant_client.get_collections().collections
-            exists = any(c.name == coll_name for c in collections)
-            if not exists:
-                logger.info(f"    ⚠ Collection {coll_name} does not exist, skipping.")
-                snapshot_qdrant[coll_name] = []
-                continue
-
-            while True:
-                response, next_offset = self.qdrant_client.scroll(
-                    collection_name=coll_name,
-                    limit=100,
-                    offset=offset,
-                    with_payload=True,
-                    with_vectors=True
-                )
-                for p in response:
-                    points.append({
-                        "id": p.id,
-                        "vector": p.vector,
-                        "payload": p.payload
-                    })
-                
-                offset = next_offset
-                if offset is None:
-                    break
-            snapshot_qdrant[coll_name] = points
-            logger.info(f"    ✓ Exported {len(points)} vector points from {coll_name}")
-        
-        # 3. Download Markdown files from R2
+        # 2. Download Markdown files from R2
         logger.info("  Downloading Markdown files from R2...")
         try:
             uploads_md_dir = os.path.join(os.path.dirname(__file__), "uploads_md")
@@ -143,22 +98,19 @@ class SnapshotManager:
         except Exception as e:
             logger.warning(f"    ⚠ Failed to process R2 markdown files: {e}")
 
-        total_qdrant_points = sum(len(pts) for pts in snapshot_qdrant.values())
         snapshot = {
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
                 "document_count": len(snapshot_mongodb.get("files", [])),
-                "qdrant_points_count": total_qdrant_points
             },
             "mongodb": snapshot_mongodb,
-            "qdrant": snapshot_qdrant
         }
-        
+
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, ensure_ascii=False, indent=2)
-            
-        logger.info(f"✅ Export complete! {snapshot['metadata']['document_count']} files, {total_qdrant_points} vector points.")
+
+        logger.info(f"✅ Export complete! {snapshot['metadata']['document_count']} files.")
 
     async def import_data(self, input_path: str):
         if not os.path.exists(input_path):
@@ -184,55 +136,7 @@ class SnapshotManager:
                 await self.db[coll_name].insert_many(docs)
                 logger.info(f"    ✓ Restored {len(docs)} documents to {coll_name}")
 
-        # 2. Import Qdrant
-        points_data = snapshot.get("qdrant")
-        if points_data:
-            # Helper to import a specific qdrant collection
-            def import_qdrant_col(import_points_data, target_col):
-                if not import_points_data or not target_col:
-                    return
-                logger.info(f"  Restoring Qdrant points to {target_col}...")
-                qdrant_points = []
-                for p in import_points_data:
-                    qdrant_points.append(qm.PointStruct(
-                        id=p["id"],
-                        vector=p["vector"],
-                        payload=p["payload"]
-                    ))
-                
-                # Ensure collection exists
-                collections = self.qdrant_client.get_collections().collections
-                exists = any(c.name == target_col for c in collections)
-                if not exists:
-                    self.qdrant_client.create_collection(
-                        collection_name=target_col,
-                        vectors_config=qm.VectorParams(
-                            size=settings.QDRANT_VECTOR_SIZE,
-                            distance=qm.Distance.COSINE
-                        )
-                    )
-
-                # Upsert in batches to avoid timeouts
-                batch_size = 20
-                for i in range(0, len(qdrant_points), batch_size):
-                    batch = qdrant_points[i:i + batch_size]
-                    self.qdrant_client.upsert(
-                        collection_name=target_col,
-                        points=batch,
-                        wait=True
-                    )
-                    logger.info(f"  ✓ Restored batch {i//batch_size + 1}/{(len(qdrant_points)-1)//batch_size + 1}")
-                logger.info(f"  ✓ Restored {len(qdrant_points)} vector points to {target_col}")
-
-            # Backwards compatibility: if it is a list, it belongs to the primary ai_service collection.
-            if isinstance(points_data, list):
-                import_qdrant_col(points_data, self.collection_name)
-            elif isinstance(points_data, dict):
-                # New structure maps collection_name -> [points]
-                for c_name, pts in points_data.items():
-                    import_qdrant_col(pts, c_name)
-
-        # 3. Import R2 Markdown and Original files
+        # 2. Import R2 Markdown and Original files
         uploads_md_dir = os.path.join(os.path.dirname(__file__), "uploads_md")
         uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
         if os.path.exists(uploads_md_dir):

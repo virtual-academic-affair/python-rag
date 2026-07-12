@@ -5,15 +5,17 @@
 # ====================================
 
 # Initialize shared state
-mkdir -p scripts/test_results
-rm -f scripts/test_results/*.txt
+DIR_OF_RUN_ALL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_ALL_REPO_ROOT="$(cd "$DIR_OF_RUN_ALL/../.." && pwd)"
+mkdir -p "$RUN_ALL_REPO_ROOT/scripts/test_results"
+rm -f "$RUN_ALL_REPO_ROOT"/scripts/test_results/*.txt
 
 # Source common for initialization
 source "$(dirname "$0")/common.sh"
 
 # Output file
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_FILE="scripts/test_results/full_test_${TIMESTAMP}.txt"
+OUTPUT_FILE="$REPO_ROOT/scripts/test_results/full_test_${TIMESTAMP}.txt"
 
 # Tee stdout + stderr
 exec > >(tee -a "$OUTPUT_FILE") 2>&1
@@ -28,7 +30,7 @@ run_test "test_metadata.sh"
 run_test "test_files.sh"
 run_test "test_faq.sh"
 run_test "test_forms.sh"
-run_test "test_debug.sh"
+run_test "test_corpus.sh"
 
 log_header "RATE LIMIT PAUSE"
 echo "Sleeping for 60 seconds to avoid Gemini API rate limit before testing chat..."
