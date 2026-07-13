@@ -157,7 +157,7 @@ async def run_corpus_traversal(
                     file_candidates=session.file_candidates,
                     faq_candidates=session.faq_candidates,
                     selected_topics=session.selected_topics,
-                    traversal_node_keys=session.expanded_node_keys,
+                    expanded_node_keys=session.expanded_node_keys,
                     inspected_node_keys=session.inspected_node_keys,
                     termination_reason="selected_topics",
                     turn_count=turn_idx + 1,
@@ -182,7 +182,7 @@ async def run_corpus_traversal(
                 traversal_result = TraversalResult(
                     status="no_match",
                     selected_topics=[],
-                    traversal_node_keys=session.expanded_node_keys,
+                    expanded_node_keys=session.expanded_node_keys,
                     inspected_node_keys=session.inspected_node_keys,
                     termination_reason=str(result.get("reason") or "agent_no_match"),
                     turn_count=turn_idx + 1,

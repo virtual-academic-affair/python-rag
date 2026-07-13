@@ -168,6 +168,10 @@ async def create_database_indexes(skip_seeding: bool = False):
     # Files collection indexes
     await db[Database.FILES].create_index([("status", ASCENDING)])
     await db[Database.FILES].create_index([("created_at", DESCENDING)])
+    await db[Database.FILES].create_index(
+        [("deleted_at", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)],
+        name="idx_files_deleted_status_created",
+    )
 
     # FAQ collection indexes — names must match Settings.indexes in faq.py (Beanie is source of truth)
     await db[Database.FAQS].create_index(
@@ -177,13 +181,20 @@ async def create_database_indexes(skip_seeding: bool = False):
     await db[Database.FAQS].create_index(
         [("question_unaccented", ASCENDING)],
         unique=True,
+        partialFilterExpression={"deleted_at": None},
         name="idx_faqs_question_unique"
     )
-    await db[Database.FAQS].create_index([("is_active", ASCENDING)], name="is_active_1")
+    await db[Database.FAQS].create_index(
+        [("deleted_at", ASCENDING), ("created_at", DESCENDING)],
+        name="idx_faqs_deleted_created",
+    )
     await db[Database.FAQS].create_index(
         [("candidate_id", ASCENDING)],
         unique=True,
-        partialFilterExpression={"candidate_id": {"$type": "string"}},
+        partialFilterExpression={
+            "candidate_id": {"$type": "string"},
+            "deleted_at": None,
+        },
         name="idx_faqs_candidate_id_unique"
     )
 

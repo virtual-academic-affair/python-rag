@@ -116,7 +116,9 @@ class FileUploadMixin:
             storage_path = file_doc.storage_path
             markdown_storage_path = storage_path.rsplit(".", 1)[0] + ".md"
 
-            await self.file_repo.mark_processing(file_id)
+            processing_doc = await self.file_repo.mark_processing(file_id)
+            if not processing_doc:
+                raise NotFoundException("Active file", file_id)
 
             await _notify("processing", "Đang xử lý parsing, tạo TOC và lưu Corpus Tree")
             ingest_result = await ingestion_service.ingest_file(
@@ -143,8 +145,12 @@ class FileUploadMixin:
             logger.error(f"Background processing failed for file {file_id}: {e}", exc_info=True)
             if ingestion_service:
                 await ingestion_service.cleanup_file_artifacts(file_id, markdown_storage_path)
-            await self.file_repo.mark_failed(file_id)
-            await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
+            current_doc = await self.file_repo.find_by_id_including_deleted(file_id)
+            if current_doc and current_doc.deleted_at is not None:
+                await _notify("deleted", "Tệp đã bị xóa trong khi đang xử lý")
+            else:
+                await self.file_repo.mark_failed(file_id)
+                await _notify("failed", f"Xử lý nền thất bại: {str(e)}")
         finally:
             cleanup_temp_file(file_path)
 

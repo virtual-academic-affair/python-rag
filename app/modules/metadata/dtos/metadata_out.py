@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.metadata.models.value_objects import (
@@ -54,3 +54,31 @@ class MetadataSchemaResponse(BaseSchema):
     )
     year_min: int = Field(YEAR_MIN, description="Sentinel for no lower bound.")
     year_max: int = Field(YEAR_MAX, description="Sentinel for no upper bound.")
+
+
+class UnifiedFilterResponse(BaseSchema):
+    """Typed public representation of a normalized metadata filter."""
+
+    enrollment_year: YearRangeResponse | None = None
+    academic_year: YearRangeResponse | None = None
+    type: list[str] | None = None
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any] | None) -> "UnifiedFilterResponse | None":
+        if not value:
+            return None
+
+        def year_range(item: Any) -> YearRangeResponse | None:
+            if not isinstance(item, dict):
+                return None
+            return YearRangeResponse(
+                from_year=int(item.get("from_year", item.get("fromYear", YEAR_MIN))),
+                to_year=int(item.get("to_year", item.get("toYear", YEAR_MAX))),
+            )
+
+        raw_type = value.get("type")
+        return cls(
+            enrollment_year=year_range(value.get("enrollment_year") or value.get("enrollmentYear")),
+            academic_year=year_range(value.get("academic_year") or value.get("academicYear")),
+            type=list(raw_type) if isinstance(raw_type, list) else ([raw_type] if isinstance(raw_type, str) and raw_type else None),
+        )

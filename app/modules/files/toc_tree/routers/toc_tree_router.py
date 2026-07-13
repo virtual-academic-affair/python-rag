@@ -15,8 +15,8 @@ router = APIRouter(prefix="/toc-tree", tags=["TOC Tree"])
 )
 async def get_toc_tree(
     file_id: str,
-    _user: JWTPayload = Depends(require_auth)
+    user: JWTPayload = Depends(require_auth)
 ):
     svc = get_toc_tree_service()
-    toc_data = await svc.get_toc_tree(file_id)
+    toc_data = await svc.get_toc_tree(file_id, user.role)
     return TocTreeResponse.from_model(toc_data)

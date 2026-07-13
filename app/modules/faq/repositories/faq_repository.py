@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 from bson import ObjectId
 
@@ -15,27 +16,44 @@ class FaqRepository(BeanieRepository[FaqDocument]):
 
     document_class = FaqDocument
 
+    @staticmethod
+    def _active_query(filters: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        if not filters:
+            return {"deleted_at": None}
+        return {"$and": [{"deleted_at": None}, filters]}
+
+    @staticmethod
+    def _deleted_query(filters: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        deleted = {"deleted_at": {"$type": "date"}}
+        if not filters:
+            return deleted
+        return {"$and": [deleted, filters]}
+
+    async def find_by_id(self, doc_id: str) -> Optional[FaqDocument]:
+        if not ObjectId.is_valid(str(doc_id)):
+            return None
+        return await FaqDocument.find_one({"_id": ObjectId(doc_id), "deleted_at": None})
+
+    async def find_by_id_including_deleted(self, doc_id: str) -> Optional[FaqDocument]:
+        return await super().find_by_id(doc_id)
+
     async def find_by_unaccented_question(self, question_unaccented: str) -> Optional[FaqDocument]:
-        return await FaqDocument.find_one(FaqDocument.question_unaccented == question_unaccented)
+        return await FaqDocument.find_one({
+            "question_unaccented": question_unaccented,
+            "deleted_at": None,
+        })
 
     async def find_by_candidate_id(self, candidate_id: str) -> Optional[FaqDocument]:
-        return await FaqDocument.find_one(FaqDocument.candidate_id == candidate_id)
+        return await FaqDocument.find_one({"candidate_id": candidate_id, "deleted_at": None})
 
     async def list_faqs(
         self,
-        is_active: Optional[bool] = None,
         metadata_filter: Optional[dict[str, Any]] = None,
         search_text: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
     ) -> Tuple[List[FaqDocument], int]:
-        expressions = []
-        if is_active is not None:
-            expressions.append(FaqDocument.is_active == is_active)
-
-        query = FaqDocument.find(*expressions)
-        if metadata_filter:
-            query = query.find(metadata_filter)
+        query = FaqDocument.find(self._active_query(metadata_filter))
 
         if search_text:
             query = query.find({"$text": {"$search": search_text}}).sort(
@@ -48,9 +66,27 @@ class FaqRepository(BeanieRepository[FaqDocument]):
         items = await query.skip(skip).limit(limit).to_list()
         return items, total
 
+    async def list_deleted_faqs(
+        self,
+        metadata_filter: Optional[dict[str, Any]] = None,
+        search_text: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> Tuple[List[FaqDocument], int]:
+        query = FaqDocument.find(self._deleted_query(metadata_filter))
+        if search_text:
+            query = query.find({"$text": {"$search": search_text}}).sort(
+                [("score", {"$meta": "textScore"})]
+            )
+        else:
+            query = query.sort("-deleted_at")
+        total = await query.count()
+        items = await query.skip(skip).limit(limit).to_list()
+        return items, total
+
     async def list_active(self, skip: int = 0, limit: int = 100) -> List[FaqDocument]:
         return (
-            await FaqDocument.find(FaqDocument.is_active == True)
+            await FaqDocument.find({"deleted_at": None})
             .sort("-created_at")
             .skip(skip)
             .limit(limit)
@@ -79,11 +115,45 @@ class FaqRepository(BeanieRepository[FaqDocument]):
                 continue
         if not object_ids:
             return []
-        return await FaqDocument.find({"_id": {"$in": object_ids}}).to_list()
+        return await FaqDocument.find(self._active_query({"_id": {"$in": object_ids}})).to_list()
 
     async def find_ids_by_query(self, query: dict[str, Any]) -> set[str]:
         ids: set[str] = set()
-        cursor = FaqDocument.get_motor_collection().find(query, {"_id": 1})
+        cursor = FaqDocument.get_motor_collection().find(self._active_query(query), {"_id": 1})
         async for row in cursor:
             ids.add(str(row["_id"]))
         return ids
+
+    async def soft_delete(self, faq_id: str, *, deleted_by: str, corpus_node_keys: List[str]) -> bool:
+        if not ObjectId.is_valid(str(faq_id)):
+            return False
+        now = datetime.now(timezone.utc)
+        result = await FaqDocument.get_motor_collection().update_one(
+            {"_id": ObjectId(faq_id), "deleted_at": None},
+            {
+                "$set": {
+                    "deleted_at": now,
+                    "deleted_by": deleted_by,
+                    "deleted_corpus_node_keys": list(dict.fromkeys(corpus_node_keys)),
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count == 1
+
+    async def restore(self, faq_id: str) -> bool:
+        if not ObjectId.is_valid(str(faq_id)):
+            return False
+        now = datetime.now(timezone.utc)
+        result = await FaqDocument.get_motor_collection().update_one(
+            {"_id": ObjectId(faq_id), "deleted_at": {"$type": "date"}},
+            {
+                "$set": {
+                    "deleted_at": None,
+                    "deleted_by": None,
+                    "deleted_corpus_node_keys": [],
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.modified_count == 1

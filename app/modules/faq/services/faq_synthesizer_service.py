@@ -235,7 +235,7 @@ class FaqSynthesisService:
 
         # Fetch top 5 recent FAQs for context
         faq_svc = await get_faq_service()
-        recent_faqs_res = await faq_svc.list_faqs(is_active=True, limit=5)
+        recent_faqs_res = await faq_svc.list_faqs(limit=5)
         recent_faqs = recent_faqs_res.items
 
         # 2. Group by Metadata & Source

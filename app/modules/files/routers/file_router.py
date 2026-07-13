@@ -63,6 +63,7 @@ async def upload_file(
 async def list_files(
     file_status: Optional[str] = Query(None, alias="fileStatus", description="Filter by status"),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="JSON filter for metadata"),
+    lecturer_only: Optional[bool] = Query(None, alias="lecturerOnly", description="Filter by lecturer-only visibility"),
     keywords: Optional[str] = Query(None, description="Search by display name"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
@@ -72,6 +73,7 @@ async def list_files(
         return await get_file_api_service().list_files(
             file_status=file_status,
             metadata_filter=metadata_filter,
+            lecturer_only=lecturer_only,
             keywords=keywords,
             page=page,
             limit=limit,
@@ -116,13 +118,40 @@ async def batch_upload_files(
 
 
 @router.get(
+    "/trash",
+    response_model=FileListResponse,
+    response_model_exclude_none=True,
+    summary="List soft-deleted files",
+)
+async def list_deleted_files(
+    file_status: Optional[str] = Query(None, alias="fileStatus"),
+    metadata_filter: Optional[str] = Query(None, alias="metadataFilter"),
+    lecturer_only: Optional[bool] = Query(None, alias="lecturerOnly"),
+    keywords: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    admin: JWTPayload = Depends(require_admin),
+):
+    return await get_file_api_service().list_files(
+        file_status=file_status,
+        metadata_filter=metadata_filter,
+        lecturer_only=lecturer_only,
+        keywords=keywords,
+        page=page,
+        limit=limit,
+        user=admin,
+        deleted_only=True,
+    )
+
+
+@router.get(
     "/{file_id}",
     response_model=FileDetailResponse,
     summary="Get file details",
 )
-async def get_file(file_id: str, _user: JWTPayload = Depends(require_auth)):
+async def get_file(file_id: str, user: JWTPayload = Depends(require_auth)):
     try:
-        return await get_file_api_service().get_file_detail(file_id)
+        return await get_file_api_service().get_file_detail(file_id, user)
     except HTTPException:
         raise
     except AppException:
@@ -139,10 +168,10 @@ async def get_file(file_id: str, _user: JWTPayload = Depends(require_auth)):
 async def download_file_endpoint(
     file_id: str,
     format: str = Query("original", description="Download format: original | markdown"),
-    _user: JWTPayload = Depends(require_auth),
+    user: JWTPayload = Depends(require_auth),
 ):
     try:
-        file_obj, filename, mime_type = await get_file_api_service().download_file(file_id, format)
+        file_obj, filename, mime_type = await get_file_api_service().download_file(file_id, format, user)
         encoded_filename = urllib.parse.quote(filename)
         return StreamingResponse(
             file_obj,
@@ -185,7 +214,37 @@ async def update_file(
 )
 async def delete_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
     try:
-        await get_file_api_service().delete_file(file_id)
+        await get_file_api_service().delete_file(file_id, _admin.user_id)
+        return
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{file_id}/restore",
+    response_model=FileDetailResponse,
+    response_model_exclude_none=True,
+    summary="Restore a soft-deleted file",
+)
+async def restore_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
+    try:
+        return await get_file_api_service().restore_file(file_id)
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{file_id}/purge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently purge a soft-deleted file",
+)
+async def purge_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
+    try:
+        await get_file_api_service().purge_file(file_id)
         return
     except AppException:
         raise

@@ -48,7 +48,7 @@ async def test_retrieval_service_traverse_and_faq_context_are_separate():
     traversal_result = TraversalResult(
         file_candidates=[FileCandidate("file1")],
         faq_candidates=[FaqCandidate("faq1")],
-        traversal_node_keys=["topic-1"],
+        expanded_node_keys=["topic-1"],
         prefilter={"allowed_file_count": 1, "allowed_faq_count": 1},
     )
     faq_doc = object()
@@ -72,7 +72,6 @@ async def test_retrieval_service_traverse_and_faq_context_are_separate():
     assert seeds.file_candidates == [FileCandidate("file1")]
     assert seeds.faq_candidates == [FaqCandidate("faq1")]
     assert seeds.prefilter == {"allowed_file_count": 1, "allowed_faq_count": 1}
-    assert seeds.traversal_node_keys == ["topic-1"]
     assert faq_docs == [faq_doc]
     traversal_mock.assert_awaited_once()
     faq_mock.assert_awaited_once_with([FaqCandidate("faq1")], limit=1000)

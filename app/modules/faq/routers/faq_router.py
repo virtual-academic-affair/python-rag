@@ -33,9 +33,8 @@ router = APIRouter(prefix="/faqs", tags=["FAQ"])
 # ==========================================
 # Public FAQ Endpoints (Auth Required)
 # ==========================================
-@router.get("", response_model=FaqListResponse)
+@router.get("", response_model=FaqListResponse, response_model_exclude_none=True)
 async def list_faqs(
-    is_active: Optional[bool] = Query(None, alias="isActive", description="Filter by active status"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="Filter by metadata (JSON string), e.g. {'academic_year': ['2024-2025']}"),
@@ -56,7 +55,6 @@ async def list_faqs(
             raise HTTPException(status_code=400, detail="Invalid metadataFilter JSON")
 
     result = await faq_svc.list_faqs(
-        is_active=is_active,
         metadata_filter=meta,
         search=search,
         page=page,
@@ -74,7 +72,7 @@ async def list_faqs(
 # ==========================================
 # Admin FAQ Endpoints (Admin Required)
 # ==========================================
-@router.post("", response_model=FaqResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=FaqResponse, response_model_exclude_none=True, status_code=status.HTTP_201_CREATED)
 async def create_faq(
     request: FaqCreateRequest,
     admin: JWTPayload = Depends(require_admin),
@@ -89,6 +87,44 @@ async def create_faq(
         lecturer_only=request.lecturer_only,
     )
     return FaqResponse.from_document(result)
+
+
+@router.get(
+    "/trash",
+    response_model=FaqListResponse,
+    response_model_exclude_none=True,
+    summary="List soft-deleted FAQs",
+)
+async def list_deleted_faqs(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    metadata_filter: Optional[str] = Query(None, alias="metadataFilter"),
+    search: Optional[str] = Query(None),
+    admin: JWTPayload = Depends(require_admin),
+    faq_svc: FaqService = Depends(get_faq_service),
+):
+    meta = None
+    if metadata_filter:
+        try:
+            meta = json.loads(metadata_filter)
+            is_valid, errors, _ = get_metadata_service().validate_and_parse_faq_metadata(meta)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"Invalid metadataFilter: {', '.join(errors)}")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid metadataFilter JSON") from exc
+
+    result = await faq_svc.list_deleted_faqs(
+        metadata_filter=meta,
+        search=search,
+        page=page,
+        limit=limit,
+    )
+    return FaqListResponse(
+        items=[FaqResponse.from_document(item) for item in result.items],
+        total=result.total,
+        page=result.page,
+        limit=result.limit,
+    )
 
 
 @router.post("/match", response_model=FaqMatchResponse)
@@ -183,7 +219,7 @@ async def trigger_synthesis(
     )
 
 
-@router.patch("/{faq_id}", response_model=FaqResponse)
+@router.patch("/{faq_id}", response_model=FaqResponse, response_model_exclude_none=True)
 async def update_faq(
     faq_id: str,
     request: FaqUpdateRequest,
@@ -208,12 +244,39 @@ async def delete_faq(
     faq_svc: FaqService = Depends(get_faq_service)
 ):
     """Delete an FAQ."""
-    success = await faq_svc.delete_faq(faq_id)
+    success = await faq_svc.delete_faq(faq_id, admin.user_id)
     if not success:
         raise HTTPException(status_code=404, detail="FAQ not found")
 
 
-@router.get("/{faq_id}", response_model=FaqResponse)
+@router.post(
+    "/{faq_id}/restore",
+    response_model=FaqResponse,
+    response_model_exclude_none=True,
+    summary="Restore a soft-deleted FAQ",
+)
+async def restore_faq(
+    faq_id: str,
+    admin: JWTPayload = Depends(require_admin),
+    faq_svc: FaqService = Depends(get_faq_service),
+):
+    return FaqResponse.from_document(await faq_svc.restore_faq(faq_id))
+
+
+@router.delete(
+    "/{faq_id}/purge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently purge a soft-deleted FAQ",
+)
+async def purge_faq(
+    faq_id: str,
+    admin: JWTPayload = Depends(require_admin),
+    faq_svc: FaqService = Depends(get_faq_service),
+):
+    await faq_svc.purge_faq(faq_id)
+
+
+@router.get("/{faq_id}", response_model=FaqResponse, response_model_exclude_none=True)
 async def get_faq(
     faq_id: str,
     user: JWTPayload = Depends(require_auth),

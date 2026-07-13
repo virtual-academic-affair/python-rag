@@ -67,7 +67,7 @@ class FaqAnswerService:
         matched_faqs: list[Any] = []
         for faq_id in parsed["faq_ids"]:
             matched_faq = faq_by_id.get(faq_id)
-            if not matched_faq or not getattr(matched_faq, "is_active", True):
+            if not matched_faq or getattr(matched_faq, "deleted_at", None) is not None:
                 return None
             matched_faqs.append(matched_faq)
 

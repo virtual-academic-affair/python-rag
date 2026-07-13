@@ -15,9 +15,10 @@ Việc xác thực được thực hiện thông qua gRPC call tới NestJS Back
 
 ROLE LEVELS:
   - 🔒 admin   : Toàn quyền truy cập, quản lý Metadata, Tệp tin và FAQ.
-                 Thấy tất cả tệp tin và FAQ (kể cả lecturerOnly=true).
-  - 🔒 lecture : Tương đương admin về quyền xem tài liệu và FAQ.
-                 Thấy tất cả tệp tin và FAQ (kể cả lecturerOnly=true).
+                 Thấy mọi trạng thái file chưa xóa và FAQ chưa xóa
+                 (kể cả lecturerOnly=true).
+  - 🔒 lecture : Được xem nội dung lecturerOnly=true như admin,
+                 nhưng chỉ thấy file status=ready.
   - 🔒 auth    : Sinh viên đã xác thực (role=student).
                  Chỉ thấy tệp tin và FAQ có lecturerOnly=false.
                  Nếu JWT có enrollmentYear: chỉ thấy file không có metadata
@@ -43,15 +44,15 @@ MỤC LỤC
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
- 4. File Management APIs       (8 endpoints) [🔒 admin / 🔒 auth]
+ 4. File Management APIs       (11 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
- 6. FAQ MODULE APIs            (13 endpoints) [🔒 admin / 🔒 auth]
+ 6. FAQ MODULE APIs            (16 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
  8. Debug & Preview APIs       (12 endpoints)  [🔒 admin]
  9. Real-time Notifications    (1 websocket) [🔒 auth]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 53 REST ENDPOINTS + 1 WEBSOCKET
+ TỔNG: 59 REST ENDPOINTS + 1 WEBSOCKET
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -188,8 +189,14 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
     "markdownFileUrl": "https://...",
     "tableOfContents": [ ... ],
     "createdAt": "ISO Date",
-    "updatedAt": "ISO Date"
+    "updatedAt": "ISO Date",
+    "deletedAt": "ISO Date",     ← chỉ có giá trị trong trash
+    "deletedBy": "admin-user-id" ← chỉ có giá trị trong trash
   }
+
+FILE LIST ITEM RESPONSE:
+  Giống FileDetailResponse nhưng không có `tableOfContents`. Trường này chỉ được
+  trả bởi GET /api/files/{file_id} và các API trả FileDetailResponse đơn lẻ.
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/files                  [🔒 ADMIN]                                  │
@@ -234,14 +241,16 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │ MÔ TẢ: Liệt kê tệp tin với bộ lọc. Kết quả được lọc tự động theo role.       │
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
-│   - fileStatus: string (ready|processing|failed)                             │
+│   - fileStatus: string (uploading|processing|ready|failed)                   │
 │   - metadataFilter: JSON string (VD: {"enrollmentYear":{"fromYear":2020}, "type": ["ctdt"]})│
+│   - lecturerOnly: bool optional                                              │
 │   - keywords: string (Tìm theo tên tệp)                                      │
 │   - page/limit: Phân trang (mặc định 1/50)                                   │
 │                                                                              │
 │ PHÂN QUYỀN THEO ROLE (tự động — không cần tham số):                          │
-│   - admin / lecture : Thấy toàn bộ tệp tin (kể cả lecturerOnly=true).        │
-│   - student         : Tự động lọc:                                           │
+│   - admin           : Thấy mọi status chưa xóa (kể cả lecturerOnly=true).   │
+│   - lecture         : Chỉ thấy status=ready; thấy lecturerOnly=true.        │
+│   - student         : Chỉ thấy status=ready và tự động lọc:                 │
 │     (a) Ẩn tất cả tệp có lecturerOnly=true.                                  │
 │     (b) Nếu JWT có enrollmentYear=Y:                                         │
 │         • Các file không có metadata năm học → vẫn hiện.                     │
@@ -249,13 +258,20 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 │           enrollmentYearFrom ≤ Y ≤ enrollmentYearTo.                         │
 │                                                                              │
 │ RESPONSE 200 OK:                                                             │
-│   { "files": [FileDetailResponse], "total": 22, "page": 1, "limit": 50 }    │
+│   { "files": [FileListItemResponse], "total": 22, "page": 1, "limit": 50 }│
+│ GHI CHÚ: File có deletedAt không xuất hiện trong endpoint này.               │
+│ `fileStatus` do student/lecture truyền vào không nới rộng quyền: backend luôn │
+│ ép điều kiện status=ready.                                                    │
+│ admin/lecture có thể lọc chính xác lecturerOnly=true|false. Student truyền   │
+│ lecturerOnly=true vẫn bị ép lecturerOnly≠true.                               │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Decode JWT → xác định role và enrollmentYear.                           │
-│   2. Nếu student: xây dựng role_filter (lecturerOnly + năm học).             │
-│   3. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
-│   4. Gộp role_filter vào query và truy vấn MongoDB.                          │
+│   2. Nếu role != admin: bắt buộc status=ready.                               │
+│   3. Nếu student: xây dựng role_filter (lecturerOnly + năm học).             │
+│   4. FilterBuilder xây dựng MongoDB query từ metadataFilter.                 │
+│   5. Gộp role_filter với deletedAt=null rồi truy vấn MongoDB bằng projection │
+│      rút gọn; không đọc tableOfContents và các trường ingestion nội bộ.      │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -300,7 +316,9 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy cấu trúc mục lục (TOC Tree) chi tiết theo PageIndex Schema.        │
 │ RESPONSE: { "docName": "...", "structure": [...], "markdownStoragePath": "..." } │
-│ LUỒNG XỬ LÝ: Truy vấn collection `file_toc_trees` theo fileId.                │
+│ QUYỀN ĐỌC: student/lecture chỉ đọc TOC của file READY chưa xóa; student      │
+│ không đọc file lecturerOnly. Admin đọc mọi status chưa xóa.                 │
+│ LUỒNG XỬ LÝ: Kiểm tra file active/quyền trước, rồi truy vấn TOC theo fileId. │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -308,7 +326,9 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Lấy thông tin chi tiết một tệp tin.                                   │
 │ RESPONSE: FileDetailResponse kèm Download URLs, tableOfContents và summary.  │
-│ LUỒNG XỬ LÝ: Fetch Mongo -> Generate link tải R2.                            │
+│ QUYỀN ĐỌC: student/lecture chỉ đọc file READY chưa xóa; student không đọc   │
+│ file lecturerOnly. Admin đọc mọi status chưa xóa.                           │
+│ LUỒNG XỬ LÝ: Fetch file active -> kiểm tra quyền -> Generate link tải R2.    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -316,19 +336,43 @@ FILE DETAIL RESPONSE — Cấu trúc object tệp tin trả về:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Tải xuống trực tiếp tệp tin binary từ kho lưu trữ R2.                 │
 │ RESPONSE: Binary file stream.                                                │
-│ LUỒNG XỬ LÝ: FileService tải bytes từ R2 và trả về qua StreamingResponse.    │
+│ QUYỀN ĐỌC: Giống GET detail; deleted hoặc không đủ quyền đều trả 404.        │
+│ LUỒNG XỬ LÝ: Kiểm tra file active/quyền rồi mới tải bytes từ R2.             │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ DELETE /api/files/{file_id}       [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xóa vĩnh viễn tệp tin khỏi mọi kho lưu trữ.                           │
+│ MÔ TẢ: Xóa mềm file; thao tác lặp lại vẫn trả thành công.                    │
 │ RESPONSE 204: No Content.                                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. R2: Xóa binary file gốc và binary file markdown bóc tách.                │
-│   2. Metadata Service: Sử dụng `find_one_and_delete` nguyên tử. Nếu tệp bị xóa│
-│      đang ở trạng thái "ready", hệ thống mới thực hiện trừ bộ đếm Metadata.  │
-│   3. MongoDB: Xóa bản ghi tệp và bản ghi TOC Tree.                           │
+│   1. Lưu deletedAt, deletedBy và Corpus topic assignments hiện tại.          │
+│   2. Gỡ file khỏi Corpus và evict PageIndex cache.                           │
+│   3. Giữ MongoDB, original/markdown R2 và TOC để có thể restore.             │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/files/trash              [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: List file đã xóa mềm; nhận các filter giống endpoint list file.      │
+│ RESPONSE 200: FileListResponse; item không có tableOfContents, có            │
+│ deletedAt và deletedBy.                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/{file_id}/restore [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Khôi phục file, artifact và Corpus assignment.                       │
+│ RESPONSE 200: FileDetailResponse; 409 nếu trùng hoặc thiếu artifact.        │
+│ Nếu topic cũ không còn, Corpus linker phân loại lại bằng LLM.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/files/{file_id}/purge [🔒 ADMIN]                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa vĩnh viễn file đang nằm trong trash.                             │
+│ RESPONSE 204; 409 nếu file chưa được xóa mềm.                               │
+│ WORKFLOW: Corpus/PageIndex → TOC → R2 → MongoDB document cuối cùng.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -635,11 +679,12 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
     "answerRichText": "<p>...</p>",
     "lecturerOnly": false,       ← true: chỉ admin/lecture được thấy (như file)
     "metadataFilter": { "enrollmentYear": {...}, "academicYear": {...} },
-    "isActive": true,
     "viewCount": 12,
     "source": "manual",          ← "manual" | "bulk_import" | "synthesized" | "seed"
     "createdAt": "ISO Date",
-    "updatedAt": "ISO Date"
+    "updatedAt": "ISO Date",
+    "deletedAt": "ISO Date",     ← chỉ có giá trị trong trash
+    "deletedBy": "admin-user-id" ← chỉ có giá trị trong trash
   }
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -648,8 +693,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 │ MÔ TẢ: Lấy danh sách các FAQ đang hoạt động có hỗ trợ filter và phân trang.  │
 │        Sử dụng Native MongoDB Full-Text Search (FTS) khi có tham số `search`.│
 │                                                                              │
-│ REQUEST QUERY: ?isActive=true&metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
-│   - isActive: bool (optional)                                               │
+│ REQUEST QUERY: ?metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
 │   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}, "type": ["ctdt"]} │
 │   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
@@ -709,8 +753,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 │     "question": "...",                                                       │
 │     "answerRichText": "...",                                                 │
 │     "lecturerOnly": true,                                                    │
-│     "metadataFilter": {...},                                                 │
-│     "isActive": true                                                         │
+│     "metadataFilter": {...}                                                  │
 │   }                                                                          │
 │ GHI CHÚ: Tất cả các trường đều optional.                                     │
 │ RESPONSE: FaqResponse object đã cập nhật.                                    │
@@ -722,10 +765,29 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ DELETE /api/faqs/{faq_id}             [🔒 ADMIN]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Xóa hoàn toàn một FAQ khỏi MongoDB.                                   │
+│ MÔ TẢ: Xóa mềm FAQ, lưu deletedAt/deletedBy và Corpus topics.               │
 │ RESPONSE 204: No Content.                                                    │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Xóa bản ghi trong MongoDB collection `faqs`.                            │
+│   1. Ghi tombstone trước, sau đó gỡ FAQ khỏi Corpus.                         │
+│   2. MongoDB document được giữ lại để restore.                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/faqs/trash               [🔒 ADMIN]                                  │
+│ MÔ TẢ: List FAQ đã xóa mềm; hỗ trợ metadataFilter, search, page và limit.   │
+│ RESPONSE: FaqListResponse với deletedAt/deletedBy.                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/faqs/{faq_id}/restore  [🔒 ADMIN]                                  │
+│ MÔ TẢ: Khôi phục FAQ và Corpus assignments; fallback LLM nếu topic cũ mất. │
+│ RESPONSE 200: FaqResponse; 409 nếu câu hỏi/candidate bị trùng.              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/faqs/{faq_id}/purge  [🔒 ADMIN]                                  │
+│ MÔ TẢ: Xóa vĩnh viễn FAQ đang nằm trong trash.                              │
+│ RESPONSE 204; 409 nếu FAQ chưa được xóa mềm.                                │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -968,56 +1030,192 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
                         8. CORPUS & DEBUG/PREVIEW APIs
 ════════════════════════════════════════════════════════════════════════════════
 
+CORPUS SHAPES (tất cả endpoint Corpus yêu cầu role ADMIN):
+
+  CorpusTopicSummaryResponse:
+  { "nodeKey":"tot-nghiep", "title":"Tốt nghiệp", "summary":"...",
+    "parentKey":null, "fileCount":4, "faqCount":2 }
+
+  CorpusTopicDetailResponse = Summary +
+  { "childKeys":["dieu-kien-tot-nghiep"],
+    "directFiles":[CorpusFileRef], "directFaqs":[CorpusFaqRef] }
+
+  CorpusFileRef:
+  { "id":"...", "name":"Quy chế đào tạo.pdf", "metadata":{
+      "enrollmentYear":{"fromYear":2022,"toYear":2022},
+      "academicYear":{"fromYear":2024,"toYear":2025}, "type":"cong_van" },
+    "lecturerOnly":false, "updatedAt":"ISO Date" }
+
+  CorpusFaqRef dùng cùng shape nhưng metadata không có `type`. Nếu liên kết
+  payload bị stale, ref vẫn có `id` nhưng name rỗng và metadata/updatedAt null.
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ CORPUS TREE ENDPOINTS [🔒 ADMIN]                                            │
+│ GET /api/corpus/stats                 [🔒 ADMIN]                             │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ GET    /api/corpus/stats                                                    │
-│        Thống kê số node, root nodes, direct file/FAQ links.                 │
-│ GET    /api/corpus/tree                                                     │
-│        Trả cây topic lồng nhau. Mỗi node có directFiles/directFaqs dạng      │
-│        [{"id":"...","name":"...","metadata":{},"lecturerOnly":false,     │
-│          "updatedAt":"..."}] và vẫn giữ các trường IDs cũ.                    │
-│        Query: enrollmentYear?, academicYear?, lecturerOnly?.                │
-│        Metadata dùng range-overlap. lecturerOnly=true/false lọc chính xác;  │
-│        không truyền thì không lọc theo lecturerOnly. Nhánh rỗng bị ẩn.      │
-│ GET    /api/corpus/topics                                                   │
-│        List toàn bộ topic nodes với file/FAQ counts.                        │
-│ GET    /api/corpus/topics/{topicKey}                                        │
-│        Chi tiết topic, gồm directFiles/directFaqs đã hydrate tên.            │
-│ GET    /api/corpus/files/{fileId}/topics                                    │
-│ PUT    /api/corpus/files/{fileId}/topics                                    │
-│ GET    /api/corpus/faqs/{faqId}/topics                                      │
-│ PUT    /api/corpus/faqs/{faqId}/topics                                      │
-│        Xem/thay thế toàn bộ topic assignments. PUT body: {"nodeKeys":[...]}.│
-│        nodeKeys=[] gỡ payload khỏi toàn bộ Corpus topics.                   │
-│ POST   /api/corpus/topics                                                   │
-│        Tạo topic node thủ công. Body: {slug,title,summary,parentKey}.        │
-│ PATCH  /api/corpus/topics/{topicKey}                                        │
-│        Cập nhật title, summary hoặc parentKey của topic.                    │
-│ POST   /api/corpus/topics/{sourceKey}/merge                                 │
-│        Merge source topic vào target topic. Body: {targetKey}.              │
-│ DELETE /api/corpus/topics/{topicKey}                                        │
-│        Xóa topic node khỏi Corpus Tree.                                     │
-│ POST   /api/corpus/backfill                                                 │
-│        Trigger background backfill READY files và active FAQs vào tree.      │
+│ MÔ TẢ: Lấy thống kê toàn bộ Corpus Topic Tree.                               │
+│ RESPONSE 200: { "totalNodes":12, "totalRootNodes":3,                       │
+│   "totalDirectFileLinks":28, "totalDirectFaqLinks":14 }                    │
+│ LUỒNG XỬ LÝ: Đọc toàn bộ node, đếm root node và tổng direct payload links.  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ DEBUG CORPUS PREVIEW ENDPOINTS [🔒 ADMIN]                                  │
+│ GET /api/corpus/tree                  [🔒 ADMIN]                             │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ POST   /api/debug/corpus/traverse                                           │
-│        Chạy traversal thật cho question/role/metadataFilter.                │
-│        Response dùng fileCandidates/faqCandidates,                          │
-│        totalFileCandidates/totalFaqCandidates và trace additive: status,    │
-│        selectedTopics, expandedNodeKeys, inspectedNodeKeys,                  │
-│        terminationReason, turnCount, tokenUsage.                            │
-│ POST   /api/debug/corpus/chat-preview                                       │
-│        Dry-run luồng RagQueryPipeline.answer_chat không cần JWT thật.        │
-│        Response pipelineResult dùng fileCandidates và faqDocs.              │
-│                                                                              │
-│ REQUEST mẫu cho traverse/chat-preview:                                      │
-│   {"question":"Điều kiện tốt nghiệp?","role":"student",                     │
-│    "enrollmentYear":2022,"academicYear":2024}                               │
+│ MÔ TẢ: Trả toàn bộ cây topic lồng nhau để admin render Corpus.               │
+│ REQUEST QUERY: ?metadataFilter={"academicYear":{"fromYear":0,"toYear":9999},"enrollmentYear":{"fromYear":2024}}&lecturerOnly=false │
+│   - metadataFilter: JSON string optional; dùng cùng UnifiedFilterSchema như │
+│     List FAQ/File, hỗ trợ enrollmentYear, academicYear và type.             │
+│   - lecturerOnly: bool optional; không truyền thì không lọc theo cờ này.     │
+│ RESPONSE 400: metadataFilter không phải JSON hợp lệ hoặc sai schema.         │
+│ RESPONSE 200: { "totalNodes":2, "totalRootNodes":1, "tree":[             │
+│   { "nodeKey":"tot-nghiep", "title":"Tốt nghiệp", "summary":"...",    │
+│     "fileCount":1, "faqCount":1, "directFiles":[...], "directFaqs":[...],│
+│     "children":[...] } ] }                                                  │
+│ GHI CHÚ: Tree node không có parentKey, childKeys, raw ID arrays, subtree ID  │
+│          arrays hoặc hasContent vì đều suy ra được từ cấu trúc response.     │
+│ LUỒNG XỬ LÝ:                                                                 │
+│   1. Parse/validate metadataFilter JSON rồi tìm file/FAQ IDs hợp lệ theo role admin.│
+│   2. Hydrate direct payload refs theo batch; lọc IDs/counts của từng node.   │
+│   3. Ẩn các nhánh rỗng khi filter đang hoạt động, rồi dựng tree đệ quy.      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/corpus/topics                [🔒 ADMIN]                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy danh sách phẳng, gọn của toàn bộ topic.                           │
+│ RESPONSE 200: { "total":2, "items":[CorpusTopicSummaryResponse] }          │
+│ GHI CHÚ: Không hydrate file/FAQ; gọi endpoint detail hoặc tree khi cần refs.│
+│ LUỒNG XỬ LÝ: Đọc nodes, sắp xếp nodeKey và trả identity/parent/subtree counts.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/corpus/topics/{topicKey}    [🔒 ADMIN]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy detail một topic, child keys và direct file/FAQ refs.             │
+│ PATH: topicKey (slug, ví dụ `tot-nghiep`).                                   │
+│ RESPONSE 200: CorpusTopicDetailResponse.                                    │
+│ RESPONSE 404: Topic không tồn tại.                                          │
+│ LUỒNG XỬ LÝ: Tìm node theo key, hydrate direct payload refs theo batch,      │
+│                sau đó trả detail; không trả subtree payload ID arrays.      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/corpus/topics               [🔒 ADMIN]                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Tạo một topic thủ công.                                               │
+│ REQUEST BODY: { "slug":"tot-nghiep", "title":"Tốt nghiệp",               │
+│   "summary":"Quy định và điều kiện", "parentKey":null }                   │
+│ RESPONSE 201: CorpusTopicDetailResponse.                                    │
+│ RESPONSE 400/409: slug invalid, parent không tồn tại hoặc topic đã tồn tại. │
+│ LUỒNG XỬ LÝ: Slugify key, kiểm tra parent/uniqueness, upsert node rồi trả detail.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PATCH /api/corpus/topics/{topicKey}  [🔒 ADMIN]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Cập nhật title, summary và/hoặc parent của topic.                     │
+│ REQUEST BODY (mọi field optional):                                           │
+│   { "title":"...", "summary":"...", "parentKey":"topic-cha" }         │
+│   - Gửi "parentKey": null để đưa topic lên root.                            │
+│ RESPONSE 200: CorpusTopicDetailResponse.                                    │
+│ RESPONSE 400/404: topic/parent không tồn tại hoặc thao tác tạo cycle.       │
+│ LUỒNG XỬ LÝ: Validate parent, unlink/link parent khi đổi nhánh, rebuild      │
+│                subtree aggregates của node/ancestors và kiểm tra integrity. │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ DELETE /api/corpus/topics/{topicKey} [🔒 ADMIN]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xóa một topic khỏi Corpus Tree.                                      │
+│ RESPONSE 200: { "nodeKey":"...", "deleted":true }                         │
+│ RESPONSE 404: Topic không tồn tại.                                          │
+│ LUỒNG XỬ LÝ: Repository xóa node và xử lý liên kết cây theo contract hiện có.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/corpus/topics/{sourceKey}/merge [🔒 ADMIN]                         │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Gộp source topic vào target topic.                                    │
+│ REQUEST BODY: { "targetKey":"topic-dich" }                                 │
+│ RESPONSE 200: { "mergedFrom":"...", "mergedInto":"...", "filesMoved":2, │
+│   "faqsMoved":1, "childrenMoved":3, "sourceDeleted":true }                │
+│ RESPONSE 400/404: source/target không tồn tại hoặc merge không hợp lệ.      │
+│ LUỒNG XỬ LÝ: Chuyển direct payloads và children, rebuild aggregates, xóa source.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/corpus/files/{fileId}/topics [🔒 ADMIN]                             │
+│ GET /api/corpus/faqs/{faqId}/topics   [🔒 ADMIN]                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Xem các topic đang gán cho một file hoặc FAQ.                         │
+│ RESPONSE 200: { "payloadType":"file|faq", "payloadId":"...",             │
+│   "name":"...", "nodeKeys":["topic-a","topic-b"] }                     │
+│ RESPONSE 404: Payload không tồn tại.                                        │
+│ LUỒNG XỬ LÝ: Validate payload qua domain service, rồi đọc tất cả node links.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PUT /api/corpus/files/{fileId}/topics [🔒 ADMIN]                             │
+│ PUT /api/corpus/faqs/{faqId}/topics   [🔒 ADMIN]                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Thay thế toàn bộ topic assignments của một file hoặc FAQ.             │
+│ REQUEST BODY: { "nodeKeys":["topic-a","topic-b"] }                        │
+│ RESPONSE 200: CorpusPayloadTopicsResponse.                                  │
+│ GHI CHÚ: `nodeKeys: []` gỡ payload khỏi tất cả Corpus topics; duplicate keys │
+│          được deduplicate.                                                   │
+│ RESPONSE 400/404: payload/topic không tồn tại.                              │
+│ LUỒNG XỬ LÝ: Validate payload và node keys, diff liên kết cũ/mới, thêm/xóa  │
+│                links cần thiết và rebuild subtree aggregates.               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/corpus/backfill             [🔒 ADMIN]                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Backfill READY files và FAQ chưa xóa mềm vào Corpus.                 │
+│ RESPONSE 200: { "status":"backfill_started", "message":"Check server logs for progress" }│
+│ RESPONSE 409: Một backfill khác đang chạy.                                  │
+│ LUỒNG XỬ LÝ: Reset links rồi tạo task nền gán lại từng READY file và FAQ    │
+│ chưa xóa. Không chạy seed; nếu catalog rỗng, LLM có thể đề xuất/tạo root    │
+│ topic nodes mới qua CorpusLinker.                                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/debug/corpus/traverse      [🔒 ADMIN]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Dry-run traversal thật của Corpus Tree, không tạo hay sửa dữ liệu.   │
+│ REQUEST BODY: { "question":"Điều kiện tốt nghiệp?", "role":"student",    │
+│   "metadataFilter": { "enrollmentYear":{"fromYear":2022,"toYear":2022}, │
+│     "academicYear":{"fromYear":2024,"toYear":2025}, "type":["cong_van"] } }│
+│ GHI CHÚ: Chỉ nhận `metadataFilter`; field top-level enrollmentYear hoặc      │
+│          academicYear bị reject 422. role hợp lệ: student|lecture|admin.    │
+│ RESPONSE 200: { "query":"...", "role":"student", "metadataFilter":{},  │
+│   "prefilter":{"allowedFileCount":4,"allowedFaqCount":2}, "status":"selected",│
+│   "selectedTopics":[{"nodeKey":"...","nodeTitle":"...","scope":"subtree"}],│
+│   "expandedNodeKeys":["..."], "inspectedNodeKeys":["..."],                 │
+│   "terminationReason":"selected_topics", "turnCount":2,                  │
+│   "tokenUsage":{"promptTokens":1,"completionTokens":2,"totalTokens":3}, │
+│   "fileCandidates":[{"fileId":"...","nodeKey":"...","nodeTitle":"..."}],│
+│   "faqCandidates":[{"faqId":"...","nodeKey":"...","nodeTitle":"..."}] }│
+│ LUỒNG XỬ LÝ: Metadata/role prefilter -> LLM traversal tools -> typed seeds. │
+│                Endpoint trả trace; không hydrate/rerank candidate documents.│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/debug/corpus/chat-preview  [🔒 ADMIN]                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Dry-run toàn bộ shared chat RAG pipeline mà không cần JWT user thật. │
+│ REQUEST BODY: { "question":"Điều kiện tốt nghiệp?", "role":"student",    │
+│   "enrollmentYear":2022 }                                                   │
+│ RESPONSE 200: { "analysis":{"originalQuestion":"...",                    │
+│   "effectiveQuestion":"...","needsRag":true,"metadataFilter":{}},        │
+│   "answer":"Markdown answer", "source":"llm|faq|bypass", "role":"student",│
+│   "isDirectReply":false, "maxTurnsReached":false, "fileCandidates":[...],│
+│   "faqs":[{"faqId":"...","question":"..."}],                         │
+│   "sources":[SourceCitation], "steps":[{"type":"...","content":"..."}],│
+│   "tokenUsage":{"promptTokens":0,"completionTokens":0,"totalTokens":0} }│
+│ LUỒNG XỬ LÝ: Gọi RagQueryPipeline.answer_chat với Debug Preview context;     │
+│   thực hiện analyzer -> Corpus traversal -> FAQ-first -> PageIndex khi cần; │
+│   chỉ format response, không lưu chat session hay interaction log.          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
