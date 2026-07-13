@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.modules.files.models.file import FileDocument
+from app.modules.files.models.file import FileDocument, FileStatus
 from app.modules.files.services.file_service import FileService
 from app.modules.rag.ingestion import FileIngestionResult
 
@@ -43,6 +43,27 @@ async def test_update_file_display_name_does_not_reindex_corpus(mock_get_linker)
 
 
 @pytest.mark.asyncio
+async def test_find_file_ids_for_corpus_builds_filter_in_file_domain():
+    svc = FileService.__new__(FileService)
+    repo = MagicMock()
+    repo.find_ids_by_query = AsyncMock(return_value={"file1"})
+    svc._file_repo = repo
+    svc._metadata_svc = None
+
+    result = await svc.find_ids_for_corpus(
+        {"enrollment_year": {"from_year": 2022, "to_year": 2022}},
+        "student",
+    )
+
+    assert result == {"file1"}
+    query = repo.find_ids_by_query.await_args.args[0]
+    assert query["status"] == FileStatus.READY.value
+    assert query["deleted_at"] is None
+    assert query["lecturer_only"] == {"$ne": True}
+    assert query["custom_metadata.enrollment_year.from_year"] == {"$lte": 2022}
+
+
+@pytest.mark.asyncio
 async def test_process_file_background_uses_ingestion_service_and_marks_ready():
     svc = FileService.__new__(FileService)
     doc = _make_file(storage_path="uploads/file.pdf")
@@ -51,6 +72,7 @@ async def test_process_file_background_uses_ingestion_service_and_marks_ready():
     repo.mark_processing = AsyncMock()
     repo.mark_ready = AsyncMock(return_value=doc)
     repo.mark_failed = AsyncMock()
+    repo.find_by_id_including_deleted = AsyncMock(return_value=doc)
     svc._file_repo = repo
 
     ingestion = MagicMock()
@@ -101,6 +123,7 @@ async def test_process_file_background_cleans_ingestion_artifacts_on_failure():
     repo.mark_processing = AsyncMock()
     repo.mark_ready = AsyncMock()
     repo.mark_failed = AsyncMock()
+    repo.find_by_id_including_deleted = AsyncMock(return_value=doc)
     svc._file_repo = repo
 
     ingestion = MagicMock()

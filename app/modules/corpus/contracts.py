@@ -36,7 +36,7 @@ class TraversalResult:
     file_candidates: list[FileCandidate] = field(default_factory=list)
     faq_candidates: list[FaqCandidate] = field(default_factory=list)
     selected_topics: list[TopicSelection] = field(default_factory=list)
-    traversal_node_keys: list[str] = field(default_factory=list)
+    expanded_node_keys: list[str] = field(default_factory=list)
     inspected_node_keys: list[str] = field(default_factory=list)
     termination_reason: str = ""
     turn_count: int = 0

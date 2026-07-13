@@ -86,6 +86,26 @@ if check_response "$RESPONSE" "200" "Get Corpus Tree"; then
         || { log_error "  -> Tree response shape mismatch"; return 1; }
 fi
 
+log_info "GET /api/corpus/tree — metadataFilter and lecturerOnly query contract"
+TREE_FILTER='{"academicYear":{"fromYear":0,"toYear":9999},"enrollmentYear":{"fromYear":2024}}'
+RESPONSE=$(curl -s -w "\n%{http_code}" -G "${API_URL}/corpus/tree" \
+    --data-urlencode "metadataFilter=${TREE_FILTER}" \
+    --data-urlencode "lecturerOnly=false" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+if check_response "$RESPONSE" "200" "Get Filtered Corpus Tree"; then
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "$BODY" | jq -e '
+        has("totalNodes") and has("totalRootNodes") and has("tree")
+        and all([.. | objects | select(has("lecturerOnly"))][]?; .lecturerOnly == false)
+    ' >/dev/null \
+        && log_success "  -> Filtered tree accepts current query shape and hides lecturer-only refs" \
+        || { log_error "  -> Filtered Corpus Tree contract mismatch"; return 1; }
+fi
+
+# POST /api/corpus/backfill intentionally stays out of this shared smoke suite:
+# it resets all Corpus payload links before rebuilding them in the background.
+
 log_info "PATCH /api/corpus/topics/${CHILD_TOPIC} — update child"
 UPDATE_BODY="{\"title\":\"Script Child Updated ${TS}\",\"summary\":\"Updated by smoke test\"}"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH "${API_URL}/corpus/topics/${CHILD_TOPIC}" \
@@ -129,7 +149,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/debug/corpus/traverse
     2>/dev/null || echo -e "\n000")
 if check_response "$RESPONSE" "200" "Debug Corpus Traverse"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
-    echo "$BODY" | jq -e '.role == "lecture" and has("fileCandidates") and has("faqCandidates") and has("totalFileCandidates") and has("totalFaqCandidates")' >/dev/null \
+    echo "$BODY" | jq -e '.role == "lecture" and has("fileCandidates") and has("faqCandidates") and has("expandedNodeKeys") and (has("totalFileCandidates") | not)' >/dev/null \
         && log_success "  -> Traverse response uses typed candidate fields" \
         || { log_error "  -> Traverse response shape mismatch"; return 1; }
 fi

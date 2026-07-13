@@ -2,6 +2,7 @@ from typing import List, Optional, Literal
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.rag.query.dtos import SourceCitation
+from app.modules.rag.query.dtos import TokenUsage
 
 class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
@@ -20,11 +21,6 @@ class ChatQueryRequest(BaseSchema):
     resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
     citation_link_type: Literal["original", "markdown"] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
     to_rich_text: Optional[bool] = Field(default=False, description="Convert final markdown answer to HTML rich text")
-
-class TokenUsage(BaseSchema):
-    prompt_tokens: int = Field(..., description="Number of prompt tokens used")
-    completion_tokens: int = Field(..., description="Number of completion tokens used")
-    total_tokens: int = Field(..., description="Total number of tokens used")
 
 class ChatQueryResponse(BaseSchema):
     answer: str = Field(..., description="Generated answer from Gemini")

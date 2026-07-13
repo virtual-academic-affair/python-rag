@@ -52,14 +52,12 @@ async def test_faq_answer_service_reads_multiple_faqs_and_returns_llm_answer():
         question="Chuẩn ngoại ngữ?",
         answer_markdown="Sinh viên cần đạt chuẩn ngoại ngữ theo khóa.",
         metadata_filter=None,
-        is_active=True,
     )
     faq_2 = SimpleNamespace(
         id="faq2",
         question="Thủ tục xét tốt nghiệp?",
         answer_markdown="Sinh viên cần nộp hồ sơ xét tốt nghiệp đúng hạn.",
         metadata_filter=None,
-        is_active=True,
     )
 
     result = await service.answer(
@@ -85,10 +83,27 @@ async def test_faq_answer_service_can_skip_view_count_for_debug():
         question="Câu hỏi?",
         answer_markdown="Câu trả lời FAQ",
         metadata_filter=None,
-        is_active=True,
     )
 
     result = await service.answer("Câu hỏi?", [faq], increment_view_count=False)
 
     assert result.answer_markdown == "Câu trả lời debug"
     service._faq_repo.increment_view_count.assert_not_called()
+
+
+async def test_faq_answer_service_rejects_soft_deleted_match():
+    service = FaqAnswerService()
+    service._faq_repo = SimpleNamespace(increment_view_count=AsyncMock())
+    service._llm_answer = AsyncMock(return_value=(
+        '{"answer":{"faq_ids":["faq1"],"answer_markdown":"Không được dùng"}}',
+        None,
+    ))
+    faq = SimpleNamespace(
+        id="faq1",
+        question="Câu hỏi?",
+        answer_markdown="Câu trả lời",
+        metadata_filter=None,
+        deleted_at=object(),
+    )
+
+    assert await service.answer("Câu hỏi?", [faq]) is None

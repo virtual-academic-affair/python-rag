@@ -7,7 +7,7 @@ from app.modules.files.dtos.batch_upload import (
 )
 from app.modules.files.dtos.update_file import UpdateFileRequest
 from app.modules.files.dtos.file_out import (
-    FileDetailResponse, BulkDeleteResponse, HealthCheckResponse, ErrorResponse
+    FileDetailResponse, FileListItemResponse, BulkDeleteResponse, HealthCheckResponse, ErrorResponse
 )
 from app.modules.files.dtos.list_files import FileListResponse
 
@@ -21,6 +21,7 @@ __all__ = [
     "BatchFileUploadResponse",
     "UpdateFileRequest",
     "FileDetailResponse",
+    "FileListItemResponse",
     "BulkDeleteResponse",
     "HealthCheckResponse",
     "ErrorResponse",

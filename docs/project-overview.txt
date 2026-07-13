@@ -117,7 +117,7 @@ app/
 │   ├── files/                : Quản lý tệp tin, upload, delete, metadata sync.
 │   │   └── toc_tree/         : Repo & Model chuyên biệt cho cấu trúc tài liệu.
 │   ├── chat/                 : Controller của Agentic Chat & SSE Streaming.
-│   ├── corpus/               : Corpus Topic Tree, admin APIs, prefilter, debug preview APIs.
+│   ├── corpus/               : Corpus Topic Tree, admin APIs, traversal orchestration, debug preview APIs.
 │   ├── rag/                  : Ingestion và shared query pipeline.
 │   ├── email/                : Hệ thống phân loại & Workflows xử lý (Inquiry, etc.).
 │   ├── metadata/             : Quản lý Metadata Types & Validation.
@@ -130,7 +130,6 @@ scripts/
 ├── init_db.py                : Script khởi tạo hệ thống (Xóa DB cũ, Index mới, Clear R2, Backfill).
 ├── seed_corpus.py            : Seed cây chủ đề Corpus Topic Tree.
 ├── seed_faqs.py              : Seed FAQ từ JSON.
-├── backfill_corpus.py        : Backfill READY files và active FAQs vào Corpus Tree.
 ├── test/run_all.sh           : Suite kiểm thử integration scripts.
 
 
@@ -337,6 +336,18 @@ BƯỚC 3: METADATA SYNC (Atomic Counter & MongoDB Index Sync)
 - Khi file chuyển sang "ready", hệ thống gọi `$inc: { "total_files": 1 }` cho tất cả nhãn metadata tương ứng trong `metadata_types`.
 - Khi user cập nhật metadata qua API `PATCH /api/files/{id}`, hệ thống cập nhật MongoDB và tự động tính toán lại quyền hạn truy cập của các tài liệu trong cây chủ đề.
 
+QUY TẮC ĐỌC FILE:
+- Repository active luôn ghép điều kiện `deleted_at=null`; bản ghi đã xóa mềm chỉ xuất hiện qua API trash dành cho admin.
+- Admin đọc/list mọi trạng thái file chưa xóa.
+- Student và lecture chỉ được list, xem detail, download và đọc TOC của file `status=ready`.
+- Student bị ẩn file `lecturer_only=true`; lecture và admin được đọc loại file này.
+- List file/trash nhận query `lecturerOnly`; admin/lecture lọc chính xác, còn student không thể dùng `true` để vượt quyền.
+- Item của list file/trash là DTO rút gọn, không trả `tableOfContents`; TOC chỉ có trong File detail/TOC API.
+- File repository dùng Mongo projection cho list/trash nên không hydrate TOC và các trường ingestion không dùng.
+- FAQ list/detail, FAQ-domain retrieval filter và RAG hydration cũng chỉ dùng FAQ có `deleted_at=null`.
+- File/FAQ services tự dựng metadata/role filter của domain mình; Corpus chỉ điều phối hai tập payload ID.
+- PATCH FAQ chỉ tinh chỉnh document và giữ nguyên Corpus topic assignments; đổi topic qua Corpus API hoặc backfill.
+
 
 ================================================================================
 13. HE THONG METADATA TYPES (DEFINITIONS & RULES)
@@ -500,6 +511,8 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
   - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}, "type": "cong_van"})
   - status              : str (uploading, processing, ready, failed)
+  - deletedAt / deletedBy: Soft-delete audit; null khi file đang hoạt động.
+  - deletedCorpusNodeKeys: Topic assignments nội bộ dùng khi restore.
   - createdAt / updatedAt: datetime.
 
 17.2. Collection: `file_toc_trees`
@@ -534,7 +547,8 @@ CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
   - answer_markdown     : str (Markdown trả lời)
   - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
   - metadataFilter      : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
-  - isActive           : bool
+  - deletedAt / deletedBy: Soft-delete audit; null khi FAQ đang hoạt động.
+  - deletedCorpusNodeKeys: Topic assignments nội bộ dùng khi restore.
   - viewCount          : int
   - source              : str (manual, synthesized, seed)
 
@@ -627,7 +641,26 @@ PHÂN HỆ FILES:
 - GET /api/files/{id}           : Chi tiết file (Metadata, status).
 - PATCH /api/files/{id}         : Cập nhật tên hiển thị và metadata (Sync Corpus Index).
 - GET /api/files/{id}/download   : Download file (Stream dữ liệu trực tiếp từ Server).
-- DELETE /api/files/{id}        : Xóa file (Reverse cleanup).
+- DELETE /api/files/{id}        : Xóa mềm file, gỡ Corpus và giữ artifact.
+- GET /api/files/trash          : Danh sách file đã xóa mềm.
+- POST /api/files/{id}/restore  : Khôi phục file và Corpus assignment.
+- DELETE /api/files/{id}/purge  : Xóa vĩnh viễn file trong trash.
+
+PHÂN HỆ FAQ:
+- GET/POST /api/faqs            : List hoặc tạo FAQ chưa xóa; `isActive` đã bị loại bỏ.
+- GET/PATCH /api/faqs/{id}      : Xem hoặc cập nhật FAQ chưa xóa.
+- DELETE /api/faqs/{id}         : Xóa mềm FAQ và gỡ khỏi Corpus.
+- GET /api/faqs/trash           : Danh sách FAQ đã xóa mềm.
+- POST /api/faqs/{id}/restore   : Khôi phục FAQ và Corpus assignment.
+- DELETE /api/faqs/{id}/purge   : Xóa vĩnh viễn FAQ trong trash.
+
+SOFT-DELETE ROLLOUT:
+- Dừng API/background workers trong cửa sổ maintenance, checkout code mới rồi chạy
+  `.venv/bin/python scripts/migrate_soft_delete.py` trước khi khởi động app mới.
+- Migration bỏ `isActive` của FAQ; mọi FAQ cũ, kể cả `isActive=false`, trở thành active.
+- Migration drop/recreate các named soft-delete indexes theo định nghĩa canonical, nên có thể chạy lại để sửa index direction/options cũ mà không xóa document.
+- Chạy `POST /api/corpus/backfill` sau migration để đồng bộ lại Corpus links/counts.
+- R2 vẫn dùng public domain: soft delete ẩn File khỏi API/RAG nhưng không thu hồi URL public cũ.
 
 PHÂN HỆ CHAT:
 - POST /api/chat/query          : Chat QA đồng bộ.
@@ -643,18 +676,18 @@ PHÂN HỆ METADATA (Hardened):
 
 PHÂN HỆ CORPUS:
 - GET /api/corpus/stats         : Thống kê Corpus Tree theo node/root node và direct links.
-- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, metadata, lecturerOnly và updatedAt. Hỗ trợ enrollmentYear, academicYear và lecturerOnly; khi lọc, IDs/counts được tính lại và nhánh rỗng bị ẩn.
-- GET /api/corpus/topics        : List topic dạng flat.
-- GET /api/corpus/topics/{topicKey} : Chi tiết topic.
+- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, typed metadata, lecturerOnly và updatedAt. Raw/subtree ID arrays và các trường tree suy ra được không được trả về. Nhận `metadataFilter` JSON (cùng format List FAQ/File) và `lecturerOnly`; khi lọc, counts được tính lại và nhánh rỗng bị ẩn.
+- GET /api/corpus/topics        : List topic dạng flat, chỉ gồm identity/parent/counts.
+- GET /api/corpus/topics/{topicKey} : Chi tiết topic, gồm childKeys và direct payload refs.
 - GET/PUT /api/corpus/files/{fileId}/topics : Xem hoặc thay thế topic assignments của file.
 - GET/PUT /api/corpus/faqs/{faqId}/topics : Xem hoặc thay thế topic assignments của FAQ.
 - POST /api/corpus/topics       : Tạo topic.
 - PATCH /api/corpus/topics/{topicKey} : Cập nhật topic.
 - POST /api/corpus/topics/{sourceKey}/merge : Merge topic vào target.
 - DELETE /api/corpus/topics/{topicKey} : Xóa topic.
-- POST /api/corpus/backfill     : Backfill READY files và active FAQs vào Corpus Tree.
-- POST /api/debug/corpus/traverse : Preview traversal typed candidates (`fileCandidates`, `faqCandidates`, `totalFileCandidates`, `totalFaqCandidates`) cùng trace `status`, `selectedTopics`, `expandedNodeKeys`, `inspectedNodeKeys`, `terminationReason`, `turnCount`, `tokenUsage`.
-- POST /api/debug/corpus/chat-preview : Preview luồng RagQueryPipeline.answer_chat (`pipelineResult.fileCandidates`, `pipelineResult.faqDocs`).
+- POST /api/corpus/backfill     : Backfill READY files và FAQ chưa xóa vào Corpus Tree.
+- POST /api/debug/corpus/traverse : Preview traversal typed candidates (`fileCandidates`, `faqCandidates`) cùng trace `status`, `selectedTopics`, `expandedNodeKeys`, `inspectedNodeKeys`, `terminationReason`, `turnCount`, `tokenUsage`. Request chỉ nhận `metadataFilter` cho metadata.
+- POST /api/debug/corpus/chat-preview : Preview đầy đủ luồng RagQueryPipeline.answer_chat với answer, analysis, candidates, FAQ, citations, steps và token usage.
 
 PHÂN HỆ HEALTH & SYSTEM:
 - GET /health                   : Trạng thái kết nối DB, R2, RabbitMQ, gRPC.
@@ -716,8 +749,9 @@ Các biến môi trường quan trọng:
 2. scripts/seed_faqs.py:
    - Nạp FAQ mẫu từ `scripts/sample_faqs.json` hoặc file JSON được truyền vào.
 
-3. scripts/backfill_corpus.py:
-   - Index toàn bộ READY files và active FAQs vào Corpus Topic Tree.
+3. POST /api/corpus/backfill:
+   - Là entry point duy nhất để index lại toàn bộ READY files và FAQ chưa xóa.
+   - Không tự seed và không yêu cầu catalog có sẵn; khi cây rỗng, CorpusLinker cho phép LLM đề xuất và tạo root topics mới.
 
 
 ================================================================================

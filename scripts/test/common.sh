@@ -64,8 +64,24 @@ payload = {
 print(jwt.encode(payload, '$JWT_SECRET', algorithm='HS256'))
 " 2>/dev/null)
 
+LECTURE_TOKEN=$("$PYTHON_BIN" -c "
+import jwt, time
+payload = {
+    'sub': 'lecture-sub',
+    'email': 'lecture@hcmus.edu.vn',
+    'role': 'lecture',
+    'studentCode': None,
+    'enrollmentYear': None,
+    'aud': '$JWT_AUDIENCE',
+    'iss': '$JWT_ISSUER',
+    'exp': int(time.time()) + 3600
+}
+print(jwt.encode(payload, '$JWT_SECRET', algorithm='HS256'))
+" 2>/dev/null)
+
 AUTH_HEADER="Authorization: Bearer ${ADMIN_TOKEN}"
 STUDENT_AUTH_HEADER="Authorization: Bearer ${STUDENT_TOKEN}"
+LECTURE_AUTH_HEADER="Authorization: Bearer ${LECTURE_TOKEN}"
 
 # Output file (if not inherited)
 OUTPUT_DIR="$REPO_ROOT/scripts/test_results"

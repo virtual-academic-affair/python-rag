@@ -1,5 +1,7 @@
 """FAQ hoạt động như file: lecturer_only cấp document, default False."""
 from unittest.mock import AsyncMock, MagicMock, patch
+import pytest
+from pydantic import ValidationError
 
 from app.modules.faq.models.faq import FaqDocument
 from app.modules.faq.services.faq_service import FaqService
@@ -19,7 +21,6 @@ def _make_doc(**kw):
         answer_markdown="trả lời",
         answer_rich_text="<p>trả lời</p>",
         lecturer_only=False,
-        is_active=True,
         view_count=0,
         source="manual",
         metadata_filter=None,
@@ -55,12 +56,7 @@ async def test_update_faq_sets_lecturer_only():
     assert saved.lecturer_only is True
 
 
-@patch("app.modules.faq.services.faq_service.get_corpus_linker")
-async def test_update_faq_ignores_absent_lecturer_only(mock_get_svc):
-    mock_index_svc = MagicMock()
-    mock_index_svc.unindex_faq = AsyncMock()
-    mock_get_svc.return_value = mock_index_svc
-
+async def test_update_faq_ignores_absent_lecturer_only():
     svc = FaqService.__new__(FaqService)
     doc = _make_doc(lecturer_only=True)
     repo = MagicMock()
@@ -68,9 +64,8 @@ async def test_update_faq_ignores_absent_lecturer_only(mock_get_svc):
     repo.save = AsyncMock(side_effect=lambda d: d)
     svc._faq_repo = repo
 
-    saved = await svc.update_faq("someid", {"is_active": False})
+    saved = await svc.update_faq("someid", {})
     assert saved.lecturer_only is True  # không truyền → giữ nguyên
-    mock_index_svc.unindex_faq.assert_called_once_with("someid")
 
 
 @patch("app.modules.corpus.services.corpus_service.get_corpus_service")
@@ -104,14 +99,8 @@ async def test_create_faq_indexes_without_catalog_guard(mock_faq_doc, mock_meta_
     mock_get_corpus.assert_not_called()
 
 
-@patch("app.modules.corpus.services.corpus_service.get_corpus_service")
 @patch("app.modules.faq.services.faq_service.get_corpus_linker")
-async def test_update_faq_reindexes_without_catalog_guard(mock_get_indexer, mock_get_corpus):
-    mock_get_corpus.side_effect = AssertionError("catalog guard should not be called")
-    indexer = MagicMock()
-    indexer.index_faq = AsyncMock(return_value=["topic:hoc-phi"])
-    mock_get_indexer.return_value = indexer
-
+async def test_update_faq_keeps_existing_corpus_topics(mock_get_indexer):
     svc = FaqService.__new__(FaqService)
     doc = _make_doc(id="faq1", question="Câu hỏi cũ?")
     repo = MagicMock()
@@ -122,8 +111,25 @@ async def test_update_faq_reindexes_without_catalog_guard(mock_get_indexer, mock
     saved = await svc.update_faq("faq1", {"question": "Câu hỏi mới?"})
 
     assert saved.question == "Câu hỏi mới?"
-    indexer.index_faq.assert_awaited_once()
-    mock_get_corpus.assert_not_called()
+    mock_get_indexer.assert_not_called()
+
+
+async def test_find_faq_ids_for_corpus_builds_filter_in_faq_domain():
+    svc = FaqService.__new__(FaqService)
+    repo = MagicMock()
+    repo.find_ids_by_query = AsyncMock(return_value={"faq1"})
+    svc._faq_repo = repo
+
+    result = await svc.find_ids_for_corpus(
+        {"enrollment_year": {"from_year": 2022, "to_year": 2022}},
+        "student",
+    )
+
+    assert result == {"faq1"}
+    query = repo.find_ids_by_query.await_args.args[0]
+    assert query["deleted_at"] is None
+    assert query["lecturer_only"] == {"$ne": True}
+    assert query["metadata_filter.enrollment_year.from_year"] == {"$lte": 2022}
 
 
 def test_dtos_expose_lecturer_only_with_safe_defaults():
@@ -137,17 +143,25 @@ def test_dtos_expose_lecturer_only_with_safe_defaults():
     assert imp.lecturer_only is False
 
 
+def test_faq_update_rejects_removed_is_active_field():
+    with pytest.raises(ValidationError):
+        FaqUpdateRequest.model_validate({"isActive": False})
+
+
 def test_faq_response_exposes_lecturer_only():
     doc = _make_doc(lecturer_only=True)
     resp = FaqResponse.from_document(doc)
     assert resp.lecturer_only is True
+    payload = resp.model_dump(by_alias=True)
+    assert "isActive" not in payload
+    assert payload["deletedAt"] is None
 
 
 async def test_list_faqs_exclude_lecturer_only_adds_condition():
     svc = FaqService.__new__(FaqService)
     captured = {}
 
-    async def mock_list(is_active=None, metadata_filter=None, search_text=None, skip=0, limit=20):
+    async def mock_list(metadata_filter=None, search_text=None, skip=0, limit=20):
         captured["metadata_filter"] = metadata_filter
         return [], 0
 
@@ -164,7 +178,7 @@ async def test_answer_from_faq_catalog_always_filters_lecturer_only():
     svc = FaqService.__new__(FaqService)
     captured = {}
 
-    async def mock_list(is_active=None, metadata_filter=None, search_text=None, skip=0, limit=20):
+    async def mock_list(metadata_filter=None, search_text=None, skip=0, limit=20):
         captured["metadata_filter"] = metadata_filter
         return [], 0
 

@@ -355,7 +355,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/corpus/tree?enrollmentYear={{enrollmentYear}}&academicYear={{academicYear}}&lecturerOnly=false",
+              "raw": "{{base_url}}/api/corpus/tree?metadataFilter=%7B%22academicYear%22%3A%7B%22fromYear%22%3A0%2C%22toYear%22%3A9999%7D%2C%22enrollmentYear%22%3A%7B%22fromYear%22%3A2024%7D%7D&lecturerOnly=false",
               "host": [
                 "{{base_url}}"
               ],
@@ -365,12 +365,11 @@
                 "tree"
               ],
               "query": [
-                {"key": "enrollmentYear", "value": "{{enrollmentYear}}", "disabled": true},
-                {"key": "academicYear", "value": "{{academicYear}}", "disabled": true},
+                {"key": "metadataFilter", "value": "{\"academicYear\":{\"fromYear\":0,\"toYear\":9999},\"enrollmentYear\":{\"fromYear\":2024}}", "disabled": true},
                 {"key": "lecturerOnly", "value": "false", "disabled": true}
               ]
             },
-            "description": "Return nested Corpus Topic Tree. directFiles/directFaqs contain {id,name,metadata,lecturerOnly,updatedAt}. Optional enrollmentYear and academicYear use metadata range overlap; lecturerOnly=true/false filters exact visibility and omitted means all. Filtered empty branches are hidden and counts/ids are recomputed."
+            "description": "Return nested Corpus Topic Tree. directFiles/directFaqs contain typed {id,name,metadata,lecturerOnly,updatedAt}. Optional metadataFilter is a JSON string using the same shape as FAQ/File filters, e.g. {academicYear:{fromYear:0,toYear:9999},enrollmentYear:{fromYear:2024}}; lecturerOnly=true/false filters exact visibility and omitted means all. Filtered empty branches are hidden and counts are recomputed; raw/subtree ID arrays and derivable tree fields are omitted."
           },
           "response": []
         },
@@ -608,7 +607,7 @@
                 "backfill"
               ]
             },
-            "description": "Start background backfill: seed Corpus Tree and index READY files + active FAQs.",
+            "description": "Start background backfill without seeding. It reindexes READY files and non-deleted FAQs; when the catalog is empty, CorpusLinker may let the LLM propose and create new root topics.",
             "body": {
               "mode": "raw",
               "raw": "{}",
@@ -643,10 +642,10 @@
                 "traverse"
               ]
             },
-            "description": "Run Corpus Tree traversal for a question and return typed candidates plus traversal trace: status, selectedTopics, expandedNodeKeys, inspectedNodeKeys, terminationReason, turnCount, and tokenUsage.",
+            "description": "Run Corpus Tree traversal for a question and return typed candidates plus traversal trace: status, selectedTopics, expandedNodeKeys, inspectedNodeKeys, terminationReason, turnCount, and tokenUsage. Use metadataFilter for metadata constraints; duplicate traversalNodeKeys and candidate totals are omitted.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022,\n  \"academicYear\": 2024\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"role\": \"student\",\n  \"metadataFilter\": {\n    \"enrollmentYear\": {\"fromYear\": 2022, \"toYear\": 2022},\n    \"academicYear\": {\"fromYear\": 2024, \"toYear\": 2024}\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -673,7 +672,7 @@
                 "chat-preview"
               ]
             },
-            "description": "Dry-run the shared RagQueryPipeline.answer_chat flow without a real JWT. Response pipelineResult uses fileCandidates and faqDocs.",
+            "description": "Dry-run the shared RagQueryPipeline.answer_chat flow without a real JWT. Response is flattened and includes analysis, answer, source, candidates, FAQs, citations, steps, tokenUsage and maxTurnsReached.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp?\",\n  \"role\": \"student\",\n  \"enrollmentYear\": 2022\n}",
@@ -736,16 +735,19 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/files",
+              "raw": "{{base_url}}/api/files?lecturerOnly=false",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "api",
                 "files"
+              ],
+              "query": [
+                {"key": "lecturerOnly", "value": "false", "disabled": true}
               ]
             },
-            "description": "List files with optional filters and pagination."
+            "description": "List files with optional fileStatus, metadataFilter, lecturerOnly, keywords, page, and limit filters. List items omit tableOfContents and are loaded through a compact Mongo projection; request file detail or TOC Tree when needed. Admin/lecture may filter lecturerOnly exactly; student cannot opt into lecturer-only files."
           },
           "response": []
         },
@@ -859,7 +861,54 @@
                 "{{file_id}}"
               ]
             },
-            "description": ""
+            "description": "Soft-delete the file and retain R2/TOC artifacts for restore."
+          },
+          "response": []
+        },
+        {
+          "name": "List deleted files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/trash?page=1&limit=50&lecturerOnly=false",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "trash"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "limit", "value": "50"},
+                {"key": "lecturerOnly", "value": "false", "disabled": true}
+              ]
+            },
+            "description": "List soft-deleted files with the same filters as the active list, including lecturerOnly. List items omit tableOfContents. Admin only."
+          },
+          "response": []
+        },
+        {
+          "name": "Restore file",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/restore",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "restore"]
+            },
+            "description": "Restore a soft-deleted file and its Corpus assignments."
+          },
+          "response": []
+        },
+        {
+          "name": "Purge file",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/purge",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "purge"]
+            },
+            "description": "Permanently purge a file that is already in trash."
           },
           "response": []
         },
@@ -1193,7 +1242,53 @@
                 "{{faq_id}}"
               ]
             },
-            "description": "Delete an FAQ."
+            "description": "Soft-delete an FAQ and remove it from Corpus."
+          },
+          "response": []
+        },
+        {
+          "name": "List deleted FAQs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/trash?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "faqs", "trash"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "limit", "value": "20"}
+              ]
+            },
+            "description": "List soft-deleted FAQs. Admin only."
+          },
+          "response": []
+        },
+        {
+          "name": "Restore FAQ",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/{{faq_id}}/restore",
+              "host": ["{{base_url}}"],
+              "path": ["api", "faqs", "{{faq_id}}", "restore"]
+            },
+            "description": "Restore a soft-deleted FAQ and its Corpus assignments."
+          },
+          "response": []
+        },
+        {
+          "name": "Purge FAQ",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/faqs/{{faq_id}}/purge",
+              "host": ["{{base_url}}"],
+              "path": ["api", "faqs", "{{faq_id}}", "purge"]
+            },
+            "description": "Permanently purge an FAQ that is already in trash."
           },
           "response": []
         },

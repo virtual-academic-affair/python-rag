@@ -8,13 +8,15 @@ from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.corpus.repositories.corpus_node_repository import would_create_cycle
 from app.modules.corpus.dtos.create_topic import TopicCreateRequest
 from app.modules.corpus.dtos.delete_topic import TopicDeleteResponse
-from app.modules.corpus.dtos.list_topics import CorpusNodeListResponse
+from app.modules.corpus.dtos.list_topics import CorpusTopicListResponse
 from app.modules.corpus.dtos.merge_topic import TopicMergeResponse
 from app.modules.corpus.dtos.payload_topics import CorpusPayloadTopicsResponse
 from app.modules.corpus.dtos.topic_out import (
-    CorpusNodeResponse,
-    CorpusPayloadRef,
+    CorpusFileRefResponse,
+    CorpusFaqRefResponse,
     CorpusStatsResponse,
+    CorpusTopicDetailResponse,
+    CorpusTopicSummaryResponse,
     CorpusTreeNodeResponse,
     CorpusTreeResponse,
 )
@@ -47,33 +49,52 @@ class CorpusService:
         return await self.repo.get_all()
 
     @staticmethod
-    def node_response(
+    def _filtered_ids(
         node: CorpusNodeDocument,
-        file_payloads: dict[str, CorpusPayloadRef] | None = None,
-        faq_payloads: dict[str, CorpusPayloadRef] | None = None,
         allowed_file_ids: set[str] | None = None,
         allowed_faq_ids: set[str] | None = None,
-    ) -> CorpusNodeResponse:
-        file_payloads = file_payloads or {}
-        faq_payloads = faq_payloads or {}
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
         direct_file_ids = [item for item in node.direct_file_ids if allowed_file_ids is None or item in allowed_file_ids]
         direct_faq_ids = [item for item in node.direct_faq_ids if allowed_faq_ids is None or item in allowed_faq_ids]
         subtree_file_ids = [item for item in node.subtree_file_ids if allowed_file_ids is None or item in allowed_file_ids]
         subtree_faq_ids = [item for item in node.subtree_faq_ids if allowed_faq_ids is None or item in allowed_faq_ids]
-        return CorpusNodeResponse(
+        return direct_file_ids, direct_faq_ids, subtree_file_ids, subtree_faq_ids
+
+    @classmethod
+    def topic_summary_response(
+        cls,
+        node: CorpusNodeDocument,
+        allowed_file_ids: set[str] | None = None,
+        allowed_faq_ids: set[str] | None = None,
+    ) -> CorpusTopicSummaryResponse:
+        _, _, subtree_file_ids, subtree_faq_ids = cls._filtered_ids(node, allowed_file_ids, allowed_faq_ids)
+        return CorpusTopicSummaryResponse(
             node_key=node.node_key,
             title=node.title,
             summary=node.summary,
-            direct_file_ids=direct_file_ids,
-            direct_faq_ids=direct_faq_ids,
-            direct_files=[file_payloads.get(file_id, CorpusPayloadRef(id=file_id)) for file_id in direct_file_ids],
-            direct_faqs=[faq_payloads.get(faq_id, CorpusPayloadRef(id=faq_id)) for faq_id in direct_faq_ids],
-            subtree_file_ids=subtree_file_ids,
-            subtree_faq_ids=subtree_faq_ids,
             parent_key=node.parent_key,
-            child_keys=node.child_keys,
             file_count=len(subtree_file_ids),
             faq_count=len(subtree_faq_ids),
+        )
+
+    @classmethod
+    def topic_detail_response(
+        cls,
+        node: CorpusNodeDocument,
+        file_payloads: dict[str, CorpusFileRefResponse] | None = None,
+        faq_payloads: dict[str, CorpusFaqRefResponse] | None = None,
+        allowed_file_ids: set[str] | None = None,
+        allowed_faq_ids: set[str] | None = None,
+    ) -> CorpusTopicDetailResponse:
+        file_payloads = file_payloads or {}
+        faq_payloads = faq_payloads or {}
+        direct_file_ids, direct_faq_ids, _, _ = cls._filtered_ids(node, allowed_file_ids, allowed_faq_ids)
+        summary = cls.topic_summary_response(node, allowed_file_ids, allowed_faq_ids)
+        return CorpusTopicDetailResponse(
+            **summary.model_dump(),
+            child_keys=node.child_keys,
+            direct_files=[file_payloads.get(file_id, CorpusFileRefResponse(id=file_id)) for file_id in direct_file_ids],
+            direct_faqs=[faq_payloads.get(faq_id, CorpusFaqRefResponse(id=faq_id)) for faq_id in direct_faq_ids],
         )
 
     async def _load_payload_name_maps(
@@ -81,7 +102,7 @@ class CorpusService:
         nodes: list[CorpusNodeDocument],
         allowed_file_ids: set[str] | None = None,
         allowed_faq_ids: set[str] | None = None,
-    ) -> tuple[dict[str, CorpusPayloadRef], dict[str, CorpusPayloadRef]]:
+    ) -> tuple[dict[str, CorpusFileRefResponse], dict[str, CorpusFaqRefResponse]]:
         """Hydrate direct payload details in two batch queries for FE tree rendering."""
         from app.modules.files.services.file_service import get_file_service
         from app.modules.faq.services.faq_service import get_faq_service
@@ -106,13 +127,13 @@ class CorpusService:
         )
         return (
             {
-                str(file.id): CorpusPayloadRef(
+                str(file.id): CorpusFileRefResponse(
                     id=str(file.id),
                     name=file.display_name or file.original_filename or "",
                     metadata=(
-                        FileMetadataResponse.from_model(file.custom_metadata).model_dump(by_alias=True)
+                        FileMetadataResponse.from_model(file.custom_metadata)
                         if file.custom_metadata
-                        else {}
+                        else None
                     ),
                     lecturer_only=bool(file.lecturer_only),
                     updated_at=file.updated_at,
@@ -120,10 +141,10 @@ class CorpusService:
                 for file in files
             },
             {
-                str(faq.id): CorpusPayloadRef(
+                str(faq.id): CorpusFaqRefResponse(
                     id=str(faq.id),
                     name=faq.question or "",
-                    metadata=FaqMetadataResponse.from_model(faq.metadata_filter).model_dump(by_alias=True),
+                    metadata=FaqMetadataResponse.from_model(faq.metadata_filter),
                     lecturer_only=bool(faq.lecturer_only),
                     updated_at=faq.updated_at,
                 )
@@ -141,20 +162,19 @@ class CorpusService:
             total_direct_faq_links=sum(len(node.direct_faq_ids) for node in nodes),
         )
 
-    async def list_topics(self) -> CorpusNodeListResponse:
+    async def list_topics(self) -> CorpusTopicListResponse:
         nodes = await self.repo.get_all()
-        file_payloads, faq_payloads = await self._load_payload_name_maps(nodes)
-        return CorpusNodeListResponse(
+        return CorpusTopicListResponse(
             total=len(nodes),
-            items=[self.node_response(node, file_payloads, faq_payloads) for node in sorted(nodes, key=lambda node: node.node_key)],
+            items=[self.topic_summary_response(node) for node in sorted(nodes, key=lambda node: node.node_key)],
         )
 
-    async def get_topic(self, node_key: str) -> CorpusNodeResponse:
+    async def get_topic(self, node_key: str) -> CorpusTopicDetailResponse:
         node = await self.repo.get_by_key(node_key)
         if not node:
             raise ValueError(f"Node '{node_key}' not found")
         file_payloads, faq_payloads = await self._load_payload_name_maps([node])
-        return self.node_response(node, file_payloads, faq_payloads)
+        return self.topic_detail_response(node, file_payloads, faq_payloads)
 
     async def build_tree(
         self,
@@ -178,13 +198,7 @@ class CorpusService:
         )
         node_map = {node.node_key: node for node in nodes}
         response_map = {
-            node.node_key: self.node_response(
-                node,
-                file_payloads,
-                faq_payloads,
-                allowed_file_ids,
-                allowed_faq_ids,
-            )
+            node.node_key: self.topic_detail_response(node, file_payloads, faq_payloads, allowed_file_ids, allowed_faq_ids)
             for node in nodes
         }
 
@@ -198,8 +212,13 @@ class CorpusService:
                 return CorpusTreeNodeResponse(node_key=key, title="missing or cyclic reference")
             response = response_map[key]
             return CorpusTreeNodeResponse(
-                **response.model_dump(),
-                has_content=bool(response.file_count or response.faq_count),
+                node_key=response.node_key,
+                title=response.title,
+                summary=response.summary,
+                file_count=response.file_count,
+                faq_count=response.faq_count,
+                direct_files=response.direct_files,
+                direct_faqs=response.direct_faqs,
                 children=[
                     build(child_key, seen | {key})
                     for child_key in sorted(node.child_keys)
@@ -215,7 +234,7 @@ class CorpusService:
             tree=[build(node.node_key, frozenset()) for node in sorted(visible_roots, key=lambda node: node.node_key)],
         )
 
-    async def create_topic(self, request: TopicCreateRequest) -> CorpusNodeResponse:
+    async def create_topic(self, request: TopicCreateRequest) -> CorpusTopicDetailResponse:
         node_key = slugify_topic(request.slug)
         if not node_key:
             raise ValueError("slug invalid after slugification")
@@ -229,9 +248,9 @@ class CorpusService:
             summary=request.summary,
             parent_key=request.parent_key,
         )
-        return self.node_response(node)
+        return self.topic_detail_response(node)
 
-    async def update_topic(self, node_key: str, request: TopicUpdateRequest) -> CorpusNodeResponse:
+    async def update_topic(self, node_key: str, request: TopicUpdateRequest) -> CorpusTopicDetailResponse:
         node = await self.repo.get_by_key(node_key)
         if not node:
             raise ValueError(f"Node '{node_key}' not found")
@@ -304,6 +323,20 @@ class CorpusService:
             await self.repo.remove_payload_link(node_key, payload_type, payload_id)
         logger.info(f"[Corpus] index {payload_type}:{payload_id}: +{add} -{remove}")
         return node_keys
+
+    async def get_payload_node_keys(self, payload_type: str, payload_id: str) -> list[str]:
+        """Return current direct topic assignments without hydrating the payload."""
+        nodes = await self.repo.get_nodes_containing_payload(payload_type, payload_id)
+        return sorted(node.node_key for node in nodes)
+
+    async def existing_node_keys(self, node_keys: list[str]) -> list[str]:
+        """Keep restore assignments whose topics still exist."""
+        normalized = list(dict.fromkeys(node_keys))
+        if not normalized:
+            return []
+        nodes = await self.repo.get_by_keys(normalized)
+        existing = {node.node_key for node in nodes}
+        return [node_key for node_key in normalized if node_key in existing]
 
     async def _get_payload_name(self, payload_type: str, payload_id: str) -> str:
         if payload_type == "file":
@@ -393,11 +426,7 @@ class CorpusService:
         from app.modules.files.models.file import FileDocument, FileStatus
         from app.modules.files.toc_tree.models.toc_tree import FileTocTree
         from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
-        from scripts.seed_corpus import seed_corpus
-
         repo = self.repo
-        seeded = await seed_corpus(repo)
-        logger.info("[Corpus][Backfill] seed: %s nodes created", seeded)
         await repo.reset_all_links()
         logger.info("[Corpus][Backfill] cleared direct/subtree corpus links")
 
@@ -407,7 +436,10 @@ class CorpusService:
 
         skip = 0
         while True:
-            batch = await FileDocument.find(FileDocument.status == FileStatus.READY).skip(skip).limit(batch_size).to_list()
+            batch = await FileDocument.find({
+                "status": FileStatus.READY.value,
+                "deleted_at": None,
+            }).skip(skip).limit(batch_size).to_list()
             if not batch:
                 break
             for file_doc in batch:
@@ -429,7 +461,7 @@ class CorpusService:
 
         skip = 0
         while True:
-            batch = await FaqDocument.find(FaqDocument.is_active == True).skip(skip).limit(batch_size).to_list()
+            batch = await FaqDocument.find({"deleted_at": None}).skip(skip).limit(batch_size).to_list()
             if not batch:
                 break
             for faq in batch:

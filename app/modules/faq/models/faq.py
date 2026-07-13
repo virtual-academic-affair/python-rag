@@ -1,6 +1,7 @@
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 from pydantic import Field
-from pymongo import IndexModel, TEXT, ASCENDING
+from pymongo import IndexModel, TEXT, ASCENDING, DESCENDING
 from app.core.base_document import BaseDocument
 from app.modules.metadata.models.value_objects import FaqMetadata
 
@@ -13,10 +14,15 @@ class FaqDocument(BaseDocument):
     answer_rich_text: Optional[str] = Field(None, description="Answer in HTML Rich Text (for display)")
     lecturer_only: bool = Field(default=False, description="Nếu True, chỉ admin/lecture mới xem được")
     metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Fixed schema metadata filter")
-    is_active: bool = Field(True, description="Whether this FAQ is active and searchable")
     view_count: int = Field(0, description="Number of times this FAQ was matched")
     source: str = Field("manual", description="Source of the FAQ: 'manual' or 'synthesized'")
     candidate_id: Optional[str] = Field(None, description="Reference to FaqCandidate if synthesized")
+    deleted_at: Optional[datetime] = Field(default=None, description="Soft-delete timestamp")
+    deleted_by: Optional[str] = Field(default=None, description="Admin user ID that soft-deleted the FAQ")
+    deleted_corpus_node_keys: List[str] = Field(
+        default_factory=list,
+        description="Corpus topic assignments retained for restore",
+    )
 
     class Settings:
         name = "faqs"
@@ -28,13 +34,20 @@ class FaqDocument(BaseDocument):
             IndexModel(
                 [("question_unaccented", ASCENDING)],
                 unique=True,
+                partialFilterExpression={"deleted_at": None},
                 name="idx_faqs_question_unique"
             ),
-            "is_active",
+            IndexModel(
+                [("deleted_at", ASCENDING), ("created_at", DESCENDING)],
+                name="idx_faqs_deleted_created",
+            ),
             IndexModel(
                 [("candidate_id", ASCENDING)],
                 unique=True,
-                partialFilterExpression={"candidate_id": {"$type": "string"}},
+                partialFilterExpression={
+                    "candidate_id": {"$type": "string"},
+                    "deleted_at": None,
+                },
                 name="idx_faqs_candidate_id_unique"
             )
         ]

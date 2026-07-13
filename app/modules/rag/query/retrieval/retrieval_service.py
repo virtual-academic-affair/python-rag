@@ -27,7 +27,6 @@ class RetrievalSeeds:
     file_candidates: list[Any] = field(default_factory=list)
     faq_candidates: list[Any] = field(default_factory=list)
     prefilter: Optional[dict] = None
-    traversal_node_keys: list[str] = field(default_factory=list)
     traversal_steps: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -59,13 +58,12 @@ class RetrievalService:
             result.status,
             len(result.file_candidates),
             len(result.faq_candidates),
-            result.traversal_node_keys,
+            result.expanded_node_keys,
         )
         return RetrievalSeeds(
             file_candidates=result.file_candidates,
             faq_candidates=result.faq_candidates,
             prefilter=result.prefilter,
-            traversal_node_keys=result.traversal_node_keys,
             traversal_steps=result.steps,
         )
 

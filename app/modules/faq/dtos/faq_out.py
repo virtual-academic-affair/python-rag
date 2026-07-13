@@ -12,11 +12,12 @@ class FaqResponse(BaseSchema):
     answer_rich_text: str
     lecturer_only: bool = False
     metadata_filter: FaqMetadataResponse
-    is_active: bool
     view_count: int
     source: str
     created_at: str
     updated_at: str
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 
     @classmethod
     def from_document(cls, doc: FaqDocument) -> 'FaqResponse':
@@ -38,11 +39,12 @@ class FaqResponse(BaseSchema):
             answer_rich_text=doc.answer_rich_text or "",
             lecturer_only=bool(getattr(doc, "lecturer_only", False)),
             metadata_filter=FaqMetadataResponse.from_model(meta_model),
-            is_active=doc.is_active,
             view_count=doc.view_count,
             source=doc.source,
             created_at=doc.created_at.isoformat() if doc.created_at else "",
             updated_at=doc.updated_at.isoformat() if doc.updated_at else "",
+            deleted_at=doc.deleted_at.isoformat() if getattr(doc, "deleted_at", None) else None,
+            deleted_by=getattr(doc, "deleted_by", None),
         )
 
 class FaqCandidateResponse(BaseSchema):

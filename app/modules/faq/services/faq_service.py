@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
-from app.core.exceptions import ValidationException, ConflictException
+from app.core.exceptions import AppException, ValidationException, ConflictException, NotFoundException
 from app.core.pagination import PagedResult
 from app.modules.faq.dtos.create_faq import FaqBulkCreateItem
 from app.modules.faq.models.faq import FaqDocument
@@ -20,7 +20,6 @@ from app.modules.rag.query.answering.faq_answering import FaqAnswerService
 from app.modules.metadata.models.value_objects import FaqMetadata
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.metadata.utils.filter_builder import get_filter_builder
-from app.modules.corpus.utils.prefilter import build_faq_prefilter_query
 from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
 from app.utils.format_utils import markdown_to_rich_text, rich_text_to_markdown
 from app.utils.text_utils import remove_accents
@@ -71,7 +70,6 @@ class FaqService:
             metadata_filter=metadata_model,
             source=source,
             candidate_id=candidate_id,
-            is_active=True,
             view_count=0,
         )
         try:
@@ -161,21 +159,6 @@ class FaqService:
         if not doc:
             return None
 
-        # Keep original fields for rollback
-        original_fields = {
-            "is_active": doc.is_active,
-            "lecturer_only": doc.lecturer_only,
-            "question": doc.question,
-            "question_unaccented": doc.question_unaccented,
-            "answer_markdown": doc.answer_markdown,
-            "answer_rich_text": doc.answer_rich_text,
-            "answer_unaccented": doc.answer_unaccented,
-            "metadata_filter": doc.metadata_filter.model_copy() if doc.metadata_filter else None
-        }
-
-        if "is_active" in data:
-            doc.is_active = data["is_active"]
-
         if data.get("lecturer_only") is not None:
             doc.lecturer_only = data["lecturer_only"]
 
@@ -203,62 +186,87 @@ class FaqService:
             doc.metadata_filter = meta_model or FaqMetadata()
 
         try:
-            saved = await self._faq_repo.save(doc)
+            return await self._faq_repo.save(doc)
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
 
-        # Determine index actions
-        needs_unindex = data.get("is_active") is False or (doc.is_active is False and "is_active" not in data)
-        needs_reindex = doc.is_active and (
-            "question" in data
-            or "answer_rich_text" in data
-            or "answer_markdown" in data
-            or "metadata_filter" in data
-            or data.get("is_active") is True
-        )
-
-        try:
-            if needs_unindex:
-                await get_corpus_linker().unindex_faq(faq_id)
-            elif needs_reindex:
-                corpus_linker = get_corpus_linker()
-
-                node_keys = await corpus_linker.index_faq(
-                    faq_id,
-                    question=saved.question or "",
-                    answer_markdown=saved.answer_markdown or "",
-                )
-                if not node_keys:
-                    raise ValueError("LLM could not assign the FAQ to any node in the corpus catalog.")
-        except Exception as e:
-            # Rollback MongoDB fields
-            for k, v in original_fields.items():
-                setattr(doc, k, v)
-            await self._faq_repo.save(doc)
-            # Best-effort: restore corpus tree to old state using original question/answer
-            try:
-                await get_corpus_linker().index_faq(
-                    faq_id,
-                    question=original_fields.get("question", "") or "",
-                    answer_markdown=original_fields.get("answer_markdown", "") or "",
-                )
-            except Exception:
-                pass  # corpus state may be inconsistent; backfill can fix later
-            raise e
-
-        return saved
-
-    async def delete_faq(self, faq_id: str) -> bool:
-        doc = await self._faq_repo.find_by_id(faq_id)
+    async def delete_faq(self, faq_id: str, deleted_by: str) -> bool:
+        doc = await self._faq_repo.find_by_id_including_deleted(faq_id)
         if not doc:
             return False
-        # Corpus tree unindex — must succeed before deletion
+
+        if doc.deleted_at is None:
+            from app.modules.corpus.services.corpus_service import get_corpus_service
+
+            node_keys = await get_corpus_service().get_payload_node_keys("faq", faq_id)
+            await self._faq_repo.soft_delete(
+                faq_id,
+                deleted_by=deleted_by,
+                corpus_node_keys=node_keys,
+            )
+
+        # Idempotent cleanup for retries after a partial failure.
+        await get_corpus_linker().unindex_faq(faq_id)
+        return True
+
+    async def restore_faq(self, faq_id: str) -> FaqDocument:
+        doc = await self._faq_repo.find_by_id_including_deleted(faq_id)
+        if not doc:
+            raise NotFoundException("FAQ", faq_id)
+        if doc.deleted_at is None:
+            raise ConflictException("FAQ is not deleted")
+
+        duplicate = await self._faq_repo.find_by_unaccented_question(doc.question_unaccented)
+        if duplicate:
+            raise ConflictException(f"Active FAQ with question '{doc.question}' already exists")
+        if doc.candidate_id and await self._faq_repo.find_by_candidate_id(doc.candidate_id):
+            raise ConflictException("An active FAQ already references the same candidate")
+
+        from app.modules.corpus.services.corpus_service import get_corpus_service
+
+        corpus_svc = get_corpus_service()
+        valid_keys = await corpus_svc.existing_node_keys(doc.deleted_corpus_node_keys)
+        reindexed = False
+        try:
+            if valid_keys:
+                await corpus_svc.reindex_payload("faq", faq_id, valid_keys)
+            else:
+                node_keys = await get_corpus_linker().index_faq(
+                    faq_id,
+                    question=doc.question or "",
+                    answer_markdown=doc.answer_markdown or "",
+                )
+                if not node_keys:
+                    raise ConflictException("FAQ could not be assigned to a Corpus topic")
+            reindexed = True
+
+            if not await self._faq_repo.restore(faq_id):
+                raise ConflictException("FAQ restore state changed concurrently")
+        except Exception:
+            if reindexed:
+                await get_corpus_linker().unindex_faq(faq_id)
+            raise
+
+        restored = await self._faq_repo.find_by_id(faq_id)
+        if not restored:
+            raise AppException("FAQ restore completed but active record could not be loaded", status_code=500)
+        return restored
+
+    async def purge_faq(self, faq_id: str) -> bool:
+        doc = await self._faq_repo.find_by_id_including_deleted(faq_id)
+        if not doc:
+            raise NotFoundException("FAQ", faq_id)
+        if doc.deleted_at is None:
+            raise ConflictException("FAQ must be soft-deleted before purge")
         await get_corpus_linker().unindex_faq(faq_id)
         await self._faq_repo.delete(doc)
         return True
 
     async def get_faq(self, faq_id: str) -> Optional[FaqDocument]:
         return await self._faq_repo.find_by_id(faq_id)
+
+    async def get_faq_including_deleted(self, faq_id: str) -> Optional[FaqDocument]:
+        return await self._faq_repo.find_by_id_including_deleted(faq_id)
 
     async def find_ids_for_corpus(
         self,
@@ -267,7 +275,18 @@ class FaqService:
         lecturer_only: Optional[bool] = None,
     ) -> set[str]:
         """Return active FAQ IDs allowed for corpus traversal."""
-        query = await build_faq_prefilter_query(metadata_filter, user_role, lecturer_only)
+        query: Dict[str, Any] = {"deleted_at": None}
+        privileged = (user_role or "") in {"admin", "lecture"}
+        if lecturer_only is not None and privileged:
+            query["lecturer_only"] = lecturer_only
+        elif not privileged:
+            query["lecturer_only"] = {"$ne": True}
+        query.update(
+            await get_filter_builder().build_mongo_filter(
+                metadata_filter or {},
+                mongo_prefix="metadata_filter",
+            )
+        )
         return await self._faq_repo.find_ids_by_query(query)
 
     async def get_faqs_by_ids(self, faq_ids: List[str]) -> List[FaqDocument]:
@@ -275,7 +294,6 @@ class FaqService:
 
     async def list_faqs(
         self,
-        is_active: Optional[bool] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
         search: Optional[str] = None,
         page: int = 1,
@@ -290,7 +308,27 @@ class FaqService:
             mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
 
         items, total = await self._faq_repo.list_faqs(
-            is_active=is_active,
+            metadata_filter=mongo_filter,
+            search_text=remove_accents(search) if search else None,
+            skip=(page - 1) * limit,
+            limit=limit,
+        )
+        return PagedResult(items=items, total=total, page=page, limit=limit)
+
+    async def list_deleted_faqs(
+        self,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> PagedResult[FaqDocument]:
+        mongo_filter = None
+        if metadata_filter:
+            mongo_filter = await get_filter_builder().build_mongo_filter(
+                metadata_filter,
+                mongo_prefix="metadata_filter",
+            )
+        items, total = await self._faq_repo.list_deleted_faqs(
             metadata_filter=mongo_filter,
             search_text=remove_accents(search) if search else None,
             skip=(page - 1) * limit,
@@ -323,7 +361,6 @@ class FaqService:
         mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
 
         faqs, _ = await self._faq_repo.list_faqs(
-            is_active=True,
             metadata_filter=mongo_filter,
             skip=0,
             limit=settings.FAQ_MATCHER_MAX_CATALOG,

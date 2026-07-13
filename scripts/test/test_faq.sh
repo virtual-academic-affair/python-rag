@@ -35,7 +35,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -G "${BASE_URL}/api/faqs" \
     2>/dev/null || echo -e "\n000")
 if check_response "$RESPONSE" "200" "List/Search FAQ"; then
     BODY=$(echo "$RESPONSE" | sed '$d')
-    echo "$BODY" | jq -e --arg id "$FAQ_ID" '(.total // 0) > 0 and any(.items[]?; (.id // .faqId) == $id)' >/dev/null \
+    echo "$BODY" | jq -e --arg id "$FAQ_ID" '(.total // 0) > 0 and any(.items[]?; (.id // .faqId) == $id) and all(.items[]?; has("isActive") | not)' >/dev/null \
         && log_success "  -> Filtered FAQ list includes created FAQ" \
         || { log_error "  -> Filtered FAQ list missing created FAQ"; return 1; }
 fi
@@ -45,6 +45,16 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${BASE_URL}/api/faqs/${FAQ_ID}" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     2>/dev/null || echo -e "\n000")
 check_response "$RESPONSE" "200" "Get FAQ"
+
+log_info "GET /api/corpus/faqs/${FAQ_ID}/topics — capture assignments before FAQ update"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/corpus/faqs/${FAQ_ID}/topics" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+if ! check_response "$RESPONSE" "200" "Get FAQ Corpus Topics Before Update"; then
+    return 1
+fi
+BODY=$(echo "$RESPONSE" | sed '$d')
+TOPICS_BEFORE=$(echo "$BODY" | jq -c '.nodeKeys | sort')
 
 log_info "PATCH /api/faqs/${FAQ_ID} — update question and metadata"
 UPDATE_DATA="{
@@ -64,6 +74,21 @@ if check_response "$RESPONSE" "200" "Update FAQ"; then
     echo "$BODY" | jq -e '.question | contains("updated")' >/dev/null \
         && log_success "  -> Updated FAQ contains new question" \
         || { log_error "  -> Updated FAQ missing new question"; return 1; }
+fi
+
+log_info "GET /api/corpus/faqs/${FAQ_ID}/topics — update must keep assignments"
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/corpus/faqs/${FAQ_ID}/topics" \
+    -H "${AUTH_HEADER}" \
+    2>/dev/null || echo -e "\n000")
+if check_response "$RESPONSE" "200" "Get FAQ Corpus Topics After Update"; then
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    TOPICS_AFTER=$(echo "$BODY" | jq -c '.nodeKeys | sort')
+    if [ "$TOPICS_AFTER" = "$TOPICS_BEFORE" ]; then
+        log_success "  -> FAQ update preserved Corpus topic assignments"
+    else
+        log_error "  -> FAQ update changed Corpus topics: before=$TOPICS_BEFORE after=$TOPICS_AFTER"
+        return 1
+    fi
 fi
 
 log_info "POST /api/faqs/match — FAQ answer debug"
@@ -133,10 +158,44 @@ if check_response "$RESPONSE" "200" "Import FAQ"; then
         || { log_error "  -> Import counts mismatch"; return 1; }
 fi
 
-log_info "DELETE /api/faqs/${FAQ_ID} — cleanup"
+log_info "DELETE /api/faqs/${FAQ_ID} — soft delete"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/api/faqs/${FAQ_ID}" \
     -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     2>/dev/null || echo -e "\n000")
-check_response "$RESPONSE" "204" "Delete FAQ"
+check_response "$RESPONSE" "204" "Soft Delete FAQ"
+
+RESPONSE=$(curl -s -w "\n%{http_code}" "${BASE_URL}/api/faqs/${FAQ_ID}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "404" "Deleted FAQ Hidden From Detail"
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -G "${BASE_URL}/api/faqs" \
+    --data-urlencode "search=giấy chứng nhận" \
+    --data-urlencode "limit=100" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    2>/dev/null || echo -e "\n000")
+if check_response "$RESPONSE" "200" "Deleted FAQ Hidden From Normal List"; then
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "$BODY" | jq -e --arg id "$FAQ_ID" 'all(.items[]?; (.faqId // .id) != $id)' >/dev/null \
+        && log_success "  -> Normal FAQ list excludes deleted FAQ" \
+        || { log_error "  -> Normal FAQ list leaked deleted FAQ"; return 1; }
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" "${BASE_URL}/api/faqs/trash" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null || echo -e "\n000")
+if check_response "$RESPONSE" "200" "List Deleted FAQs"; then
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "$BODY" | jq -e --arg id "$FAQ_ID" 'any(.items[]?; (.faqId // .id) == $id and .deletedAt != null)' >/dev/null \
+        || { log_error "  -> FAQ trash missing deleted FAQ"; return 1; }
+fi
+
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/faqs/${FAQ_ID}/restore" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "200" "Restore FAQ"
+
+curl -s -X DELETE "${BASE_URL}/api/faqs/${FAQ_ID}" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" >/dev/null
+RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${BASE_URL}/api/faqs/${FAQ_ID}/purge" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null || echo -e "\n000")
+check_response "$RESPONSE" "204" "Purge FAQ"
 
 cleanup_faq_smoke

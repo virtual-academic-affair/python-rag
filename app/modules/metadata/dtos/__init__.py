@@ -4,7 +4,8 @@ from app.modules.metadata.dtos.update_metadata import (
     RelaxedUnifiedFilterSchema
 )
 from app.modules.metadata.dtos.metadata_out import (
-    YearRangeResponse, FileMetadataResponse, FaqMetadataResponse, MetadataSchemaResponse
+    YearRangeResponse, FileMetadataResponse, FaqMetadataResponse, MetadataSchemaResponse,
+    UnifiedFilterResponse,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "FileMetadataResponse",
     "FaqMetadataResponse",
     "MetadataSchemaResponse",
+    "UnifiedFilterResponse",
 ]

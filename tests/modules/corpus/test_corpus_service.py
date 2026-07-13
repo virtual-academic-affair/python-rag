@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 from app.modules.corpus.services.corpus_service import CorpusService, diff_links
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
-from app.modules.corpus.dtos import CorpusPayloadRef
+from app.modules.corpus.dtos.topic_out import CorpusFaqRefResponse, CorpusFileRefResponse
 from app.modules.metadata.models.value_objects import FaqMetadata, FileMetadata
 
 
@@ -49,6 +49,28 @@ async def test_fetch_allowed_ids_uses_domain_services():
     assert faq_ids == {"faq-1"}
     file_svc.find_ids_for_corpus.assert_awaited_once_with({"enrollment_year": {}}, "student")
     faq_svc.find_ids_for_corpus.assert_awaited_once_with({"enrollment_year": {}}, "student")
+
+
+@pytest.mark.asyncio
+async def test_backfill_does_not_require_existing_topic_catalog():
+    svc = CorpusService()
+    repo = MagicMock()
+    repo.reset_all_links = AsyncMock()
+    repo.assert_integrity = AsyncMock()
+    svc._repo = repo
+
+    file_query = MagicMock()
+    file_query.skip.return_value.limit.return_value.to_list = AsyncMock(return_value=[])
+    faq_query = MagicMock()
+    faq_query.skip.return_value.limit.return_value.to_list = AsyncMock(return_value=[])
+    with patch("app.modules.files.models.file.FileDocument.find", return_value=file_query), patch(
+        "app.modules.faq.models.faq.FaqDocument.find", return_value=faq_query
+    ), patch("app.modules.rag.ingestion.corpus_linker.get_corpus_linker", return_value=MagicMock()):
+        await svc.backfill_corpus()
+
+    repo.reset_all_links.assert_awaited_once()
+    repo.assert_integrity.assert_awaited_once()
+    repo.get_all.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -105,8 +127,8 @@ async def test_build_tree_hydrates_direct_file_and_faq_names_in_batch():
     repo.get_all = AsyncMock(return_value=[root])
     svc._repo = repo
     svc._load_payload_name_maps = AsyncMock(return_value=(
-        {"file-1": CorpusPayloadRef(id="file-1", name="Quy chế đào tạo")},
-        {"faq-1": CorpusPayloadRef(id="faq-1", name="Điều kiện tốt nghiệp?")},
+        {"file-1": CorpusFileRefResponse(id="file-1", name="Quy chế đào tạo")},
+        {"faq-1": CorpusFaqRefResponse(id="faq-1", name="Điều kiện tốt nghiệp?")},
     ))
 
     response = await svc.build_tree()
@@ -136,8 +158,8 @@ async def test_build_tree_filters_payloads_counts_and_empty_branches_consistentl
     svc._repo = repo
     svc.fetch_allowed_ids = AsyncMock(return_value=({"file-match"}, {"faq-match"}))
     svc._load_payload_name_maps = AsyncMock(return_value=(
-        {"file-match": CorpusPayloadRef(id="file-match", name="File phù hợp")},
-        {"faq-match": CorpusPayloadRef(id="faq-match", name="FAQ phù hợp")},
+        {"file-match": CorpusFileRefResponse(id="file-match", name="File phù hợp")},
+        {"faq-match": CorpusFaqRefResponse(id="faq-match", name="FAQ phù hợp")},
     ))
     metadata_filter = {
         "enrollment_year": {"from_year": 2022, "to_year": 2022},
@@ -150,8 +172,6 @@ async def test_build_tree_filters_payloads_counts_and_empty_branches_consistentl
     assert response.total_nodes == 2
     assert response.total_root_nodes == 1
     tree_root = response.tree[0]
-    assert tree_root.subtree_file_ids == ["file-match"]
-    assert tree_root.subtree_faq_ids == ["faq-match"]
     assert tree_root.file_count == 1
     assert tree_root.faq_count == 1
     assert [child.node_key for child in tree_root.children] == ["matching"]
@@ -210,11 +230,11 @@ async def test_payload_name_maps_use_one_deduplicated_batch_per_payload_type():
     faq_svc.get_faqs_by_ids.assert_awaited_once_with(["faq-1", "faq-2"])
     assert file_payloads["file-1"].name == "File 1"
     assert file_payloads["file-1"].lecturer_only is True
-    assert file_payloads["file-1"].metadata["enrollmentYear"] == {"fromYear": 0, "toYear": 9999}
+    assert file_payloads["file-1"].metadata.enrollment_year.from_year == 0
     assert file_payloads["file-2"].updated_at == datetime(2026, 1, 3, tzinfo=timezone.utc)
     assert faq_payloads["faq-1"].name == "FAQ 1"
     assert faq_payloads["faq-1"].lecturer_only is True
-    assert faq_payloads["faq-2"].metadata["academicYear"] == {"fromYear": 0, "toYear": 9999}
+    assert faq_payloads["faq-2"].metadata.academic_year.to_year == 9999
 
 
 @pytest.mark.asyncio

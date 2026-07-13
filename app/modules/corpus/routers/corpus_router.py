@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.core.auth import JWTPayload
 from app.core.dependencies import require_admin
 from app.modules.corpus.dtos import (
     BackfillStartResponse,
-    CorpusNodeListResponse,
-    CorpusNodeResponse,
+    CorpusTopicListResponse,
+    CorpusTopicDetailResponse,
     CorpusPayloadTopicsResponse,
     CorpusStatsResponse,
     TopicCreateRequest,
@@ -20,6 +22,7 @@ from app.modules.corpus.dtos import (
 )
 from app.modules.corpus.services.corpus_job_service import get_corpus_job_service
 from app.modules.corpus.services.corpus_service import get_corpus_service
+from app.modules.metadata.dtos import UnifiedFilterSchema
 
 router = APIRouter(prefix="/corpus", tags=["Corpus"])
 
@@ -39,34 +42,35 @@ async def corpus_stats(_admin: JWTPayload = Depends(require_admin)):
 
 @router.get("/tree", response_model=CorpusTreeResponse, summary="Full corpus topic tree")
 async def corpus_tree(
-    enrollment_year: int | None = Query(None, alias="enrollmentYear", ge=0, le=9999),
-    academic_year: int | None = Query(None, alias="academicYear", ge=0, le=9999),
+    metadata_filter: str | None = Query(None, alias="metadataFilter", description="JSON metadata filter"),
     lecturer_only: bool | None = Query(None, alias="lecturerOnly"),
     _admin: JWTPayload = Depends(require_admin),
 ):
-    metadata_filter = {}
-    if enrollment_year is not None:
-        metadata_filter["enrollment_year"] = {
-            "from_year": enrollment_year,
-            "to_year": enrollment_year,
-        }
-    if academic_year is not None:
-        metadata_filter["academic_year"] = {
-            "from_year": academic_year,
-            "to_year": academic_year,
-        }
+    parsed_filter = None
+    if metadata_filter:
+        try:
+            raw_filter = json.loads(metadata_filter)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid metadataFilter JSON") from exc
+        try:
+            parsed_filter = UnifiedFilterSchema.model_validate(raw_filter).model_dump(
+                by_alias=False,
+                exclude_none=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid metadataFilter: {exc}") from exc
     return await get_corpus_service().build_tree(
-        metadata_filter=metadata_filter or None,
+        metadata_filter=parsed_filter,
         lecturer_only=lecturer_only,
     )
 
 
-@router.get("/topics", response_model=CorpusNodeListResponse, summary="List corpus topics")
+@router.get("/topics", response_model=CorpusTopicListResponse, summary="List corpus topics")
 async def list_topics(_admin: JWTPayload = Depends(require_admin)):
     return await get_corpus_service().list_topics()
 
 
-@router.get("/topics/{topicKey:path}", response_model=CorpusNodeResponse, summary="Get a corpus topic")
+@router.get("/topics/{topicKey:path}", response_model=CorpusTopicDetailResponse, summary="Get a corpus topic")
 async def get_topic(
     node_key: str = Path(..., alias="topicKey"),
     _admin: JWTPayload = Depends(require_admin),
@@ -123,7 +127,7 @@ async def update_faq_topics(
         raise _http_error(exc) from exc
 
 
-@router.post("/topics", response_model=CorpusNodeResponse, status_code=201, summary="Create a corpus topic")
+@router.post("/topics", response_model=CorpusTopicDetailResponse, status_code=201, summary="Create a corpus topic")
 async def create_topic(
     body: TopicCreateRequest,
     _admin: JWTPayload = Depends(require_admin),
@@ -134,7 +138,7 @@ async def create_topic(
         raise _http_error(exc) from exc
 
 
-@router.patch("/topics/{topicKey:path}", response_model=CorpusNodeResponse, summary="Update a corpus topic")
+@router.patch("/topics/{topicKey:path}", response_model=CorpusTopicDetailResponse, summary="Update a corpus topic")
 async def update_topic(
     body: TopicUpdateRequest,
     node_key: str = Path(..., alias="topicKey"),

@@ -3,7 +3,7 @@ from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.metadata.dtos.metadata_out import FileMetadataResponse
 
-class FileDetailResponse(BaseSchema):
+class FileResponseBase(BaseSchema):
     file_id: str
     original_filename: str
     display_name: str
@@ -15,9 +15,18 @@ class FileDetailResponse(BaseSchema):
     custom_metadata: Optional[FileMetadataResponse] = Field(default=None)
     file_url: Optional[str] = None
     markdown_file_url: Optional[str] = None
-    table_of_contents: List[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+
+class FileListItemResponse(FileResponseBase):
+    """Compact file representation used by active and trash list APIs."""
+
+
+class FileDetailResponse(FileResponseBase):
+    table_of_contents: List[str] = Field(default_factory=list)
 
 class BulkDeleteResponse(BaseSchema):
     deleted_count: int

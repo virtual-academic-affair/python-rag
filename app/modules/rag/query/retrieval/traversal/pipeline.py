@@ -48,7 +48,7 @@ async def run_corpus_traversal_pipeline(
         trace_id,
         result.status,
         [f"{item.node_key}:{item.scope}" for item in result.selected_topics],
-        result.traversal_node_keys,
+        result.expanded_node_keys,
         result.inspected_node_keys,
         len(result.file_candidates),
         len(result.faq_candidates),
