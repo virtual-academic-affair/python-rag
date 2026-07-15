@@ -676,7 +676,7 @@ PHÂN HỆ METADATA (Hardened):
 
 PHÂN HỆ CORPUS:
 - GET /api/corpus/stats         : Thống kê Corpus Tree theo node/root node và direct links.
-- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, typed metadata, lecturerOnly và updatedAt. Raw/subtree ID arrays và các trường tree suy ra được không được trả về. Nhận `metadataFilter` JSON (cùng format List FAQ/File) và `lecturerOnly`; khi lọc, counts được tính lại và nhánh rỗng bị ẩn.
+- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, typed metadata, lecturerOnly và updatedAt. File ref có thêm originalFilename để FE lấy đuôi file. Raw/subtree ID arrays và các trường tree suy ra được không được trả về. Nhận `metadataFilter` JSON (cùng format List FAQ/File) và `lecturerOnly`; khi lọc, counts được tính lại và nhánh rỗng bị ẩn.
 - GET /api/corpus/topics        : List topic dạng flat, chỉ gồm identity/parent/counts.
 - GET /api/corpus/topics/{topicKey} : Chi tiết topic, gồm childKeys và direct payload refs.
 - GET/PUT /api/corpus/files/{fileId}/topics : Xem hoặc thay thế topic assignments của file.

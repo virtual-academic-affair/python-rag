@@ -1041,7 +1041,8 @@ CORPUS SHAPES (tất cả endpoint Corpus yêu cầu role ADMIN):
     "directFiles":[CorpusFileRef], "directFaqs":[CorpusFaqRef] }
 
   CorpusFileRef:
-  { "id":"...", "name":"Quy chế đào tạo.pdf", "metadata":{
+  { "id":"...", "name":"Quy chế đào tạo", "originalFilename":"quy_che.pdf",
+    "metadata":{
       "enrollmentYear":{"fromYear":2022,"toYear":2022},
       "academicYear":{"fromYear":2024,"toYear":2025}, "type":"cong_van" },
     "lecturerOnly":false, "updatedAt":"ISO Date" }

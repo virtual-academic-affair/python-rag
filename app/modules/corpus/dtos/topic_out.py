@@ -11,6 +11,7 @@ from app.modules.metadata.dtos import FaqMetadataResponse, FileMetadataResponse
 class CorpusFileRefResponse(BaseSchema):
     id: str
     name: str = ""
+    original_filename: str = ""
     metadata: FileMetadataResponse | None = None
     lecturer_only: bool = False
     updated_at: datetime | None = None

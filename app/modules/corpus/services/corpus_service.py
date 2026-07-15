@@ -130,6 +130,7 @@ class CorpusService:
                 str(file.id): CorpusFileRefResponse(
                     id=str(file.id),
                     name=file.display_name or file.original_filename or "",
+                    original_filename=file.original_filename or "",
                     metadata=(
                         FileMetadataResponse.from_model(file.custom_metadata)
                         if file.custom_metadata
