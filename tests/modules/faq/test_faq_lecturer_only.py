@@ -173,6 +173,40 @@ async def test_list_faqs_exclude_lecturer_only_adds_condition():
     assert captured["metadata_filter"] == {"lecturer_only": {"$ne": True}}
 
 
+async def test_list_faqs_lecturer_only_filter_for_privileged():
+    svc = FaqService.__new__(FaqService)
+    captured = {}
+
+    async def mock_list(metadata_filter=None, search_text=None, skip=0, limit=20):
+        captured["metadata_filter"] = metadata_filter
+        return [], 0
+
+    repo = MagicMock()
+    repo.list_faqs = mock_list
+    svc._faq_repo = repo
+
+    await svc.list_faqs(lecturer_only=True)
+    assert captured["metadata_filter"] == {"lecturer_only": True}
+
+    await svc.list_faqs(exclude_lecturer_only=True, lecturer_only=True)
+    assert captured["metadata_filter"] == {"lecturer_only": {"$ne": True}}
+
+
+async def test_list_deleted_faqs_lecturer_only_filter():
+    svc = FaqService.__new__(FaqService)
+    captured = {}
+
+    async def mock_list(metadata_filter=None, search_text=None, skip=0, limit=20):
+        captured["metadata_filter"] = metadata_filter
+        return [], 0
+
+    repo = MagicMock()
+    repo.list_deleted_faqs = mock_list
+    svc._faq_repo = repo
+
+    await svc.list_deleted_faqs(lecturer_only=False)
+    assert captured["metadata_filter"] == {"lecturer_only": False}
+
 async def test_answer_from_faq_catalog_always_filters_lecturer_only():
     """Đường FAQ answer debug dùng catalog sinh viên → luôn ẩn FAQ lecturer_only."""
     svc = FaqService.__new__(FaqService)

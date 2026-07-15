@@ -693,14 +693,17 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 │ MÔ TẢ: Lấy danh sách các FAQ đang hoạt động có hỗ trợ filter và phân trang.  │
 │        Sử dụng Native MongoDB Full-Text Search (FTS) khi có tham số `search`.│
 │                                                                              │
-│ REQUEST QUERY: ?metadataFilter={"academicYear":{"fromYear":2024}}&search=...&page=1&limit=20 │
+│ REQUEST QUERY: ?metadataFilter={"academicYear":{"fromYear":2024}}&lecturerOnly=false&search=...&page=1&limit=20 │
 │   - metadataFilter: JSON string (optional) - VD: {"enrollmentYear": {"fromYear": 2024}, "type": ["ctdt"]} │
+│   - lecturerOnly: bool optional — admin/lecture lọc chính xác true|false     │
 │   - search: string (optional) - Tìm kiếm Full-Text (Mềm dẻo, không cần ngoặc) │
 │   - page/limit: Phân trang (mặc định 1/20)                                   │
 │                                                                              │
 │ PHÂN QUYỀN THEO ROLE (tự động — không cần tham số):                          │
 │   - admin / lecture : Thấy toàn bộ FAQ (kể cả lecturerOnly=true).            │
+│     Có thể lọc chính xác bằng query lecturerOnly=true|false.                 │
 │   - student         : Tự động ẩn mọi FAQ có lecturerOnly=true.               │
+│     Truyền lecturerOnly=true vẫn bị ép lecturerOnly≠true.                    │
 │                                                                              │
 │ RESPONSE: { "items": [FaqResponse], "total": 10, "page": 1, "limit": 20 }    │
 │                                                                              │
@@ -711,6 +714,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 │      - Sắp xếp kết quả theo độ liên quan (textScore) thay vì thời gian.      │
 │   3. Nếu không có `search`: Truy vấn thông thường, sắp xếp theo LIFO.        │
 │   4. Nếu role không phải admin/lecture: thêm điều kiện lecturerOnly≠true.    │
+│      Ngược lại, nếu có lecturerOnly query thì lọc đúng giá trị đó.           │
 │   5. Trả về danh sách FAQ và tổng số lượng.                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -774,7 +778,8 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ GET /api/faqs/trash               [🔒 ADMIN]                                  │
-│ MÔ TẢ: List FAQ đã xóa mềm; hỗ trợ metadataFilter, search, page và limit.   │
+│ MÔ TẢ: List FAQ đã xóa mềm; hỗ trợ metadataFilter, lecturerOnly, search,     │
+│        page và limit.                                                        │
 │ RESPONSE: FaqListResponse với deletedAt/deletedBy.                           │
 └──────────────────────────────────────────────────────────────────────────────┘
 

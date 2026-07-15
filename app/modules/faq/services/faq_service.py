@@ -299,13 +299,17 @@ class FaqService:
         page: int = 1,
         limit: int = 20,
         exclude_lecturer_only: bool = False,
+        lecturer_only: Optional[bool] = None,
     ) -> PagedResult[FaqDocument]:
         mongo_filter = None
         if metadata_filter:
             builder = get_filter_builder()
             mongo_filter = await builder.build_mongo_filter(metadata_filter, mongo_prefix="metadata_filter")
         if exclude_lecturer_only:
+            # Student (và role không privileged): luôn ẩn lecturer_only, kể cả khi client gửi lecturerOnly=true.
             mongo_filter = {**(mongo_filter or {}), "lecturer_only": {"$ne": True}}
+        elif lecturer_only is not None:
+            mongo_filter = {**(mongo_filter or {}), "lecturer_only": lecturer_only}
 
         items, total = await self._faq_repo.list_faqs(
             metadata_filter=mongo_filter,
@@ -321,6 +325,7 @@ class FaqService:
         search: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
+        lecturer_only: Optional[bool] = None,
     ) -> PagedResult[FaqDocument]:
         mongo_filter = None
         if metadata_filter:
@@ -328,6 +333,8 @@ class FaqService:
                 metadata_filter,
                 mongo_prefix="metadata_filter",
             )
+        if lecturer_only is not None:
+            mongo_filter = {**(mongo_filter or {}), "lecturer_only": lecturer_only}
         items, total = await self._faq_repo.list_deleted_faqs(
             metadata_filter=mongo_filter,
             search_text=remove_accents(search) if search else None,

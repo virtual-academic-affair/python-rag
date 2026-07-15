@@ -38,6 +38,7 @@ async def list_faqs(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter", description="Filter by metadata (JSON string), e.g. {'academic_year': ['2024-2025']}"),
+    lecturer_only: Optional[bool] = Query(None, alias="lecturerOnly", description="Filter by lecturer-only visibility"),
     search: Optional[str] = Query(None, description="Search by question text"),
     user: JWTPayload = Depends(require_auth),
     faq_svc: FaqService = Depends(get_faq_service)
@@ -54,12 +55,14 @@ async def list_faqs(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid metadataFilter JSON")
 
+    privileged = user.role in ("admin", "lecture")
     result = await faq_svc.list_faqs(
         metadata_filter=meta,
         search=search,
         page=page,
         limit=limit,
-        exclude_lecturer_only=user.role not in ("admin", "lecture"),
+        exclude_lecturer_only=not privileged,
+        lecturer_only=lecturer_only if privileged else None,
     )
     return FaqListResponse(
         items=[FaqResponse.from_document(item) for item in result.items],
@@ -99,6 +102,7 @@ async def list_deleted_faqs(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     metadata_filter: Optional[str] = Query(None, alias="metadataFilter"),
+    lecturer_only: Optional[bool] = Query(None, alias="lecturerOnly"),
     search: Optional[str] = Query(None),
     admin: JWTPayload = Depends(require_admin),
     faq_svc: FaqService = Depends(get_faq_service),
@@ -118,6 +122,7 @@ async def list_deleted_faqs(
         search=search,
         page=page,
         limit=limit,
+        lecturer_only=lecturer_only,
     )
     return FaqListResponse(
         items=[FaqResponse.from_document(item) for item in result.items],
