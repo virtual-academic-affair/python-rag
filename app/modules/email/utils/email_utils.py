@@ -2,31 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-import re
 from typing import Any, Optional
 
-from langchain_core.prompts import ChatPromptTemplate
-from app.integrations.llm.gemini import GeminiPromptChain, chain_prompt, GeminiGenAIChat
 from app.modules.email.models.email_types import InquiryFilters
-from app.utils.text_utils import remove_accents
-from app.utils.json_utils import parse_json_safely
-from app.utils.retry import async_retry
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
-
-logger = logging.getLogger(__name__)
-
-async def extract_structured_data(
-    llm: GeminiGenAIChat,
-    prompt_template: ChatPromptTemplate,
-    inputs: dict[str, Any],
-    repair_json: bool = True
-) -> dict[str, Any]:
-    """Helper to run a prompt chain and extract valid JSON from the response."""
-    chain = chain_prompt(prompt_template, llm)
-    result = await async_retry(chain.ainvoke, inputs)
-    raw_content = result.content or ""
-    return parse_json_safely(raw_content, repair=repair_json)
 
 
 async def extract_inquiry_filters(

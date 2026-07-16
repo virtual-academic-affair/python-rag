@@ -39,12 +39,7 @@ class PageIndexClient:
     A client for indexing and retrieving document content.
     Flow: index() -> get_document() / get_document_structure() / get_page_content()
     """
-    def __init__(self, api_key: str = None, model: str = None, retrieve_model: str = None, workspace: str = None):
-        if api_key:
-            os.environ["OPENAI_API_KEY"] = api_key
-            os.environ["GOOGLE_API_KEY"] = api_key
-        elif not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
+    def __init__(self, model: str = None, retrieve_model: str = None, workspace: str = None):
         self.workspace = Path(workspace).expanduser() if workspace else None
         overrides = {}
         if model:
@@ -364,13 +359,8 @@ _page_index_client_instance = None
 def get_page_index_client():
     global _page_index_client_instance
     if _page_index_client_instance is None:
-        m = settings.GEMINI_MODEL
-        if "/" not in m:
-            m = f"gemini/{m}"
-        
         _page_index_client_instance = PageIndexClient(
-            api_key=settings.GOOGLE_API_KEY,
-            model=m,
+            model=settings.LLM_MODEL,
             workspace=settings.PAGEINDEX_WORKSPACE
         )
     return _page_index_client_instance

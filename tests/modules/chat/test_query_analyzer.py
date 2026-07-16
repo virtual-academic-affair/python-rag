@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.modules.chat.dtos import ChatHistoryItem
+from app.integrations.llm.contracts import LLMResponse
 from app.modules.rag.query.analyzer.chat_query_analyzer_service import (
     GENERATE_REPLY_SYSTEM_PROMPT,
     ChatQueryAnalyzer,
@@ -16,6 +17,14 @@ def _history(count: int = 8):
         ChatHistoryItem(role="user" if i % 2 == 0 else "assistant", content=f"message-{i}")
         for i in range(count)
     ]
+
+
+def _llm_response(text: str) -> LLMResponse:
+    return LLMResponse(
+        text=text,
+        tool_calls=[],
+        assistant_message={"role": "assistant", "content": text},
+    )
 
 
 @pytest.mark.asyncio
@@ -30,14 +39,12 @@ def _history(count: int = 8):
     ],
 )
 async def test_analyze_query_normalizes_needs_rag(raw_value, expected):
-    analyzer = ChatQueryAnalyzer()
-    retry_mock = AsyncMock(return_value=SimpleNamespace(
-        text=json.dumps({"needs_rag": raw_value, "effective_question": "q", "metadata_filter": None}),
-        usage_metadata=None,
-    ))
+    gateway = SimpleNamespace(complete=AsyncMock(return_value=_llm_response(
+        json.dumps({"needs_rag": raw_value, "effective_question": "q", "metadata_filter": None})
+    )))
+    analyzer = ChatQueryAnalyzer(llm_gateway=gateway)
 
-    with patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.async_retry", retry_mock), \
-        patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.extract_metadata_from_text", AsyncMock(return_value=None)):
+    with patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.extract_metadata_from_text", AsyncMock(return_value=None)):
         result = await analyzer.analyze_query("q", [])
 
     assert result.needs_rag is expected
@@ -45,17 +52,15 @@ async def test_analyze_query_normalizes_needs_rag(raw_value, expected):
 
 @pytest.mark.asyncio
 async def test_analyzer_prompts_only_use_last_six_history_items():
-    analyzer = ChatQueryAnalyzer()
-    retry_mock = AsyncMock(return_value=SimpleNamespace(
-        text='{"needs_rag": true, "effective_question": "q", "metadata_filter": null}',
-        usage_metadata=None,
-    ))
+    gateway = SimpleNamespace(complete=AsyncMock(return_value=_llm_response(
+        '{"needs_rag": true, "effective_question": "q", "metadata_filter": null}'
+    )))
+    analyzer = ChatQueryAnalyzer(llm_gateway=gateway)
 
-    with patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.async_retry", retry_mock), \
-        patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.extract_metadata_from_text", AsyncMock(return_value=None)):
+    with patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.extract_metadata_from_text", AsyncMock(return_value=None)):
         await analyzer.analyze_query("q", _history())
 
-    prompt = retry_mock.call_args.kwargs["contents"][0]
+    prompt = gateway.complete.await_args.kwargs["messages"][1]["content"]
     assert "message-0" not in prompt
     assert "message-1" not in prompt
     assert "message-2" in prompt
@@ -64,16 +69,15 @@ async def test_analyzer_prompts_only_use_last_six_history_items():
 
 @pytest.mark.asyncio
 async def test_direct_reply_prompt_only_uses_last_six_history_items():
-    analyzer = ChatQueryAnalyzer()
-    retry_mock = AsyncMock(return_value=SimpleNamespace(text="ok", usage_metadata=None))
+    gateway = SimpleNamespace(complete=AsyncMock(return_value=_llm_response("ok")))
+    analyzer = ChatQueryAnalyzer(llm_gateway=gateway)
 
-    with patch("app.modules.rag.query.analyzer.chat_query_analyzer_service.async_retry", retry_mock):
-        answer, _usage = await analyzer.generate_reply("q", _history())
+    answer, _usage = await analyzer.generate_reply("q", _history())
 
-    prompt = retry_mock.call_args.kwargs["contents"][0]
-    config = retry_mock.call_args.kwargs["config"]
+    messages = gateway.complete.await_args.kwargs["messages"]
+    prompt = messages[1]["content"]
     assert answer == "ok"
-    assert config.system_instruction == GENERATE_REPLY_SYSTEM_PROMPT
+    assert messages[0] == {"role": "system", "content": GENERATE_REPLY_SYSTEM_PROMPT}
     assert GENERATE_REPLY_SYSTEM_PROMPT not in prompt
     assert "message-0" not in prompt
     assert "message-1" not in prompt

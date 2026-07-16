@@ -24,19 +24,20 @@ def test_faq_answer_prompt_rejects_partial_multi_intent_matches():
         ],
     )
 
-    assert "DANH SÁCH FAQ" in prompt
+    assert "FAQ LIST" in prompt
     assert "faq1" in prompt
-    assert "nhiều ý độc lập" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
-    assert "TOÀN BỘ câu hỏi" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "multiple independent intents" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "resolve the entire question" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
     assert '{"answer": null}' in CHAT_FAQ_ANSWER_SYSTEM_PROMPT
 
 
 def test_faq_prompts_share_base_rules_and_specialize_by_channel():
-    assert "không dùng câu chào" in CHAT_FAQ_ANSWER_SYSTEM_PROMPT.lower()
-    assert 'xưng là "chúng tôi"' in CHAT_FAQ_ANSWER_SYSTEM_PROMPT
-    assert "Trả lời trực tiếp câu hỏi đã chuẩn hóa" in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "do not begin with a greeting" in CHAT_FAQ_ANSWER_SYSTEM_PROMPT.lower()
+    assert "first-person plural voice" in CHAT_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "answer the normalized question directly" in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT.lower()
     assert "email" not in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT.lower()
-    assert '"Phòng Giáo vụ" hoặc "chúng tôi"' in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "academic affairs office" in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT.lower()
+    assert "vietnamese answer" in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT.lower()
     assert CHAT_FAQ_ANSWER_SYSTEM_PROMPT != EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
 
 

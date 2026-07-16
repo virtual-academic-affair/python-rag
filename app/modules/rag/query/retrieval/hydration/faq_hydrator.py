@@ -51,11 +51,11 @@ def build_faq_context(faq_docs: list) -> str:
     if not faq_docs:
         return ""
     faq_parts = [
-        f"**Câu hỏi liên quan:** {f.question}\n**Trả lời tham khảo:** {f.answer_markdown}"
+        f"**Related question:** {f.question}\n**Supporting answer:** {f.answer_markdown}"
         for f in faq_docs
     ]
     return (
-        "## Ngữ cảnh bổ sung từ FAQ (tham khảo khi cần đọc thêm tài liệu):\n\n"
+        "## Supplemental FAQ context for document research:\n\n"
         + "\n\n---\n\n".join(faq_parts)
         + "\n\n"
     )

@@ -19,10 +19,6 @@ from types import SimpleNamespace as config
 
 from app.core.config import settings
 
-# Backward compatibility: support CHATGPT_API_KEY as alias for OPENAI_API_KEY
-if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
-    os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
-
 litellm.drop_params = True
 
 def count_tokens(text, model=None):
@@ -41,6 +37,7 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
             response = litellm.completion(
                 model=model,
                 messages=messages,
+                api_key=settings.LLM_API_KEY,
                 temperature=0,
             )
             content = response.choices[0].message.content
@@ -71,6 +68,7 @@ async def llm_acompletion(model, prompt):
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
+                api_key=settings.LLM_API_KEY,
                 temperature=0,
             )
             return response.choices[0].message.content
@@ -578,11 +576,11 @@ def add_node_text_with_labels(node, pdf_pages):
 
 
 async def generate_node_summary(node, model=None):
-    prompt = f"""Bạn được cung cấp một phần của tài liệu. Nhiệm vụ của bạn là tóm tắt nội dung chính của phần tài liệu này.
+    prompt = f"""You are given one section of a document. Summarize its main content in Vietnamese.
 
-    Nội dung phần tài liệu: {node['text']}
+    Document section: {node['text']}
     
-    Trả về trực tiếp phần mô tả, không kèm theo bất kỳ nội dung nào khác.
+    Return only the Vietnamese summary and no other text.
     """
     response = await llm_acompletion(model, prompt)
     return response
@@ -622,12 +620,12 @@ def create_clean_structure_for_description(structure):
 
 
 def generate_doc_description(structure, model=None):
-    prompt = f"""Bạn là chuyên gia tạo mô tả cho tài liệu học thuật.
-    Bạn được cung cấp cấu trúc mục lục của một tài liệu. Nhiệm vụ của bạn là tạo ra một câu mô tả ngắn gọn cho tài liệu, giúp phân biệt tài liệu này với các tài liệu khác.
+    prompt = f"""You create concise descriptions for academic documents.
+    Given the document's table-of-contents structure, write one concise Vietnamese sentence that distinguishes this document from other documents.
         
-    Cấu trúc tài liệu: {structure}
+    Document structure: {structure}
     
-    Trả về trực tiếp phần mô tả bằng tiếng Việt, không kèm theo bất kỳ nội dung nào khác.
+    Return only the Vietnamese description and no other text.
     """
     response = llm_completion(model, prompt)
     return response
@@ -658,8 +656,8 @@ class ConfigLoader:
         # We ignore default_path and use global settings
         self.settings = settings
         self._default_dict = {
-            "model": settings.PAGEINDEX_MODEL,
-            "retrieve_model": settings.PAGEINDEX_RETRIEVE_MODEL or settings.PAGEINDEX_MODEL,
+            "model": settings.LLM_MODEL,
+            "retrieve_model": settings.LLM_MODEL,
             "toc_check_page_num": settings.PAGEINDEX_TOC_CHECK_PAGE_NUM,
             "max_page_num_each_node": settings.PAGEINDEX_MAX_PAGE_NUM_EACH_NODE,
             "max_token_num_each_node": settings.PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE,

@@ -35,10 +35,10 @@ async def test_tools_build_filtered_snapshot_expand_one_level_and_select_scope()
 
     expand, _inspect, select, _no_match = build_traversal_tools(session)
 
-    children = await expand("root")
+    children = await expand.handler("root")
     assert [item["nodeKey"] for item in children["topics"]] == ["child1"]
 
-    selected = await select([{"node_key": "child1", "scope": "direct"}])
+    selected = await select.handler([{"node_key": "child1", "scope": "direct"}])
     assert selected["status"] == "selected"
     assert selected["totalFileCandidates"] == 1
 
@@ -52,9 +52,9 @@ async def test_tools_reject_unrevealed_or_overlapping_selection():
     session = TraversalSession(snapshot=snapshot, revealed_node_keys={"root"})
     expand, _inspect, select, _no_match = build_traversal_tools(session)
 
-    assert (await expand("child"))["status"] == "invalid"
-    await expand("root")
-    result = await select([
+    assert (await expand.handler("child"))["status"] == "invalid"
+    await expand.handler("root")
+    result = await select.handler([
         {"node_key": "root", "scope": "subtree"},
         {"node_key": "child", "scope": "direct"},
     ])
@@ -86,7 +86,9 @@ def test_inspect_topic_does_not_expose_sample_limit_to_agent(include_reasoning):
         include_reasoning=include_reasoning,
     )
 
-    assert "sample_limit" not in inspect.signature(inspect_topic).parameters
+    assert "sample_limit" not in inspect.signature(inspect_topic.handler).parameters
+    assert "sample_limit" not in inspect_topic.parameters["properties"]
+    assert ("reasoning" in inspect_topic.parameters["required"]) is include_reasoning
 
 
 def test_select_activity_returns_one_step_with_all_node_keys():

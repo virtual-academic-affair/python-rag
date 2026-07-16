@@ -70,17 +70,10 @@ pyyaml==6.0.3
 # LLM FRAMEWORK & RAG
 # ====================================
 
-# LangChain (prompt templates)
-langchain==1.2.10
-langchain-core==1.2.19
-langchain-community==0.4.1
-langchain-google-genai==4.2.1
-langchain-text-splitters==1.1.1
-
 # LlamaParse (Sprint 1 ingestion)
 llama-parse==0.5.19
 
-# LiteLLM (PageIndex / Agent Reasoning)
+# LiteLLM (application LLM gateway)
 litellm==1.83.4
 
 # Redis for shared caching

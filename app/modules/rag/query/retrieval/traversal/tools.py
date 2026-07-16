@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any
 
+from app.integrations.llm.contracts import LLMTool
 from app.modules.rag.query.retrieval.traversal.contracts import TraversalSession
 from app.modules.rag.query.retrieval.traversal.runtime.inspection import inspect_samples
 from app.modules.rag.query.retrieval.traversal.runtime.presentation import node_payload
@@ -15,7 +16,7 @@ def build_traversal_tools(
     session: TraversalSession,
     *,
     include_reasoning: bool = False,
-) -> list[Callable]:
+) -> list[LLMTool]:
     """Build the agent-callable Corpus traversal tools for one session."""
 
     async def _expand_topic(node_key: str) -> dict[str, Any]:
@@ -92,4 +93,80 @@ def build_traversal_tools(
         logger.info("[RAG][%s][traversal.tool.no_match] reason=%r", session.snapshot.trace_id, str(reason)[:300])
         return {"status": "no_match", "reason": str(reason or "agent found no relevant topic")}
 
-    return [expand_topic, inspect_topic, select_topics, select_no_match]
+    reasoning_property = {
+        "reasoning": {
+            "type": "string",
+            "description": "One short Vietnamese sentence, at most 500 characters, explaining the current decision.",
+        }
+    } if include_reasoning else {}
+    reasoning_required = ["reasoning"] if include_reasoning else []
+
+    return [
+        LLMTool(
+            name="expand_topic",
+            description="Reveal one child level of a previously returned topic.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "node_key": {"type": "string"},
+                    **reasoning_property,
+                },
+                "required": ["node_key", *reasoning_required],
+                "additionalProperties": False,
+            },
+            handler=expand_topic,
+        ),
+        LLMTool(
+            name="inspect_topic",
+            description="Inspect authorized file and FAQ samples for a previously returned topic.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "node_key": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["direct", "subtree"]},
+                    **reasoning_property,
+                },
+                "required": ["node_key", *reasoning_required],
+                "additionalProperties": False,
+            },
+            handler=inspect_topic,
+        ),
+        LLMTool(
+            name="select_topics",
+            description="Finish traversal by selecting the relevant revealed topics.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "selections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "node_key": {"type": "string"},
+                                "scope": {"type": "string", "enum": ["direct", "subtree"]},
+                            },
+                            "required": ["node_key", "scope"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    **reasoning_property,
+                },
+                "required": ["selections", *reasoning_required],
+                "additionalProperties": False,
+            },
+            handler=select_topics,
+        ),
+        LLMTool(
+            name="select_no_match",
+            description="Finish traversal when none of the revealed topics is relevant.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string"},
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+            handler=select_no_match,
+        ),
+    ]

@@ -1304,7 +1304,8 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - Thời gian tồn tại (TTL): 60 phút kể từ lần truy cập cuối.
 - Background Task: Hệ thống tự động quét và dọn dẹp các tệp quá hạn mỗi 30 phút.
 - R2 Fallback: Nếu cache bị dọn dẹp, hệ thống sẽ tự động tải lại từ R2 khi có yêu cầu.
-- Agent Control: Số vòng lặp tối đa của RAG Agent được cấu hình qua `AGENT_MAX_TURNS` (mặc định: 7).
+- Agent Control: Số vòng lặp tối đa của PageIndex answering agent được cấu hình qua `PAGEINDEX_AGENT_MAX_TURNS` (mặc định: 7).
+- Application LLM calls đi qua in-process `LLMGateway` dùng LiteLLM; PageIndex giữ integration riêng nhưng dùng cùng `LLM_MODEL` và `LLM_API_KEY`. Model có provider prefix, ví dụ `gemini/gemini-2.5-flash` hoặc `openrouter/<model-id>`.
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
 LƯU Ý VỀ RETRIEVAL (CORPUS TREE ARCHITECTURE):

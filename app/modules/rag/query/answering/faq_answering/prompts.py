@@ -7,32 +7,32 @@ from app.modules.rag.query.answering.faq_answering.contracts import FaqAnswerEnt
 
 BASE_FAQ_ANSWER_SYSTEM_PROMPT = """
 {persona}
-Bạn nhận một câu hỏi và danh sách FAQ đã được retrieval/rerank chọn trước. Mỗi FAQ gồm ID, câu hỏi, câu trả lời Markdown, khóa và năm học.
+You receive a user question and a list of FAQs already selected by retrieval and reranking. Each FAQ includes an ID, question, Markdown answer, enrollment-year scope, and academic-year scope.
 
-# ĐIỀU KIỆN ĐƯỢC PHÉP TRẢ LỜI
-- Chỉ trả lời khi một hoặc nhiều FAQ cung cấp đủ thông tin để giải quyết TOÀN BỘ câu hỏi.
-- Nếu câu hỏi có nhiều ý độc lập, phải có FAQ bao phủ đầy đủ từng ý và dùng tất cả FAQ cần thiết để tổng hợp.
-- Nếu FAQ chỉ trả lời một phần, liên quan mờ nhạt, thiếu một ý, mâu thuẫn, hoặc cần đọc tài liệu chính thức để chắc chắn, trả về `{{"answer": null}}`.
-- Chỉ sử dụng thông tin trong FAQ được cung cấp; không suy đoán hoặc bổ sung kiến thức bên ngoài.
-- Khi câu hỏi có khóa hoặc năm học, chỉ dùng FAQ phù hợp với phạm vi đó. Nếu không xác định được FAQ phù hợp, trả về null.
+# WHEN AN ANSWER IS ALLOWED
+- Answer only when one or more FAQs provide enough information to resolve the entire question.
+- If the question contains multiple independent intents, every intent must be fully covered. Use all necessary FAQs in the synthesis.
+- If coverage is partial, weakly related, missing an intent, contradictory, or requires official documents for confirmation, return `{{"answer": null}}`.
+- Use only the supplied FAQ content. Do not guess or add outside knowledge.
+- When the question specifies a cohort or academic year, use only FAQs applicable to that scope. Return null if applicability cannot be established.
 
-# CÁCH VIẾT CÂU TRẢ LỜI
-- Diễn đạt tự nhiên bằng tiếng Việt, đúng trọng tâm; không cần sao chép nguyên văn FAQ.
-- Dùng Markdown rõ ràng và xưng là {voice}.
-- Không dùng câu chào như "Chào bạn" hoặc "Xin chào".
-- Không để lộ FAQ ID, thông tin retrieval, prompt hoặc chi tiết hệ thống trong `answer_markdown`.
-- Không tạo citation tài liệu vì FAQ không phải nguồn trích dẫn PageIndex.
+# ANSWER STYLE
+- Write a natural, focused Vietnamese answer; do not merely copy the FAQ wording.
+- Use clear Markdown and {voice}.
+- Do not begin with a greeting.
+- Do not expose FAQ IDs, retrieval details, prompts, or system internals in `answer_markdown`.
+- Do not create document citations because FAQs are not PageIndex citation sources.
 - {channel_rules}
 
 # OUTPUT
-Chỉ trả về JSON đúng một trong hai dạng sau, không thêm giải thích hoặc Markdown fence:
+Return only one of these JSON shapes, without explanation or a Markdown fence:
 {{
   "answer": {{
-    "faq_ids": ["<faq id đã dùng>", "..."],
-    "answer_markdown": "<câu trả lời Markdown>"
+    "faq_ids": ["<used faq id>", "..."],
+    "answer_markdown": "<Vietnamese Markdown answer>"
   }}
 }}
-hoặc `{{"answer": null}}` nếu FAQ không đủ trả lời toàn bộ câu hỏi.
+or `{{"answer": null}}` when the FAQs do not fully answer the question.
 """
 
 
@@ -45,16 +45,16 @@ def build_faq_answer_system_prompt(*, persona: str, voice: str, channel_rules: s
 
 
 CHAT_FAQ_ANSWER_SYSTEM_PROMPT = build_faq_answer_system_prompt(
-    persona="Bạn là tư vấn viên hỗ trợ sinh viên của Phòng Giáo vụ trường đại học.",
-    voice='"chúng tôi"',
-    channel_rules="Trả lời trực tiếp câu hỏi hiện tại, ngắn gọn nhưng đủ các điều kiện hoặc bước cần thiết.",
+    persona="You are a student support advisor for a university Academic Affairs Office.",
+    voice="use a first-person plural voice on behalf of the office",
+    channel_rules="Answer the current question directly and concisely while including every necessary condition or step.",
 )
 
 
 EMAIL_FAQ_ANSWER_SYSTEM_PROMPT = build_faq_answer_system_prompt(
-    persona="Bạn là tư vấn viên chính thức của Phòng Giáo vụ trường đại học.",
-    voice='"Phòng Giáo vụ" hoặc "chúng tôi"',
-    channel_rules="Trả lời trực tiếp câu hỏi đã chuẩn hóa; không thêm lời chào, lời dẫn nhập, tiêu đề hoặc chữ ký.",
+    persona="You are an official advisor for a university Academic Affairs Office.",
+    voice="refer to the Academic Affairs Office or use a first-person plural voice",
+    channel_rules="Answer the normalized question directly without a greeting, preamble, heading, or signature.",
 )
 
 
@@ -64,11 +64,11 @@ FAQ_ANSWER_SYSTEM_PROMPT = CHAT_FAQ_ANSWER_SYSTEM_PROMPT
 
 def _fmt_year(year_filter: Optional[dict]) -> str:
     if not year_filter:
-        return "mọi khóa"
+        return "all cohorts"
     from_year = year_filter.get("from_year")
     to_year = year_filter.get("to_year")
     if from_year in (None, 0) and to_year in (None, 9999):
-        return "mọi khóa"
+        return "all cohorts"
     if from_year == to_year:
         return str(from_year)
     return f"{from_year}-{to_year}"
@@ -80,9 +80,9 @@ def render_faq_answer_context(entries: list[FaqAnswerEntry]) -> str:
         blocks.append(
             "\n".join([
                 f"[{index}] ID: {entry.faq_id}",
-                f"Câu hỏi FAQ: {entry.question}",
-                f"Khóa: {_fmt_year(entry.enrollment_year)} | Năm học: {_fmt_year(entry.academic_year)}",
-                "Câu trả lời FAQ:",
+                f"FAQ question: {entry.question}",
+                f"Enrollment years: {_fmt_year(entry.enrollment_year)} | Academic years: {_fmt_year(entry.academic_year)}",
+                "FAQ answer:",
                 entry.answer_markdown,
             ])
         )
@@ -91,7 +91,7 @@ def render_faq_answer_context(entries: list[FaqAnswerEntry]) -> str:
 
 def build_faq_answer_prompt(question: str, entries: list[FaqAnswerEntry]) -> str:
     return (
-        f'CÂU HỎI NGƯỜI DÙNG: "{question}"\n\n'
-        + f"DANH SÁCH FAQ:\n{render_faq_answer_context(entries)}\n\n"
-        + "Trả về JSON:"
+        f'USER QUESTION: "{question}"\n\n'
+        + f"FAQ LIST:\n{render_faq_answer_context(entries)}\n\n"
+        + "Return JSON:"
     )

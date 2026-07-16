@@ -3,16 +3,10 @@ import json
 import logging
 import re
 
-from langchain_core.prompts import ChatPromptTemplate
-
 from app.modules.email.models.email_types import SystemLabel
 from app.core.config import settings
-from app.integrations.llm.gemini import (
-    build_classification_llm,
-    chain_prompt,
-    env_thinking_level,
-)
-from app.utils.retry import async_retry
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
+from app.integrations.llm.prompts import render_messages
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +44,13 @@ class LabelClassifierService:
         "bot mon",
     ]
 
-    def __init__(self):
-        self.llm = build_classification_llm(
-            api_key=settings.GOOGLE_API_KEY,
-            model=settings.GEMINI_MODEL,
-            temperature=0.1,
-            thinking_level=env_thinking_level(),
-        )
+    def __init__(self, llm_gateway: LLMGateway | None = None):
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
-        self.classification_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You are a senior email triage assistant for a university academic office.
+        self.classification_prompt = [
+            (
+                "system",
+                """You are a senior email triage assistant for a university academic office.
 Your task: assign ALL applicable labels to the email. An email may match ONE or BOTH labels:
 - classRegistration
 - inquiry
@@ -98,10 +86,10 @@ Output constraints:
 - No explanation, no markdown, no code fence, no extra words.
 - If uncertain, return ["inquiry"].
 """,
-                ),
-                (
-                    "human",
-                    """Classify the following email.
+            ),
+            (
+                "user",
+                """Classify the following email.
 
 [EMAIL_TITLE]
 {title}
@@ -109,15 +97,13 @@ Output constraints:
 [EMAIL_CONTENT]
 {content}
 """,
-                ),
-            ]
-        )
+            ),
+        ]
 
-        self.mixed_split_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You split a student email into 2 parts for downstream workflows:
+        self.mixed_split_prompt = [
+            (
+                "system",
+                """You split a student email into 2 parts for downstream workflows:
 - inquiry_content: the question / consultation / policy-clarification intent.
 - class_registration_content: the actionable registration intent (register/cancel/open/switch class).
 Return STRICT JSON ONLY with this schema:
@@ -145,18 +131,17 @@ Example:
 Input: "Em muốn xin đăng ký lớp Thiết kế phần mềm 22CLC1. Em muốn hỏi thêm môn thiết kế phần mềm này có phải tín chỉ bắt buộc của khoa Kỹ thuật phần mềm không ạ."
 Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có phải là tín chỉ bắt buộc của khoa Kỹ thuật phần mềm không ạ?","class_registration_content":"Em muốn xin đăng ký lớp Thiết kế phần mềm 22CLC1."}}
 """,
-                ),
-                (
-                    "human",
-                    """[EMAIL_TITLE]
+            ),
+            (
+                "user",
+                """[EMAIL_TITLE]
 {title}
 
 [EMAIL_CONTENT]
 {content}
 """,
-                ),
-            ]
-        )
+            ),
+        ]
 
     # Canonical ordering used everywhere a label list is emitted.
     _LABEL_ORDER = (
@@ -244,9 +229,14 @@ Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có p
     ) -> tuple[str, str]:
         """Use LLM to split mixed-intent email content into inquiry/class-registration parts."""
         try:
-            chain = chain_prompt(self.mixed_split_prompt, self.llm)
-            result = await async_retry(chain.ainvoke, {"title": title, "content": content})
-            raw = (result.content or "").strip()
+            messages = render_messages(self.mixed_split_prompt, title=title, content=content)
+            result = await self._llm_gateway.complete(
+                messages=messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
+            )
+            raw = (result.text or "").strip()
             logger.info("[MIXED SPLIT RESULT] raw=%r", raw)
 
             data = json.loads(raw)
@@ -272,7 +262,8 @@ Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có p
         [classRegistration, inquiry]. Defaults to [inquiry] on failure.
         """
         try:
-            rendered_messages = self.classification_prompt.format_messages(
+            rendered_messages = render_messages(
+                self.classification_prompt,
                 title=title,
                 content=content,
             )
@@ -281,13 +272,16 @@ Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có p
                 logger.info(
                     "[CLASSIFY PROMPT][%d][%s]\n%s",
                     idx,
-                    msg.__class__.__name__,
-                    getattr(msg, "content", ""),
+                    msg["role"],
+                    msg["content"],
                 )
 
-            chain = chain_prompt(self.classification_prompt, self.llm)
-            result = await async_retry(chain.ainvoke, {"title": title, "content": content})
-            raw_label = (result.content or "").strip()
+            result = await self._llm_gateway.complete(
+                messages=rendered_messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+            )
+            raw_label = (result.text or "").strip()
             logger.info("[CLASSIFY RESULT] raw_label=%r", raw_label)
 
             labels = self._normalize_labels(raw_label)
@@ -309,4 +303,3 @@ Output: {{"inquiry_content":"Môn Thiết kế phần mềm (lớp 22CLC1) có p
         except Exception as e:
             logger.error("Label classification failed: %s", str(e), exc_info=True)
             return [SystemLabel.Inquiry]
-
