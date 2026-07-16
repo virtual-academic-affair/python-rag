@@ -63,6 +63,13 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         filter_str = f" (Bộ lọc: {', '.join(filter_desc)})" if filter_desc else ""
         content = f"{analysis_desc}{filter_str}"
 
+    elif step_type == "corpus_tree":
+        return {
+            "type": "corpus_tree",
+            "content": step.get("content", ""),
+            "tree": step.get("tree") or [],
+        }
+
     elif step_type == "corpus_traversal":
         action = step.get("action")
         result = {

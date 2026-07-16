@@ -53,12 +53,13 @@ class ChatStreamService(ChatService):
                 yield json.dumps({**simplify_step(step), "done": False})
                 continue
             if event.get("type") == "_corpus_tree":
-                yield json.dumps({
+                step = {
                     "type": "corpus_tree",
                     "content": event.get("content") or "Đã tải cây chủ đề phù hợp.",
                     "tree": event.get("tree") or [],
-                    "done": False,
-                })
+                }
+                pipeline_steps.append(step)
+                yield json.dumps({**simplify_step(step), "done": False})
                 continue
             if event.get("type") == "_corpus_traversal":
                 step = event.get("step") or {}

@@ -14,6 +14,7 @@ from app.modules.rag.query.dtos import SourceCitation
 # Single source of truth for which pipeline step types are persisted to MongoDB.
 PERSISTED_STEP_TYPES = frozenset({
     "query_analysis",
+    "corpus_tree",
     "corpus_traversal",
     "faq_retrieval",
     "faq_answer",

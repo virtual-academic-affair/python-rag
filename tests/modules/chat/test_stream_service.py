@@ -57,6 +57,7 @@ async def test_chat_non_stream_returns_corpus_reasoning_without_persisting_it():
             "content": "Đã chọn các chủ đề: Tốt nghiệp, Ngoại ngữ.",
         },
     ]
+    assert "corpus_tree" in PERSISTED_STEP_TYPES
     assert "reasoning" not in PERSISTED_STEP_TYPES
 
 
@@ -232,6 +233,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
     final = rows[-1]
     assert final["done"] is True
     assert [step["type"] for step in final["steps"]].count("corpus_traversal") == 1
+    assert any(step.get("type") == "corpus_tree" and step.get("tree") for step in final["steps"])
     assert "document_read" in [step["type"] for step in final["steps"]]
     assert final["tokenUsage"] == {"promptTokens": 1, "completionTokens": 2, "totalTokens": 3}
     assert final["sources"][0]["fileId"] == "file-1"

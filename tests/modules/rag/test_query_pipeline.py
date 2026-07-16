@@ -265,6 +265,12 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
     release_traversal.set()
     remaining = [event async for event in stream]
     assert any(event.get("type") == "_pipeline_step" for event in remaining)
+    final = remaining[-1]
+    assert final["type"] == "_pipeline_result"
+    assert any(
+        step.get("type") == "corpus_tree" and step.get("tree")
+        for step in final["steps"]
+    )
 
 
 @pytest.mark.asyncio

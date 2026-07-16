@@ -266,6 +266,7 @@ class RagQueryPipeline:
                 if next_step_task in done:
                     step = next_step_task.result()
                     if step.get("type") == "corpus_tree":
+                        steps.append(step)
                         yield {
                             "type": "_corpus_tree",
                             "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
@@ -281,6 +282,7 @@ class RagQueryPipeline:
             while not traversal_steps.empty():
                 step = traversal_steps.get_nowait()
                 if step.get("type") == "corpus_tree":
+                    steps.append(step)
                     yield {
                         "type": "_corpus_tree",
                         "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
