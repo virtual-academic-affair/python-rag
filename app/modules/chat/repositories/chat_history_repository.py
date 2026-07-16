@@ -23,6 +23,26 @@ PERSISTED_STEP_TYPES = frozenset({
 })
 
 
+def _strip_corpus_tree_summaries(nodes: list[Any]) -> list[dict[str, Any]]:
+    """Drop summary from corpus_tree nodes before MongoDB persistence."""
+    sanitized: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        sanitized.append({
+            "nodeKey": node.get("nodeKey") or node.get("node_key"),
+            "title": node.get("title", ""),
+            "children": _strip_corpus_tree_summaries(node.get("children") or []),
+        })
+    return sanitized
+
+
+def _sanitize_persisted_step(step: dict[str, Any]) -> dict[str, Any]:
+    if step.get("type") != "corpus_tree":
+        return step
+    return {**step, "tree": _strip_corpus_tree_summaries(step.get("tree") or [])}
+
+
 class ChatHistoryRepository:
     """MongoDB repository for chat sessions and messages using Beanie ODM."""
 
@@ -104,7 +124,7 @@ class ChatHistoryRepository:
 
         # Enforce the persistence whitelist
         persisted_steps = [
-            s
+            _sanitize_persisted_step(s)
             for s in (steps or [])
             if isinstance(s, dict) and s.get("type") in PERSISTED_STEP_TYPES
         ]
