@@ -214,11 +214,8 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
     tree = next(row for row in rows if row.get("type") == "corpus_tree")
     assert tree["tree"][0]["nodeKey"] == "root"
     assert tree["content"] == "Đã tải cây chủ đề phù hợp."
-    query_analysis = next(row for row in rows if row.get("type") == "query_analysis" and "Đã phân tích" in row.get("content", ""))
-    assert query_analysis["content"] == (
-        'Đã phân tích thành câu hỏi tra cứu: "câu hỏi tra cứu đã chuẩn hóa". '
-        "(Bộ lọc: Khóa sinh viên: 2022)"
-    )
+    query_analysis = next(row for row in rows if row.get("type") == "query_analysis" and row.get("content"))
+    assert query_analysis["content"] == "câu hỏi tra cứu đã chuẩn hóa"
     assert "câu hỏi gốc" not in query_analysis["content"]
     assert any(row.get("type") == "corpus_traversal" for row in rows)
     traversal = next(row for row in rows if row.get("type") == "corpus_traversal")

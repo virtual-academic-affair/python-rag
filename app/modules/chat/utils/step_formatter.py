@@ -25,43 +25,8 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         return step
 
     if step_type == "query_analysis":
-        metadata_filter = step.get("metadata_filter")
         effective_question = str(step.get("effective_question") or "").strip()
-        analysis_desc = (
-            f'Đã phân tích thành câu hỏi tra cứu: "{effective_question}".'
-            if effective_question
-            else "Đã phân tích câu hỏi."
-        )
-
-        filter_desc = []
-        if metadata_filter:
-            if metadata_filter.get("enrollment_year"):
-                ey = metadata_filter["enrollment_year"]
-                if ey.get("from_year") == ey.get("to_year"):
-                    filter_desc.append(f"Khóa sinh viên: {ey.get('from_year')}")
-                else:
-                    filter_desc.append(f"Khóa sinh viên: {ey.get('from_year')}-{ey.get('to_year')}")
-            if metadata_filter.get("academic_year"):
-                ay = metadata_filter["academic_year"]
-                if ay.get("from_year") == ay.get("to_year"):
-                    filter_desc.append(f"Năm học: {ay.get('from_year')}")
-                else:
-                    filter_desc.append(f"Năm học: {ay.get('from_year')}-{ay.get('to_year')}")
-            if metadata_filter.get("type"):
-                t = metadata_filter["type"]
-                type_map = {
-                    "ctdt": "Chương trình đào tạo",
-                    "cong_van": "Công văn/Thông báo",
-                    "quyet_dinh": "Quyết định/Quy chế"
-                }
-                if isinstance(t, list):
-                    friendly_types = [type_map.get(x, x) for x in t if x]
-                    if friendly_types:
-                        filter_desc.append(f"Loại tài liệu: {', '.join(friendly_types)}")
-                elif isinstance(t, str):
-                    filter_desc.append(f"Loại tài liệu: {type_map.get(t, t)}")
-        filter_str = f" (Bộ lọc: {', '.join(filter_desc)})" if filter_desc else ""
-        content = f"{analysis_desc}{filter_str}"
+        content = effective_question or "Đã phân tích câu hỏi."
 
     elif step_type == "corpus_tree":
         return {
@@ -96,9 +61,7 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
     elif step_type == "faq_answer":
         questions = step.get("questions") or []
         if step.get("answered"):
-            if len(questions) == 1:
-                content = f"FAQ đã trả lời đầy đủ câu hỏi: '{questions[0]}'."
-            elif questions:
+            if len(questions) > 1:
                 content = f"{len(questions)} FAQ đã cùng trả lời đầy đủ câu hỏi."
             else:
                 content = "FAQ đã trả lời đầy đủ câu hỏi."
