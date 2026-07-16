@@ -223,6 +223,8 @@ async def run_corpus_traversal(
 
         history.append(types.Content(role="user", parts=tool_response_parts))
 
+    # Exhausting traversal turns is a normal no-match outcome. The session is
+    # created eagerly above because root topics are revealed without a tool call.
     traversal_result = TraversalResult(
         status="no_match",
         selected_topics=[],
