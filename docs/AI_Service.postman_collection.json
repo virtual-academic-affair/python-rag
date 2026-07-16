@@ -127,10 +127,10 @@
                 "query"
               ]
             },
-            "description": "Process a user question with Corpus Tree RAG traversal and return a complete answer. FAQ retrieval/answering runs only when traversal returns FAQ candidates; the response timeline otherwise proceeds to file retrieval and document reads.",
+            "description": "Process a user question with Corpus Tree RAG traversal and return a complete answer. Valid PageIndex citations are always rendered as Xem thêm tại links using DOCUMENT_VIEW_URL_PREFIX + fileId. FAQ retrieval/answering runs only when traversal returns FAQ candidates; the response timeline otherwise proceeds to file retrieval and document reads. The response includes draft-ready faqRecommendation, for example {\"effectiveQuestion\":\"Điều kiện tốt nghiệp?\",\"metadata\":{\"enrollmentYear\":{\"fromYear\":2022,\"toYear\":2022},\"academicYear\":{\"fromYear\":0,\"toYear\":9999}},\"lecturerOnly\":false}. lecturerOnly is true when any matched FAQ or PageIndex-accessed file is lecturer-only; direct replies return null. Public sources are unchanged.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\",\n  \"toRichText\": false\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"toRichText\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -156,10 +156,10 @@
                 "stream"
               ]
             },
-            "description": "Stream chat response with RAG using SSE. Corpus traversal activities are emitted in realtime as corpus_traversal steps; final steps use query_analysis, corpus_traversal, faq_retrieval, faq_answer, file_retrieval, and document_read.",
+            "description": "Stream chat response with RAG using SSE. Valid PageIndex citations are always rendered as Xem thêm tại links using DOCUMENT_VIEW_URL_PREFIX + fileId. After query_analysis, a node-only corpus_tree event with generic content is emitted once and is not persisted. Query analysis content shows the normalized effective question without separately repeating the original question. Corpus reasoning uses {type, content}; traversal uses {type, action, nodeKey/content} for expand/inspect and nodeKeys for select. Final persisted steps use query_analysis, corpus_traversal, faq_retrieval, faq_answer, file_retrieval, and document_read. The DONE event includes faqRecommendation with effectiveQuestion, full FAQ metadata ranges, and lecturerOnly derived only from matched FAQs or files actually accessed by PageIndex; it is persisted with the assistant message.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\",\n  \"resolveCitations\": false,\n  \"citationLinkType\": \"markdown\"\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp của trường là gì?\",\n  \"sessionId\": \"{{session_id}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

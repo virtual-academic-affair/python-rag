@@ -390,9 +390,6 @@ FILE LIST ITEM RESPONSE:
 │   {                                                                          │
 │     "question": "Quy trình xin thôi học?",                                   │
 │     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
-│     "resolveCitations": false,   ← Chuyển trích dẫn (^Tên mục) → link tải   │
-│     "citationLinkType": "markdown",  ← "markdown": link file .md bóc tách   │
-│                                      "original": link file gốc (PDF/DOCX)   │
 │     "toRichText": false          ← Chuyển Markdown trả về thành HTML         │
 │   }                                                                          │
 │                                                                              │
@@ -403,6 +400,14 @@ FILE LIST ITEM RESPONSE:
 │     "source": "llm",      ← "llm" | "faq" | "bypass"                        │
 │     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
 │     "steps": [ ... ],     ← Xem bảng PIPELINE STEPS bên dưới                │
+│     "faqRecommendation": {                                                  │
+│       "effectiveQuestion": "Quy trình xin thôi học?",                      │
+│       "metadata": {                                                         │
+│         "enrollmentYear": {"fromYear": 2022, "toYear": 2022},            │
+│         "academicYear": {"fromYear": 0, "toYear": 9999}                  │
+│       },                                                                      │
+│       "lecturerOnly": false                                                 │
+│     },                                                                        │
 │     "processingTimeMs": 2500                                                 │
 │   }                                                                          │
 │                                                                              │
@@ -415,8 +420,13 @@ FILE LIST ITEM RESPONSE:
 │      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
 │   4. Chạy shared RagQueryPipeline: retrieval Corpus Tree, Cohere rerank,     │
 │      FAQ answering bằng LLM, rồi PageIndex nếu FAQ chưa đủ.                  │
+│      Traversal hết giới hạn lượt được xử lý như no-match và trả thông báo    │
+│      không tìm thấy tài liệu, không trả lỗi 502.                              │
 │   5. Trả response chứa `sessionId` và danh sách steps xử lý chi tiết.         │
 │      Steps được lưu vào MongoDB và có thể truy xuất qua GET messages API.    │
+│   6. faqRecommendation dùng để FE prefill FAQ draft; `lecturerOnly=true`     │
+│      khi matched FAQ hoặc file PageIndex thực sự mở có lecturerOnly=true.    │
+│      Direct answer (`needsRag=false`) trả faqRecommendation=null.             │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -428,12 +438,13 @@ FILE LIST ITEM RESPONSE:
 │ 1. QUERY_ANALYSIS — Phân tích & chuẩn hóa câu hỏi (bước đầu tiên luôn có)   │
 │    {                                                                         │
 │      "type": "query_analysis",                                               │
-│      "content": "Phân tích câu hỏi: ..."                                     │
+│      "content": "Đã phân tích thành câu hỏi tra cứu: \"Điều kiện tốt nghiệp là gì?\"."│
 │    }                                                                         │
 │                                                                              │
 │ 2. CORPUS_TRAVERSAL — Một hành động duyệt cây Corpus của agent              │
-│    list roots, expand, inspect, select hoặc no-match; mỗi tool thành công   │
-│    sinh một step realtime.                                                    │
+│    expand/inspect: {type, action, nodeKey, content};                         │
+│    select: {type, action, nodeKeys, content}; no-match không có node key.   │
+│    Root topics được đưa thẳng vào prompt nên không có list-roots step.      │
 │                                                                              │
 │ 3. FAQ_RETRIEVAL / FAQ_ANSWER — FAQ được chọn và kết quả đủ/chưa đủ để trả lời.│
 │    Hai step này chỉ xuất hiện khi Corpus traversal có FAQ candidate.         │
@@ -445,10 +456,9 @@ FILE LIST ITEM RESPONSE:
 │ 6. TOOL_OUTPUT — Kết quả trả về thô của tool (Không lưu, không stream)      │
 │    Lưu ý: Bị loại bỏ hoàn toàn khỏi cả stream lẫn DB để tiết kiệm băng thông │
 │                                                                              │
-│ 7. REASONING — Suy luận tổng hợp của Agent (chỉ stream, không lưu DB)       │
-│    Nguồn: (a) part.thought nội bộ từ Gemini API, hoặc                        │
-│           (b) Status text từ service.py khi gọi tool (tiếng Việt thân thiện) │
-│           (c) Văn bản Agent tự viết trước thẻ <answer> theo system prompt    │
+│ 7. REASONING — Lý do hành động ngắn của Agent (không lưu DB)                │
+│    Corpus reasoning được trả trong non-stream steps và phát realtime ở      │
+│    stream; không phát raw Gemini thought/chain-of-thought.                   │
 │    Ví dụ: {"type": "reasoning",                                              │
 │            "content": "Đang tra cứu mục lục của 'Quy chế đào tạo ĐH 2021'...",│
 │            "done": false}                                                    │
@@ -457,7 +467,8 @@ FILE LIST ITEM RESPONSE:
 │    {"type": "text", "content": "Học phí CLC năm 2025 là...", "done": false} │
 │                                                                              │
 │ THỨ TỰ ĐIỂN HÌNH CỦA CÁC EVENT TRONG MỘT /stream REQUEST:                  │
-│   query_analysis → corpus_traversal × N → faq_retrieval → faq_answer        │
+│   query_analysis → corpus_tree → reasoning/corpus_traversal × N             │
+│   → faq_retrieval → faq_answer                                               │
 │   → text nếu FAQ đủ, hoặc file_retrieval → document_read × N                │
 │   → reasoning(kết luận) → text(s) → done                                    │
 │                                                                              │
@@ -472,20 +483,16 @@ FILE LIST ITEM RESPONSE:
 │ REQUEST BODY (JSON):                                                         │
 │   {                                                                          │
 │     "question": "...",                                                       │
-│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
-│     "resolveCitations": false,   ← Chuyển trích dẫn (^Tên mục) → link tải   │
-│     "citationLinkType": "markdown"   ← "markdown": link file .md bóc tách   │
-│                                         "original": link file gốc (PDF/...) │
+│     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f"                      │
 │   }                                                                          │
 │                                                                              │
 │ GHI CHÚ VỀ TRÍCH DẪN:                                                       │
 │   - Agent tự chèn marker `(^Tên mục)` vào câu trả lời (ví dụ:              │
 │     `(^Điều 5: Điều kiện tốt nghiệp)`).                                      │
-│   - resolveCitations=false (mặc định): marker giữ nguyên dạng text.         │
-│   - resolveCitations=true: marker được thay thế bằng link R2,     │
-│     dạng `(Xem thêm tại [Tên mục](https://r2.example.com/file.pdf))`.       │
-│   - citationLinkType quyết định link trỏ tới file bóc tách (.md) hay        │
-│     file gốc (PDF/DOCX). Mặc định "markdown" cho trải nghiệm đọc inline.    │
+│   - Citation hợp lệ luôn được thay bằng link document viewer dạng:          │
+│     `(Xem thêm tại [Tên mục](https://vaa.hcmus.app/?viewDocumentId={fileId}))`.│
+│   - Prefix document viewer được cấu hình bằng DOCUMENT_VIEW_URL_PREFIX.      │
+│   - Metadata sources vẫn giữ originalUrl và markdownUrl.                     │
 │                                                                              │
 │ RESPONSE (Event Stream - Server-Sent Events):                                │
 │   Mỗi event có dạng: data: {json}\n\n                                       │
@@ -493,17 +500,25 @@ FILE LIST ITEM RESPONSE:
 │   [1] data: {"type":"query_analysis","content":"Phân tích...","done":false}│
 │        ← Pending status của Query Analysis                                   │
 │   [2] data: {"type":"query_analysis",                                        │
-│              "content":"Phân tích câu hỏi: ... (Bộ lọc: Khóa 2022)","done":false}│
+│              "content":"Đã phân tích thành câu hỏi tra cứu: \"Điều kiện tốt nghiệp là gì?\". (Bộ lọc: Khóa sinh viên: 2022)","done":false}│
 │        ← Completed status của Query Analysis                                 │
 │                                                                              │
-│   [3] data: {"type":"corpus_traversal","content":"Đã mở chủ đề Đào tạo...","done":false}│
-│        ← Một Corpus agent tool call hoàn tất                                 │
-│   [4] data: {"type":"faq_retrieval","content":"Đã chọn FAQ liên quan...","done":false}│
+│   [3] data: {"type":"corpus_tree","content":"Đã tải cây chủ đề phù hợp.",│
+│              "tree":[{"nodeKey":"dao-tao",                               │
+│              "title":"Đào tạo","summary":"...","children":[]}],         │
+│              "done":false}                                                  │
+│        ← Cây topic đã lọc; chỉ stream một lần và không lưu vào steps        │
+│   [4] data: {"type":"reasoning","content":"Cần mở nhánh đào tạo.",       │
+│              "done":false}                                                  │
+│   [5] data: {"type":"corpus_traversal","action":"expand",               │
+│              "nodeKey":"dao-tao","content":"Đã mở chủ đề Đào tạo.",      │
+│              "done":false}                                                  │
+│   [6] data: {"type":"faq_retrieval","content":"Đã chọn FAQ liên quan...","done":false}│
 │                                                                              │
-│   [5A] data: {"type":"text","content":"...","done":false}                   │
+│   [7A] data: {"type":"text","content":"...","done":false}                   │
 │        ← Nếu FAQ đủ trả lời, pipeline stream answer FAQ rồi DONE source=faq  │
 │                                                                              │
-│   [5B] data: {"type":"file_retrieval","content":"Đã chọn tài liệu liên quan...","done":false}│
+│   [7B] data: {"type":"file_retrieval","content":"Đã chọn tài liệu liên quan...","done":false}│
 │                                                                              │
 │   [6] data: {"type":"document_read",                                         │
 │              "content":"Đang tra cứu cấu trúc mục lục của 'Quy chế...'",     │
@@ -523,17 +538,24 @@ FILE LIST ITEM RESPONSE:
 │                          {"type":"document_read","content":"..."}],          │
 │                 "tokenUsage":{"promptTokens":N,"completionTokens":N,         │
 │                               "totalTokens":N},                              │
+│                 "faqRecommendation":{"effectiveQuestion":"...",           │
+│                   "metadata":{"enrollmentYear":{"fromYear":0,"toYear":9999},│
+│                   "academicYear":{"fromYear":0,"toYear":9999}},             │
+│                   "lecturerOnly":false},                                     │
 │                 "processingTimeMs":1234}                                     │
 │        ← Event cuối: steps[] chứa các pipeline steps rút gọn (type + content)│
 │                                                                              │
 │ GHI CHÚ:                                                                     │
 │   - steps[] trong event DONE được lưu vào MongoDB, truy xuất qua GET msgs.  │
-│   - reasoning/text chỉ stream, KHÔNG lưu vào steps[].                        │
-│   - Mọi step trong steps[] và stream đều chỉ có 2 thuộc tính type và content.│
+│   - reasoning có thể trả ở non-stream hoặc stream nhưng KHÔNG lưu MongoDB.  │
+│   - corpus_tree chỉ stream, không xuất hiện trong DONE steps hay MongoDB.   │
+│   - corpus_traversal giữ action và nodeKey/nodeKeys ngoài type, content.    │
+│   - faqRecommendation chỉ có trong event DONE và được lưu cùng assistant.   │
+│   - Public sources không thêm lecturerOnly.                                  │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Xác thực JWT -> lấy `userId` và trích xuất `enrollmentYear` tự động.    │
 │   2. Load chat history và phân tích ngữ cảnh câu hỏi qua QueryAnalyzer.      │
-│   3. Phát query_analysis, rồi corpus_traversal realtime theo từng tool call.│
+│   3. Phát query_analysis, corpus_tree, rồi reasoning/traversal realtime.    │
 │   4. Nếu FAQ đủ trả lời: stream text và DONE source=faq.                    │
 │   5. Nếu cần tài liệu: phát file_retrieval và document_read từ PageIndex.    │
 │   6. Lưu structural steps vào MongoDB (chat_messages) khi stream kết thúc.  │
@@ -596,10 +618,19 @@ FILE LIST ITEM RESPONSE:
 │         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
 │         "steps": [                                                            │
 │           {"type": "query_analysis", "content": "Phân tích câu hỏi..."},      │
-│           {"type": "corpus_traversal", "content": "Đã chọn chủ đề liên quan..."},│
+│           {"type": "corpus_traversal", "action": "select",              │
+│            "nodeKeys": ["tot-nghiep"], "content": "Đã chọn chủ đề..."}, │
 │           {"type": "file_retrieval", "content": "Đã chọn 1 tài liệu liên quan..."},│
 │           {"type": "document_read", "content": "Đang đọc nội dung chi tiết..."}│
 │         ],                                                                    │
+│         "faqRecommendation": {                                               │
+│           "effectiveQuestion": "Học phí CLC là bao nhiêu?",                │
+│           "metadata": {                                                      │
+│             "enrollmentYear": {"fromYear": 0, "toYear": 9999},            │
+│             "academicYear": {"fromYear": 0, "toYear": 9999}               │
+│           },                                                                   │
+│           "lecturerOnly": false                                              │
+│         },                                                                     │
 │         "processingTimeMs": 2450,                                             │
 │         "createdAt": "2025-01-01T08:00:02"                                   │
 │       }                                                                       │
@@ -610,7 +641,8 @@ FILE LIST ITEM RESPONSE:
 │   3. Query `chat_messages` theo `sessionId + userId`.                         │
 │   4. Sort theo `sequence` tăng dần để giữ đúng thứ tự hội thoại.             │
 │   5. Mỗi message có `messageType` (`text` hoặc `thinking`) để FE render đúng.│
-│   6. Message assistant loại `text` chứa đầy đủ `steps[]`, `sources[]`.       │
+│   6. Message assistant loại `text` chứa `steps[]`, `sources[]` và             │
+│      `faqRecommendation`; message cũ chưa có field này trả null.              │
 │   7. Trả về messages + total.                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -1280,6 +1312,8 @@ LƯU Ý VỀ RETRIEVAL (CORPUS TREE ARCHITECTURE):
   Không dùng vector embedding hay Qdrant; file candidates được rerank bằng Cohere nếu bật config.
 - FAQ answering: LLM đọc nội dung FAQ liên quan và trả answer/null theo mức độ đủ bao phủ câu hỏi.
   Không dùng vector embedding hay Qdrant; FAQ docs cũng được rerank riêng bằng Cohere. Tuning qua COHERE_RERANK_* và FAQ_MATCHER_MAX_CATALOG.
+- Top-N sau rerank được cấu hình cố định bằng `COHERE_RERANK_FILE_TOP_N` và `COHERE_RERANK_FAQ_TOP_N`.
+- Sample của `inspect_topic` dùng `CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT`; agent không truyền được giới hạn này.
 
 Hoàn tất bản Đặc tả API chi tiết v3.0.0 (Vectorless Edition).
 --------------------------------------------------------------------------------

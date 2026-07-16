@@ -27,7 +27,7 @@ def build_pageindex_tools(candidate_files: List[dict], include_reasoning: bool =
             Get the hierarchical table of contents (structure) for a document. 
             Args:
                 file_id: The unique identifier of the file/document (or numeric index like '1').
-                reasoning: Brief explanation in Vietnamese (a few sentences) of why you need to inspect this document's structure now.
+                reasoning: One short Vietnamese sentence explaining why you need to inspect this document's structure now.
             """
             real_id = resolve_file_id(file_id)
             if real_id not in allow_ids:
@@ -45,7 +45,7 @@ def build_pageindex_tools(candidate_files: List[dict], include_reasoning: bool =
             Args:
                 file_id: The unique identifier of the file/document (or numeric index like '1').
                 pages: A string representing line ranges or page numbers (e.g., '10-20', '5,8').
-                reasoning: Brief explanation in Vietnamese (a few sentences) of why you need to read these pages now.
+                reasoning: One short Vietnamese sentence explaining why you need to read these pages now.
             """
             real_id = resolve_file_id(file_id)
             if real_id not in allow_ids:

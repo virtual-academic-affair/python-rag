@@ -67,8 +67,8 @@ async def test_process_maps_llm_pipeline_result():
     assert request.email_subject == "Tiêu đề"
     assert request.email_content == "Nội dung"
     assert request.enrollment_year == 2022
-    assert request.resolve_citations is True
-    assert request.citation_link_type == "original"
+    assert not hasattr(request, "resolve_citations")
+    assert not hasattr(request, "citation_link_type")
     faq_svc.log_interaction.assert_called_once()
 
 

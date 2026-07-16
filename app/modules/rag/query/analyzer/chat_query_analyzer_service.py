@@ -190,7 +190,6 @@ class ChatQueryAnalyzer:
         try:
             history_str = _format_history(history)
             prompt = (
-                f"{GENERATE_REPLY_SYSTEM_PROMPT}\n\n"
                 f"Lịch sử hội thoại:\n{history_str}\n\n"
                 f"Tin nhắn hiện tại của sinh viên: \"{effective_question}\"\n"
                 f"Câu phản hồi của bạn:"
@@ -201,7 +200,8 @@ class ChatQueryAnalyzer:
                 model=settings.GEMINI_MODEL,
                 contents=[prompt],
                 config=types.GenerateContentConfig(
-                    temperature=0.7
+                    temperature=0.5,
+                    system_instruction=GENERATE_REPLY_SYSTEM_PROMPT,
                 )
             )
 

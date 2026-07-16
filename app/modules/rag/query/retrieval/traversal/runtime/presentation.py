@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot
+from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot, TopicTreeNode
 
 
 def node_payload(snapshot: FilteredCorpusSnapshot, node_key: str) -> dict[str, Any]:
@@ -23,3 +23,16 @@ def node_payload(snapshot: FilteredCorpusSnapshot, node_key: str) -> dict[str, A
         },
         "visibleChildCount": len(snapshot.visible_child_keys_by_parent.get(node_key, [])),
     }
+
+
+def topic_tree_payload(nodes: list[TopicTreeNode]) -> list[dict[str, Any]]:
+    """Serialize the filtered node-only tree for the public chat stream."""
+    return [
+        {
+            "nodeKey": node.node_key,
+            "title": node.title,
+            "summary": node.summary,
+            "children": topic_tree_payload(node.children),
+        }
+        for node in nodes
+    ]

@@ -2,6 +2,8 @@ import difflib
 import logging
 import re
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,10 +25,8 @@ def _get_all_toc_titles(structure) -> list[str]:
 def verify_citations(
     text: str,
     sources_data: list[dict],
-    resolve_citations: bool = False,
-    citation_link_type: str = "original",
 ) -> str:
-    """Verify and optionally resolve citation markers."""
+    """Verify citation markers and resolve valid sources to document-view links."""
     flat_titles: list[tuple[str, str]] = []
     title_to_source: dict[str, dict] = {}
     fname_to_source: dict[str, dict] = {}
@@ -93,11 +93,9 @@ def verify_citations(
         if raw_title != verified_title:
             logger.info("[Citation] Citation normalized: '%s' -> '%s'", raw_title, verified_title)
 
-        if not resolve_citations:
-            return f"(^{verified_title})"
-
-        url = source.get("markdown_url", "") if citation_link_type == "markdown" else source.get("original_url", "")
-        if url:
+        file_id = str(source.get("file_id") or "").strip()
+        if file_id and settings.DOCUMENT_VIEW_URL_PREFIX:
+            url = f"{settings.DOCUMENT_VIEW_URL_PREFIX}{file_id}"
             return f"(Xem thêm tại [{verified_title}]({url}))"
         return f"(^{verified_title})"
 

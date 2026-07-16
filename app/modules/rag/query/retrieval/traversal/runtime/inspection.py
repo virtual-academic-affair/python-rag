@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from app.core.config import settings
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.rag.query.retrieval.traversal.contracts import TraversalSession
 from app.modules.rag.query.retrieval.traversal.runtime.selection import candidate_ids
@@ -13,9 +14,9 @@ async def inspect_samples(
     session: TraversalSession,
     node: CorpusNodeDocument,
     scope: str,
-    limit: int,
 ) -> dict[str, list[dict[str, str]]]:
     """Hydrate a small authorized sample for the agent to inspect a topic."""
+    limit = settings.CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT
     file_ids, faq_ids = candidate_ids(node, scope, session)
     file_ids, faq_ids = file_ids[:limit], faq_ids[:limit]
     from app.modules.files.services.file_service import get_file_service

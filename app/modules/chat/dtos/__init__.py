@@ -6,6 +6,7 @@ from app.modules.chat.dtos.send_message import (
     TokenUsage,
 )
 from app.modules.chat.dtos.stream_message import ChatStreamRequest
+from app.modules.chat.dtos.faq_recommendation import FaqRecommendation
 from app.modules.chat.dtos.chat_history import (
     ChatPaginationRequest,
     ChatSessionItem,
@@ -22,6 +23,7 @@ __all__ = [
     "ChatQueryResponse",
     "TokenUsage",
     "ChatStreamRequest",
+    "FaqRecommendation",
     "ChatPaginationRequest",
     "ChatSessionItem",
     "ChatSessionListResponse",

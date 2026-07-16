@@ -226,9 +226,9 @@ Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app
 
 8.2. INQUIRY SERVICE:
 - B1: `EmailQueryAnalyzerService` trích xuất câu hỏi chuẩn, inquiry types và metadata filter từ subject/body email.
-- B2: `InquiryService` gọi shared `RagQueryPipeline.answer_email(...)` với behavior email: không dùng chat analyzer, không direct reply, citation link mặc định là file gốc.
+- B2: `InquiryService` gọi shared `RagQueryPipeline.answer_email(...)` với behavior email: không dùng chat analyzer và không direct reply.
 - B3: Pipeline chạy Corpus Tree traversal, hydrate/rerank FAQ trước rồi cho LLM đọc FAQ. Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả lời source=`faq`; nếu không đủ mới hydrate/rerank file và chạy PageIndex agent.
-- B4: Gemini/PageIndex soạn câu trả lời email Markdown. Trích dẫn `(^...)` được resolve sang link file gốc (`citation_link_type="original"`). Nếu `to_rich_text=True`, email layer convert Markdown sang HTML.
+- B4: Gemini/PageIndex soạn câu trả lời email Markdown. Trích dẫn `(^...)` luôn được resolve sang document viewer bằng `DOCUMENT_VIEW_URL_PREFIX + fileId`. Nếu `to_rich_text=True`, email layer convert Markdown sang HTML.
 - gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
 
 8.3. TASK SERVICE:
@@ -247,11 +247,13 @@ CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_SYSTEM_PROMPT):
 - Vị trí: `app/modules/rag/query/answering/pageindex_agent/prompts.py`.
 - Vai trò: Tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
 - Quy tắc bắt buộc:
-  1. Dùng base system prompt chung cho chat/email, bổ sung khác biệt email như văn phong chính thức và đi thẳng vào nội dung.
-  2. Đọc FAQ context trong prompt; nếu FAQ đã đủ thì pipeline đã trả lời trước khi gọi PageIndex.
-  3. Khi cần tài liệu, PageIndex agent dùng `get_document_structure` và `get_page_content` để đọc đúng phần tài liệu.
-  4. Câu trả lời Markdown được bọc trong `<answer>...</answer>` ở answering layer để parser tách final answer.
-  5. Tự động chèn trích dẫn dạng `(^Tên mục lục tương ứng)` để resolver chuyển thành link file gốc trong email.
+  1. `BASE_PAGEINDEX_SYSTEM_PROMPT` giữ quy trình tool, nguyên tắc nguồn, định dạng answer và citation dùng chung; `CHAT_SYSTEM_PROMPT`/`EMAIL_SYSTEM_PROMPT` chỉ thêm persona, cách xưng hô và quy tắc trả lời.
+  2. Mọi tool reasoning công khai là một câu tiếng Việt ngắn; không yêu cầu raw chain-of-thought.
+  3. Luôn xem cấu trúc bằng `get_document_structure`, sau đó bắt buộc đọc nội dung thật bằng `get_page_content` trước khi kết luận.
+  4. FAQ context chỉ hỗ trợ hiểu ý định khi FAQ chưa đủ trả lời; không dùng FAQ làm nguồn quy định hoặc citation PageIndex.
+  5. Câu trả lời Markdown được bọc trong `<answer>...</answer>`; không chào hỏi, không lộ file ID/tool, và đặt citation một lần sau phần nội dung dùng xong một mục tài liệu.
+  6. Answering model vẫn nhận subject/body gốc làm ngữ cảnh cùng câu hỏi đã chuẩn hóa, metadata, FAQ hỗ trợ và tài liệu; instruction chỉ yêu cầu trả lời trực tiếp, không yêu cầu soạn thảo email.
+  7. Citation `(^Tên mục lục tương ứng)` được resolver chuyển thành link document viewer.
 
 
 ================================================================================
@@ -395,7 +397,7 @@ THUẬT TOÁN RANGE-OVERLAP:
 PUBLIC METHODS:
 - `answer_chat(input)`: chat non-stream, có chat analyzer/direct reply, trả `RagQueryResult.answer_markdown`.
 - `stream_chat(input)`: chat stream, cùng lifecycle với `answer_chat` nhưng yield internal events để ChatStreamService map sang SSE.
-- `answer_email(input)`: email inquiry, dùng input đã được `EmailQueryAnalyzerService` chuẩn hóa, không direct reply, citation link mặc định là original file.
+- `answer_email(input)`: email inquiry, dùng input đã được `EmailQueryAnalyzerService` chuẩn hóa, không direct reply và dùng chung citation document viewer với chat.
 
 QUY TRÌNH CHUNG:
 1.  Analyze:
@@ -403,14 +405,18 @@ QUY TRÌNH CHUNG:
     - Email: không chạy chat analyzer; metadata/question đến từ email analyzer/workflow.
 2.  Direct reply:
     - Chỉ chat/chat_stream được phép trả lời trực tiếp khi `needs_rag=false`.
+    - Direct-answer instruction được truyền bằng Gemini `system_instruction`; user prompt chỉ chứa lịch sử hội thoại gần nhất và tin nhắn hiện tại.
 3.  Retrieval:
     - Pre-filter MongoDB theo metadata + user role để có file/FAQ allowed.
     - Corpus Tree Traversal dùng LLM chọn topic/subtree liên quan.
+    - Nếu traversal hết `CORPUS_TRAVERSAL_MAX_TURNS` mà chưa select/no-match rõ ràng, pipeline coi là `no_match` và trả no-candidate message thay vì ném lỗi 502.
     - Hydrate supporting FAQ docs trước, rồi Cohere rerank FAQ riêng.
 4.  FAQ answering:
     - LLM đọc một hoặc nhiều FAQ đã retrieval/rerank.
     - Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả `source="faq"` và token usage từ FAQ LLM call.
     - Nếu FAQ chỉ trả lời được một phần, pipeline tiếp tục PageIndex thay vì trả lời thiếu.
+    - `BASE_FAQ_ANSWER_SYSTEM_PROMPT` giữ quy tắc full-coverage, metadata và JSON schema; chat dùng `CHAT_FAQ_ANSWER_SYSTEM_PROMPT`, email dùng `EMAIL_FAQ_ANSWER_SYSTEM_PROMPT`.
+    - FAQ instruction được truyền bằng Gemini `system_instruction`; user prompt chỉ chứa câu hỏi và danh sách FAQ đã rerank.
 5.  PageIndex answering:
     - Chỉ khi FAQ không đủ trả lời toàn bộ câu hỏi, pipeline mới hydrate và Cohere rerank file candidates.
     - Nếu có file candidates, PageIndex agent đọc cấu trúc/nội dung tài liệu bằng tool loop và trả answer Markdown + sources.
@@ -419,7 +425,8 @@ QUY TRÌNH CHUNG:
 RERANK:
 - Integration Cohere nằm ở `app/integrations/cohere/client.py`.
 - RAG-specific YAML document builders nằm ở `app/modules/rag/query/retrieval/rerank/cohere_reranker.py`.
-- Config chính: `COHERE_API_KEY`, `COHERE_RERANK_ENABLED`, `COHERE_RERANK_MODEL`, `COHERE_RERANK_MAX_CANDIDATES`, `COHERE_RERANK_MAX_TOKENS_PER_DOC`, `COHERE_RERANK_TIMEOUT_SECONDS`.
+- Config chính: `COHERE_API_KEY`, `COHERE_RERANK_ENABLED`, `COHERE_RERANK_MODEL`, `COHERE_RERANK_MAX_CANDIDATES`, `COHERE_RERANK_FILE_TOP_N`, `COHERE_RERANK_FAQ_TOP_N`, `COHERE_RERANK_MAX_TOKENS_PER_DOC`, `COHERE_RERANK_TIMEOUT_SECONDS`.
+- `inspect_topic` luôn lấy số sample từ `CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT`; tham số này không được expose cho agent.
 
 
 ================================================================================
@@ -454,20 +461,24 @@ CHAT NON-STREAM:
 CHAT STREAM:
 - `ChatStreamService.stream_chat_response()` gọi `stream_chat` và map internal events sang JSON SSE hiện tại.
 - Stream giữ Markdown/text event realtime, không hỗ trợ rich text conversion.
-- Raw reasoning/tool output không được persist. Steps công khai giữ timeline an toàn: query_analysis, corpus_traversal, faq_retrieval, faq_answer, file_retrieval, document_read.
+- Raw Gemini thought/tool output không được persist. Corpus reasoning là một câu ngắn công khai nhưng cũng không lưu MongoDB.
 
 STEPS/SOURCES:
-- `query_analysis`: step public có dạng `{type, content}`; dữ liệu phân tích chi tiết là contract nội bộ của RagQueryPipeline.
-- `corpus_traversal`: một step cho mỗi Corpus tool call thành công (list, expand, inspect, select hoặc no-match), được stream realtime.
+- `query_analysis`: step public có dạng `{type, content}`; `content` hiển thị `effective_question` đã chuẩn hóa nhưng không nhắc riêng `original_question`; dữ liệu phân tích chi tiết còn lại là contract nội bộ của RagQueryPipeline.
+- `corpus_tree`: event node-only đã lọc, có `content` mô tả chung, phát một lần cho chat stream và không đưa vào final steps/persistence.
+- `corpus_traversal`: step tối giản cho expand/inspect/select/no-match. Expand/inspect dùng `nodeKey`; select dùng `nodeKeys` để chứa toàn bộ topic được chọn. Root topics được inject thẳng vào prompt, không còn tool/list-roots step.
 - `faq_retrieval` và `faq_answer`: chỉ xuất hiện khi Corpus traversal trả FAQ candidates; FAQ được chọn và kết quả đủ/chưa đủ để trả lời.
 - `file_retrieval`: file candidates sau Cohere rerank; `document_read`: PageIndex đọc cấu trúc hoặc nội dung tài liệu.
-- `sources`: citation metadata từ PageIndex tool usage; citation resolver có thể sinh markdown/original URLs theo request.
+- `sources`: citation metadata từ PageIndex tool usage, tiếp tục giữ `originalUrl` và `markdownUrl`; link trong answer luôn dùng `DOCUMENT_VIEW_URL_PREFIX + fileId`.
+- `faqRecommendation`: payload typed để FE prefill bản nháp FAQ từ answer đã được admin duyệt. Payload dùng `effectiveQuestion`, metadata FAQ đầy đủ (`0-9999` cho khoảng không xác định) và `lecturerOnly` là phép OR trên matched FAQ cùng file thực sự được PageIndex mở; direct reply trả `null`.
+- Candidate file giữ `lecturer_only` ở payload nội bộ để tính recommendation nhưng public `sources` không đổi. Recommendation được persist cùng assistant message và trả lại qua history API.
 
 17.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
 - Content-Type: `text/event-stream`.
-- Format: `data: {"type": "text|reasoning|query_analysis|corpus_traversal|faq_retrieval|faq_answer|file_retrieval|document_read", "content": "...", "done": false}`.
-- Final: `data: {"done": true, "sources": [...], "steps": [...], "tokenUsage": {...}, "processingTimeMs": N}`.
-- Luồng thường gặp: query_analysis → corpus_traversal × N → faq_retrieval → faq_answer → text → done nếu FAQ đủ; hoặc tiếp tục file_retrieval → document_read × N → text → done.
+- Format thông thường: `data: {"type": "text|reasoning|query_analysis|corpus_traversal|faq_retrieval|faq_answer|file_retrieval|document_read", "content": "...", "done": false}`.
+- `corpus_tree` mang thêm `tree`; `corpus_traversal` mang thêm `action` và `nodeKey` hoặc `nodeKeys`.
+- Final: `data: {"done": true, "sources": [...], "steps": [...], "faqRecommendation": {...}|null, "tokenUsage": {...}, "processingTimeMs": N}`.
+- Luồng thường gặp: query_analysis → corpus_tree → reasoning/corpus_traversal × N → faq_retrieval → faq_answer → text → done nếu FAQ đủ; hoặc tiếp tục file_retrieval → document_read × N → text → done.
 - CHAT_SYSTEM_PROMPT & EMAIL_SYSTEM_PROMPT dùng base prompt chung, rồi bổ sung khác biệt văn phong/format theo kênh.
 - Corpus traversal và document_read activities được stream realtime; non-stream trả toàn bộ timeline trong response cuối.
 - [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
@@ -723,6 +734,7 @@ Các biến môi trường quan trọng:
 | GOOGLE_API_KEY        | (Required)           | Dùng cho Gemini query analysis, extraction, FAQ answering và PageIndex agent |
 | MONGODB_URL           | mongodb://...        | Connection string |
 | PAGEINDEX_WORKSPACE   | storage/pageindex_workspace | Nơi cache PageIndex workspace/artifacts |
+| DOCUMENT_VIEW_URL_PREFIX | https://vaa.hcmus.app/?viewDocumentId= | Prefix link citation; hệ thống nối thêm fileId |
 | GRPC_URL              | localhost:5000       | Link tới Nest-api Backend |
 | MAX_FILE_SIZE_MB      | 20                   | Chặn dung lượng upload |
 | LLM_MODEL             | gemini-2.5-flash     | Model dùng cho Email Classification |
@@ -731,6 +743,10 @@ Các biến môi trường quan trọng:
 | COHERE_API_KEY        | (Optional)           | Dùng cho Cohere Rerank v2; thiếu key thì giữ thứ tự retrieval |
 | COHERE_RERANK_ENABLED | true                 | Bật/tắt rerank file candidates và FAQ docs |
 | COHERE_RERANK_MODEL   | rerank-v4.0-fast     | Model Cohere rerank mặc định cho online chat/email |
+| COHERE_RERANK_MAX_CANDIDATES | 1000          | Kích thước candidate pool tối đa cho mỗi lượt rerank |
+| COHERE_RERANK_FILE_TOP_N | 5                 | Số file tối đa giữ lại sau rerank |
+| COHERE_RERANK_FAQ_TOP_N | 3                  | Số FAQ tối đa giữ lại sau rerank |
+| CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT | 5       | Số file và FAQ sample tối đa khi agent inspect topic |
 
 
 ================================================================================
@@ -773,7 +789,7 @@ Prompt hiện được đặt gần domain sử dụng:
 - Email/chat analyzers: `app/modules/rag/query/analyzer/*_query_analyzer_service.py`.
 - Email classification/workflow prompts vẫn nằm trong module email tương ứng.
 
-Chat stream giữ reasoning/tool events realtime. Chat/email non-stream trả final answer Markdown, sau đó service layer có thể convert sang HTML nếu `to_rich_text=True`.
+Chat stream giữ reasoning/tool events realtime. Chat non-stream trả reasoning trong steps nhưng repository không persist; email không bật Corpus reasoning. Chat/email non-stream trả final answer Markdown, sau đó service layer có thể convert sang HTML nếu `to_rich_text=True`.
 
 --------------------------------------------------------------------------------
 Xác nhận bản thảo Overview Version 5.6.0 (Corpus API/DTO Refactor).

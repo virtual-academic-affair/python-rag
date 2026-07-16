@@ -11,6 +11,24 @@ from app.modules.chat.services.chat_conversation_service import (
 )
 
 
+def test_chat_requests_ignore_removed_citation_options():
+    query = ChatQueryRequest.model_validate({
+        "question": "q",
+        "resolveCitations": False,
+        "citationLinkType": "markdown",
+    })
+    stream = ChatStreamRequest.model_validate({
+        "question": "q",
+        "resolveCitations": True,
+        "citationLinkType": "original",
+    })
+
+    assert "resolveCitations" not in query.model_dump(by_alias=True)
+    assert "citationLinkType" not in query.model_dump(by_alias=True)
+    assert "resolveCitations" not in stream.model_dump(by_alias=True)
+    assert "citationLinkType" not in stream.model_dump(by_alias=True)
+
+
 class FakeHistoryRepo:
     def __init__(self, recent=None):
         self.recent = recent or []
@@ -38,6 +56,14 @@ async def test_chat_query_conversation_persists_user_and_assistant():
             "steps": [{"type": "retrieval"}],
             "token_usage": None,
             "processing_time_ms": 12,
+            "faq_recommendation": {
+                "effectiveQuestion": "q effective",
+                "metadata": {
+                    "enrollmentYear": {"fromYear": 0, "toYear": 9999},
+                    "academicYear": {"fromYear": 0, "toYear": 9999},
+                },
+                "lecturerOnly": False,
+            },
         })
     )
     svc = ChatQueryConversationService(history_repo=repo, chat_service=chat_service)
@@ -57,6 +83,7 @@ async def test_chat_query_conversation_persists_user_and_assistant():
     ]
     assert repo.calls[2][1]["role"] == "user"
     assert repo.calls[3][1]["role"] == "assistant"
+    assert repo.calls[3][1]["faq_recommendation"]["effectiveQuestion"] == "q effective"
     chat_service.generate_chat_response.assert_awaited_once()
     assert chat_service.generate_chat_response.await_args.kwargs["chat_history"][0].content == "old"
 
@@ -97,6 +124,14 @@ async def test_chat_stream_conversation_yields_dicts_and_persists_final_text():
             "sources": [],
             "steps": [],
             "processingTimeMs": 20,
+            "faqRecommendation": {
+                "effectiveQuestion": "q effective",
+                "metadata": {
+                    "enrollmentYear": {"fromYear": 0, "toYear": 9999},
+                    "academicYear": {"fromYear": 0, "toYear": 9999},
+                },
+                "lecturerOnly": False,
+            },
         })
 
     stream_service = SimpleNamespace(stream_chat_response=stream_chat_response)
@@ -124,6 +159,7 @@ async def test_chat_stream_conversation_yields_dicts_and_persists_final_text():
         "completionTokens": 2,
         "totalTokens": 3,
     }
+    assert assistant_appends[0]["faq_recommendation"]["effectiveQuestion"] == "q effective"
 
 
 @pytest.mark.asyncio

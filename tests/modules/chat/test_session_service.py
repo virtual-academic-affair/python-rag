@@ -75,6 +75,14 @@ async def test_chat_session_service_lists_messages():
         sources=[],
         steps=[],
         processing_time_ms=10,
+        faq_recommendation={
+            "effectiveQuestion": "answer question",
+            "metadata": {
+                "enrollmentYear": {"fromYear": 0, "toYear": 9999},
+                "academicYear": {"fromYear": 0, "toYear": 9999},
+            },
+            "lecturerOnly": True,
+        },
         created_at="created",
     )
     repo.list_messages_by_session.return_value = ([message], 1)
@@ -95,6 +103,31 @@ async def test_chat_session_service_lists_messages():
     )
     assert response.session_id == "s1"
     assert response.items[0].content == "answer"
+    assert response.items[0].faq_recommendation.lecturer_only is True
+
+
+@pytest.mark.asyncio
+async def test_chat_session_service_treats_legacy_message_without_recommendation_as_none():
+    repo = FakeSessionRepo()
+    message = SimpleNamespace(
+        role="assistant",
+        content="legacy answer",
+        sequence=2,
+        message_type="text",
+        token_usage=None,
+        sources=[],
+        steps=[],
+        processing_time_ms=10,
+        created_at="created",
+    )
+    repo.list_messages_by_session.return_value = ([message], 1)
+
+    response = await ChatSessionService(history_repo=repo).list_messages(
+        session_id="s1",
+        user_id="u1",
+    )
+
+    assert response.items[0].faq_recommendation is None
 
 
 @pytest.mark.asyncio

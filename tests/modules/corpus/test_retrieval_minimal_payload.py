@@ -1,12 +1,40 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.config import settings
 from app.core.exceptions import AppException
 from app.modules.corpus.contracts import FaqCandidate, FileCandidate, TraversalResult
 from app.modules.rag.query.answering.pageindex_agent.citations.source_builder import build_sources_from_steps
-from app.modules.rag.query.retrieval.retrieval_service import FAQ_CONTEXT_LIMIT
+from app.modules.rag.query.retrieval.hydration.file_hydrator import hydrate_pageindex_candidate_files
 from app.modules.rag.query.retrieval.retrieval_service import RetrievalService
+
+
+@pytest.mark.asyncio
+async def test_file_hydrator_keeps_lecturer_only_for_internal_source_tracking():
+    file_doc = SimpleNamespace(
+        display_name="Quy chế nội bộ",
+        storage_path="files/internal.pdf",
+        lecturer_only=True,
+    )
+    toc = SimpleNamespace(
+        markdown_storage_path="markdown/internal.md",
+        doc_description="Mô tả",
+    )
+
+    with patch(
+        "app.modules.rag.query.retrieval.hydration.file_hydrator._fetch_file_and_toc_maps",
+        AsyncMock(return_value=({"file1": file_doc}, {"file1": toc})),
+    ):
+        result = await hydrate_pageindex_candidate_files(["file1"])
+
+    assert result == [{
+        "file_id": "file1",
+        "file_name": "Quy chế nội bộ",
+        "doc_description": "Mô tả",
+        "lecturer_only": True,
+    }]
 
 
 @pytest.mark.asyncio
@@ -37,7 +65,11 @@ async def test_retrieval_service_returns_minimal_candidate_payload():
     assert "table_of_contents" not in result[0]
     assert "storage_path" not in result[0]
     assert "markdown_storage_path" not in result[0]
-    svc._reranker.rerank_files.assert_awaited_once_with("hỏi gì đó", result, limit=5)
+    svc._reranker.rerank_files.assert_awaited_once_with(
+        "hỏi gì đó",
+        result,
+        limit=settings.COHERE_RERANK_FILE_TOP_N,
+    )
 
 
 @pytest.mark.asyncio
@@ -78,7 +110,7 @@ async def test_retrieval_service_traverse_and_faq_context_are_separate():
     svc._reranker.rerank_faqs.assert_awaited_once_with(
         "câu hỏi",
         [faq_doc],
-        limit=FAQ_CONTEXT_LIMIT,
+        limit=settings.COHERE_RERANK_FAQ_TOP_N,
     )
 
 

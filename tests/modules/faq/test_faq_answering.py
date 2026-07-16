@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock
 
 from app.modules.rag.query.answering.faq_answering.contracts import FaqAnswerEntry
 from app.modules.rag.query.answering.faq_answering.parser import parse_faq_answer_response
-from app.modules.rag.query.answering.faq_answering.prompts import build_faq_answer_prompt
+from app.modules.rag.query.answering.faq_answering.prompts import (
+    BASE_FAQ_ANSWER_SYSTEM_PROMPT,
+    CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
+    EMAIL_FAQ_ANSWER_SYSTEM_PROMPT,
+    build_faq_answer_prompt,
+)
 from app.modules.rag.query.answering.faq_answering.service import FaqAnswerService
 
 
@@ -19,9 +24,20 @@ def test_faq_answer_prompt_rejects_partial_multi_intent_matches():
         ],
     )
 
-    assert "nhiều ý độc lập" in prompt
-    assert "TOÀN BỘ câu hỏi" in prompt
-    assert '{"answer": null}' in prompt
+    assert "DANH SÁCH FAQ" in prompt
+    assert "faq1" in prompt
+    assert "nhiều ý độc lập" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "TOÀN BỘ câu hỏi" in BASE_FAQ_ANSWER_SYSTEM_PROMPT
+    assert '{"answer": null}' in CHAT_FAQ_ANSWER_SYSTEM_PROMPT
+
+
+def test_faq_prompts_share_base_rules_and_specialize_by_channel():
+    assert "không dùng câu chào" in CHAT_FAQ_ANSWER_SYSTEM_PROMPT.lower()
+    assert 'xưng là "chúng tôi"' in CHAT_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "Trả lời trực tiếp câu hỏi đã chuẩn hóa" in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
+    assert "email" not in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT.lower()
+    assert '"Phòng Giáo vụ" hoặc "chúng tôi"' in EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
+    assert CHAT_FAQ_ANSWER_SYSTEM_PROMPT != EMAIL_FAQ_ANSWER_SYSTEM_PROMPT
 
 
 def test_parse_faq_answer_response_validates_ids_and_markdown():
@@ -69,6 +85,7 @@ async def test_faq_answer_service_reads_multiple_faqs_and_returns_llm_answer():
     assert [faq.id for faq in result.matched_faqs] == ["faq1", "faq2"]
     assert result.token_usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
     assert service._faq_repo.increment_view_count.call_count == 2
+    assert service._llm_answer.await_args.args[1] == CHAT_FAQ_ANSWER_SYSTEM_PROMPT
 
 
 async def test_faq_answer_service_can_skip_view_count_for_debug():

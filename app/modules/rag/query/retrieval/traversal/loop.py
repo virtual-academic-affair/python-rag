@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -11,8 +12,9 @@ from app.core.config import settings
 from app.core.exceptions import CorpusTraversalError
 from app.modules.corpus.contracts import TraversalResult
 from app.modules.rag.query.retrieval.traversal.prompts import CORPUS_TRAVERSAL_PROMPT
-from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot
-from app.modules.rag.query.retrieval.traversal.runtime.activity import build_traversal_activity_step
+from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot, TraversalSession
+from app.modules.rag.query.retrieval.traversal.runtime.activity import build_traversal_activity_steps
+from app.modules.rag.query.retrieval.traversal.runtime.presentation import node_payload
 from app.modules.rag.query.retrieval.traversal.tools import build_traversal_tools
 from app.integrations.llm.gemini import gemini_client
 from app.utils.retry import async_retry
@@ -33,12 +35,16 @@ async def run_corpus_traversal(
     max_turns: int | None = None,
     trace_id: str = "",
     on_step: Callable[[dict], Awaitable[None]] | None = None,
+    include_reasoning: bool = False,
 ) -> TraversalResult:
     """Run a stateful LLM agent that explicitly navigates the filtered Corpus Tree."""
     max_turns = max_turns or settings.CORPUS_TRAVERSAL_MAX_TURNS
-    tools = build_traversal_tools(snapshot)
+    session = TraversalSession(
+        snapshot=snapshot,
+        revealed_node_keys=set(snapshot.visible_root_keys),
+    )
+    tools = build_traversal_tools(session, include_reasoning=include_reasoning)
     tool_map = {tool.__name__: tool for tool in tools}
-    get_session = getattr(tools[0], "_get_session")
 
     config = types.GenerateContentConfig(
         system_instruction=CORPUS_TRAVERSAL_PROMPT,
@@ -46,10 +52,15 @@ async def run_corpus_traversal(
         temperature=0.0,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
+    root_topics = [node_payload(snapshot, key) for key in snapshot.visible_root_keys]
     history = [
         types.Content(
             role="user",
-            parts=[types.Part.from_text(text=f'Hãy tìm chủ đề liên quan đến câu hỏi: "{question}"')],
+            parts=[types.Part.from_text(text=(
+                f'Hãy tìm chủ đề liên quan đến câu hỏi: "{question}"\n\n'
+                "Các root topic hợp lệ đã được cung cấp sẵn:\n"
+                f"{json.dumps(root_topics, ensure_ascii=False)}"
+            ))],
         )
     ]
     total_prompt_tokens = 0
@@ -116,12 +127,16 @@ async def run_corpus_traversal(
             continue
 
         for call in tool_calls:
+            call_args = dict(call.args)
+            reason_val = call_args.get("reasoning")
+            if include_reasoning and call.name == "select_no_match":
+                reason_val = call_args.get("reason")
             tool_func = tool_map.get(call.name)
             if tool_func is None:
                 result: dict = {"status": "invalid", "reason": f"unknown tool: {call.name}"}
             else:
                 try:
-                    result = await tool_func(**dict(call.args))
+                    result = await tool_func(**call_args)
                 except Exception as exc:
                     raise CorpusTraversalError(
                         f"Corpus traversal tool '{call.name}' failed: {exc}",
@@ -144,14 +159,20 @@ async def run_corpus_traversal(
                 types.Part.from_function_response(name=call.name, response={"result": result})
             )
             if isinstance(result, dict):
-                activity_step = build_traversal_activity_step(snapshot, call.name, result)
-                if activity_step is not None:
-                    activity_steps.append(activity_step)
+                new_activity_steps = build_traversal_activity_steps(snapshot, call.name, result)
+                if new_activity_steps:
+                    clean_reason = str(reason_val or "").strip()[:500]
+                    if include_reasoning and clean_reason:
+                        reasoning_step = {"type": "reasoning", "content": clean_reason}
+                        activity_steps.append(reasoning_step)
+                        if on_step is not None:
+                            await on_step(reasoning_step)
+                    activity_steps.extend(new_activity_steps)
                     if on_step is not None:
-                        await on_step(activity_step)
+                        for activity_step in new_activity_steps:
+                            await on_step(activity_step)
             status = result.get("status") if isinstance(result, dict) else None
             if call.name == "select_topics" and status == "selected":
-                session = await get_session()
                 traversal_result = TraversalResult(
                     status="selected",
                     file_candidates=session.file_candidates,
@@ -178,7 +199,6 @@ async def run_corpus_traversal(
                 )
                 return traversal_result
             if call.name == "select_no_match" and status == "no_match":
-                session = await get_session()
                 traversal_result = TraversalResult(
                     status="no_match",
                     selected_topics=[],
@@ -203,6 +223,23 @@ async def run_corpus_traversal(
 
         history.append(types.Content(role="user", parts=tool_response_parts))
 
-    raise CorpusTraversalError(
-        f"Corpus traversal agent reached max turns ({max_turns}) without explicit selection"
+    traversal_result = TraversalResult(
+        status="no_match",
+        selected_topics=[],
+        expanded_node_keys=session.expanded_node_keys,
+        inspected_node_keys=session.inspected_node_keys,
+        termination_reason="max_turns",
+        turn_count=max_turns,
+        token_usage={
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_prompt_tokens + total_completion_tokens,
+        },
+        steps=activity_steps,
     )
+    logger.warning(
+        "[RAG][%s][traversal.agent.max_turns] turns=%d; returning no_match",
+        trace_id,
+        max_turns,
+    )
+    return traversal_result

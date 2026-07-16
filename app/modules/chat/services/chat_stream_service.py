@@ -22,8 +22,6 @@ class ChatStreamService(ChatService):
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        resolve_citations: bool = False,
-        citation_link_type: str = "markdown",
     ) -> AsyncGenerator[str, None]:
         """
         Stream chat response via SSE.
@@ -32,6 +30,7 @@ class ChatStreamService(ChatService):
         pipeline_steps = []
         candidate_files = []
         agent_result = None
+        analysis = None
         logger.info(f"[Chat-Stream] Nhận request từ user {user_context.name} (Role: {user_context.role}). Câu hỏi: '{question}'")
 
         async for event in self._get_rag_query().stream_chat(
@@ -42,8 +41,6 @@ class ChatStreamService(ChatService):
                 user_name=user_context.name,
                 enrollment_year=user_context.enrollment_year,
                 chat_history=chat_history,
-                resolve_citations=resolve_citations,
-                citation_link_type=citation_link_type,
             )
         ):
             if event.get("type") == "_query_analysis_start":
@@ -51,8 +48,17 @@ class ChatStreamService(ChatService):
                 continue
             if event.get("type") == "_query_analysis":
                 step = event.get("step") or {}
+                analysis = event.get("analysis") or step
                 pipeline_steps.append(step)
                 yield json.dumps({**simplify_step(step), "done": False})
+                continue
+            if event.get("type") == "_corpus_tree":
+                yield json.dumps({
+                    "type": "corpus_tree",
+                    "content": event.get("content") or "Đã tải cây chủ đề phù hợp.",
+                    "tree": event.get("tree") or [],
+                    "done": False,
+                })
                 continue
             if event.get("type") == "_corpus_traversal":
                 step = event.get("step") or {}
@@ -79,13 +85,20 @@ class ChatStreamService(ChatService):
                         source_type="chat",
                         processing_time_ms=processing_time_ms,
                     ))
+                faq_recommendation = self._build_faq_recommendation(
+                    analysis=event.get("analysis") or analysis,
+                    sources=event.get("sources") or [],
+                    candidate_files=event.get("candidate_files") or candidate_files,
+                    used_faq_docs=event.get("used_faq_docs") or [],
+                )
                 yield json.dumps({
                     "done": True,
                     "source": event.get("source", "llm"),
                     "sources": [SourceCitation(**s).model_dump(by_alias=True) for s in event.get("sources", [])] if event.get("sources") else [],
                     "steps": [simplify_step(s, candidate_files) for s in (event.get("steps") or pipeline_steps)],
                     "tokenUsage": token_usage_obj.model_dump(by_alias=True) if token_usage_obj else None,
-                    "processingTimeMs": processing_time_ms
+                    "processingTimeMs": processing_time_ms,
+                    "faqRecommendation": faq_recommendation.model_dump(by_alias=True) if faq_recommendation else None,
                 })
                 return
             if event.get("type") == "_agent_result":
@@ -133,6 +146,12 @@ class ChatStreamService(ChatService):
             completion_tokens=token_usage.get("completion_tokens", 0),
             total_tokens=token_usage.get("total_tokens", 0)
         )
+        faq_recommendation = self._build_faq_recommendation(
+            analysis=analysis,
+            sources=agent_result["sources"],
+            candidate_files=candidate_files,
+            used_faq_docs=[],
+        )
 
         yield json.dumps({
             "done": True,
@@ -141,6 +160,7 @@ class ChatStreamService(ChatService):
             "steps": [simplify_step(s, candidate_files) for s in pipeline_steps] + filtered_stream_steps,
             "tokenUsage": token_usage_obj.model_dump(by_alias=True),
             "processingTimeMs": processing_time_ms,
+            "faqRecommendation": faq_recommendation.model_dump(by_alias=True) if faq_recommendation else None,
         })
 
     @staticmethod

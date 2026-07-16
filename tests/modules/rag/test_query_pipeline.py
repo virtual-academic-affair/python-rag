@@ -6,7 +6,11 @@ import pytest
 
 from app.modules.rag.query import RagQueryInput
 from app.modules.rag.query.analyzer.contracts import ChatQueryAnalysis, EmailQueryAnalysis
-from app.modules.rag.query.answering.faq_answering import FaqAnswerResult
+from app.modules.rag.query.answering.faq_answering import (
+    CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
+    EMAIL_FAQ_ANSWER_SYSTEM_PROMPT,
+    FaqAnswerResult,
+)
 from app.modules.rag.query.answering.pageindex_agent import EMAIL_SYSTEM_PROMPT
 from app.modules.rag.query.pipeline import RagQueryPipeline
 from app.modules.rag.query.retrieval.retrieval_service import RetrievalSeeds
@@ -101,11 +105,11 @@ async def test_answer_chat_uses_common_engine_with_analyzer_enrollment_fallback(
         metadata_filter={"enrollment_year": {"from_year": 2022, "to_year": 2022}},
         user_role="student",
         trace_id=ANY,
+        include_reasoning=True,
     )
     pipe._retrieval.retrieve_file_context.assert_awaited_once_with(
         "Chuẩn ngoại ngữ? effective",
         ["file-seed"],
-        max_files=5,
         trace_id=ANY,
     )
     assert result.answer_markdown == "Câu trả lời tài liệu"
@@ -138,11 +142,18 @@ async def test_answer_chat_uses_faq_match_without_reading_pageindex():
         id="faq1",
         question="Chuẩn ngoại ngữ K22?",
         answer_markdown="Câu trả lời từ FAQ",
+        lecturer_only=False,
+    )
+    unmatched_restricted_faq = SimpleNamespace(
+        id="faq2",
+        question="FAQ nội bộ không được dùng",
+        answer_markdown="Thông tin nội bộ",
+        lecturer_only=True,
     )
     pipe = _pipeline(
         analyzer=FakeAnalyzer(metadata_filter={}),
         file_candidates=["file-seed"],
-        faq_docs=[faq],
+        faq_docs=[faq, unmatched_restricted_faq],
         faq_match=[faq],
     )
     agent_mock = AsyncMock()
@@ -157,10 +168,15 @@ async def test_answer_chat_uses_faq_match_without_reading_pageindex():
     agent_mock.assert_not_awaited()
     pipe._retrieval.retrieve_faq_context.assert_awaited_once()
     pipe._retrieval.retrieve_file_context.assert_not_awaited()
-    pipe._faq_answer_service.answer.assert_awaited_once()
+    pipe._faq_answer_service.answer.assert_awaited_once_with(
+        "Chuẩn ngoại ngữ K22? effective",
+        [faq, unmatched_restricted_faq],
+        system_prompt=CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
+    )
     assert result.source == "faq"
     assert result.answer_markdown == "Câu trả lời FAQ do LLM tổng hợp"
     assert result.token_usage == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+    assert result.used_faq_docs == [faq]
     assert [s["type"] for s in result.steps] == ["query_analysis", "faq_retrieval", "faq_answer"]
 
 
@@ -211,9 +227,15 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
 
     async def traverse_query(**kwargs):
         await kwargs["on_traversal_step"]({
+            "type": "corpus_tree",
+            "content": "Đã tải cây chủ đề phù hợp.",
+            "tree": [{"nodeKey": "root", "title": "Gốc", "summary": "", "children": []}],
+        })
+        await kwargs["on_traversal_step"]({
             "type": "corpus_traversal",
-            "action": "list_roots",
-            "topic_count": 2,
+            "action": "expand",
+            "node_key": "root",
+            "content": "Đã mở chủ đề Gốc.",
         })
         await release_traversal.wait()
         return RetrievalSeeds()
@@ -223,10 +245,21 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
 
     assert (await anext(stream))["type"] == "_query_analysis_start"
     assert (await anext(stream))["type"] == "_query_analysis"
+    tree_event = await anext(stream)
+    assert tree_event == {
+        "type": "_corpus_tree",
+        "content": "Đã tải cây chủ đề phù hợp.",
+        "tree": [{"nodeKey": "root", "title": "Gốc", "summary": "", "children": []}],
+    }
     corpus_event = await anext(stream)
     assert corpus_event == {
         "type": "_corpus_traversal",
-        "step": {"type": "corpus_traversal", "action": "list_roots", "topic_count": 2},
+        "step": {
+            "type": "corpus_traversal",
+            "action": "expand",
+            "node_key": "root",
+            "content": "Đã mở chủ đề Gốc.",
+        },
     }
 
     release_traversal.set()
@@ -265,6 +298,7 @@ async def test_stream_chat_uses_faq_pipeline_result_without_agent_events():
     assert final["source"] == "faq"
     assert final["answer_markdown"] == "Câu trả lời FAQ do LLM tổng hợp"
     assert final["token_usage"] == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
+    assert final["used_faq_docs"] == [faq]
     assert [s["type"] for s in final["steps"]] == ["query_analysis", "faq_retrieval", "faq_answer"]
     pipe._retrieval.retrieve_file_context.assert_not_awaited()
 
@@ -299,7 +333,7 @@ async def test_answer_chat_can_use_multiple_faqs_for_multi_intent_question():
 
 
 @pytest.mark.asyncio
-async def test_answer_email_skips_chat_analyzer_and_uses_original_citations():
+async def test_answer_email_skips_chat_analyzer_and_uses_shared_citation_behavior():
     analyzer = FakeAnalyzer()
     email_analyzer = FakeEmailAnalyzer(
         question="Câu hỏi email normalized",
@@ -331,9 +365,16 @@ async def test_answer_email_skips_chat_analyzer_and_uses_original_citations():
 
     analyzer.analyze_query.assert_not_awaited()
     email_analyzer.analyze_email.assert_awaited_once_with("Tiêu đề", "Nội dung", sender_enrollment_year=None)
+    pipe._retrieval.traverse_query.assert_awaited_once_with(
+        question="Câu hỏi email normalized",
+        metadata_filter={"enrollment_year": {"from_year": 2022, "to_year": 2022}},
+        user_role="student",
+        trace_id=ANY,
+        include_reasoning=False,
+    )
     _, kwargs = agent_mock.call_args
-    assert kwargs["citation_link_type"] == "original"
-    assert kwargs["resolve_citations"] is True
+    assert "citation_link_type" not in kwargs
+    assert "resolve_citations" not in kwargs
     assert kwargs["system_prompt"] == EMAIL_SYSTEM_PROMPT
     assert result.answer_markdown == "Email answer"
     assert result.analysis.effective_question == "Câu hỏi email normalized"
@@ -362,6 +403,11 @@ async def test_answer_email_can_return_faq_token_usage():
     assert result.source == "faq"
     assert result.token_usage == {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}
     pipe._retrieval.retrieve_file_context.assert_not_awaited()
+    pipe._faq_answer_service.answer.assert_awaited_once_with(
+        "Chuẩn ngoại ngữ?",
+        [faq],
+        system_prompt=EMAIL_FAQ_ANSWER_SYSTEM_PROMPT,
+    )
 
 
 @pytest.mark.asyncio

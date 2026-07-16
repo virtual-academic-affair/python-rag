@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.modules.chat.dtos import ChatHistoryItem
-from app.modules.rag.query.analyzer.chat_query_analyzer_service import ChatQueryAnalyzer
+from app.modules.rag.query.analyzer.chat_query_analyzer_service import (
+    GENERATE_REPLY_SYSTEM_PROMPT,
+    ChatQueryAnalyzer,
+)
 
 
 def _history(count: int = 8):
@@ -68,7 +71,10 @@ async def test_direct_reply_prompt_only_uses_last_six_history_items():
         answer, _usage = await analyzer.generate_reply("q", _history())
 
     prompt = retry_mock.call_args.kwargs["contents"][0]
+    config = retry_mock.call_args.kwargs["config"]
     assert answer == "ok"
+    assert config.system_instruction == GENERATE_REPLY_SYSTEM_PROMPT
+    assert GENERATE_REPLY_SYSTEM_PROMPT not in prompt
     assert "message-0" not in prompt
     assert "message-1" not in prompt
     assert "message-2" in prompt

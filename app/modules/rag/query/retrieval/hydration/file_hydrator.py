@@ -40,6 +40,7 @@ async def hydrate_pageindex_candidate_files(candidate_ids: list[str]) -> list[di
             "file_id": fid,
             "file_name": file_doc.display_name or "",
             "doc_description": (toc.doc_description if toc else "") or "",
+            "lecturer_only": bool(getattr(file_doc, "lecturer_only", False)),
         })
     return result
 

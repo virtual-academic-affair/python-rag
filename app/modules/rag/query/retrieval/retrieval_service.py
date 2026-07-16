@@ -19,8 +19,6 @@ from app.modules.rag.query.retrieval.traversal import run_corpus_traversal_pipel
 
 logger = logging.getLogger(__name__)
 
-FAQ_CONTEXT_LIMIT = 3
-
 
 @dataclass
 class RetrievalSeeds:
@@ -42,6 +40,7 @@ class RetrievalService:
         user_role: Optional[str] = None,
         trace_id: str = "",
         on_traversal_step: Callable[[dict], Awaitable[None]] | None = None,
+        include_reasoning: bool = False,
     ) -> RetrievalSeeds:
         """Run corpus traversal and return raw file/FAQ candidate seeds."""
         result = await run_corpus_traversal_pipeline(
@@ -50,6 +49,7 @@ class RetrievalService:
             user_role=user_role,
             trace_id=trace_id,
             on_step=on_traversal_step,
+            include_reasoning=include_reasoning,
         )
         logger.info(
             "[RAG][%s][retrieval.seeds] prefilter=%s traversal_status=%s files=%d faqs=%d expanded=%s",
@@ -75,16 +75,18 @@ class RetrievalService:
         trace_id: str = "",
     ) -> list[Any]:
         """Hydrate and rerank FAQ candidates before attempting direct FAQ answering."""
-        faq_fetch_limit = max(settings.COHERE_RERANK_MAX_CANDIDATES, FAQ_CONTEXT_LIMIT)
-        faq_docs = await hydrate_faq_candidate_docs(faq_candidates, limit=faq_fetch_limit)
+        faq_docs = await hydrate_faq_candidate_docs(
+            faq_candidates,
+            limit=settings.COHERE_RERANK_MAX_CANDIDATES,
+        )
         if faq_docs and question and question.strip():
             faq_docs = await self._reranker.rerank_faqs(
                 question,
                 faq_docs,
-                limit=FAQ_CONTEXT_LIMIT,
+                limit=settings.COHERE_RERANK_FAQ_TOP_N,
             )
         else:
-            faq_docs = faq_docs[:FAQ_CONTEXT_LIMIT]
+            faq_docs = faq_docs[:settings.COHERE_RERANK_FAQ_TOP_N]
         logger.info(
             "[RAG][%s][retrieval.faq] seeds=%d hydrated_and_ranked=%d faq_ids=%s",
             trace_id,
@@ -99,13 +101,11 @@ class RetrievalService:
         question: str,
         file_candidates: list[Any],
         *,
-        max_files: int = 5,
         trace_id: str = "",
     ) -> list[dict]:
         """Hydrate and rerank PageIndex file candidates."""
         candidate_files = await self._prepare_file_candidates(
             file_candidates,
-            max_files=max_files,
             question=question,
             trace_id=trace_id,
         )
@@ -121,7 +121,6 @@ class RetrievalService:
     async def _prepare_file_candidates(
         self,
         candidates: list,  # list of FileCandidate dataclass instances from corpus.contracts
-        max_files: int = 5,
         question: Optional[str] = None,
         trace_id: str = "",
     ) -> list[dict]:
@@ -145,12 +144,12 @@ class RetrievalService:
             result = await self._reranker.rerank_files(
                 question,
                 result,
-                limit=max_files,
+                limit=settings.COHERE_RERANK_FILE_TOP_N,
             )
 
         hydrated_count = len(result)
         dropped_count = len(candidates) - hydrated_count
-        result = result[:max_files]
+        result = result[:settings.COHERE_RERANK_FILE_TOP_N]
         logger.info(
             "[RAG][%s][retrieval.file_prepare] seeds=%d hydrated=%d dropped=%d reranked=%s returned=%d",
             trace_id,

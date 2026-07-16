@@ -98,6 +98,7 @@ class ChatSessionService:
                 sources=message.sources,
                 steps=message.steps or None,
                 processing_time_ms=message.processing_time_ms,
+                faq_recommendation=getattr(message, "faq_recommendation", None),
                 created_at=to_iso_str(message.created_at),
             )
             for message in messages

@@ -132,6 +132,21 @@ async def test_find_faq_ids_for_corpus_builds_filter_in_faq_domain():
     assert query["metadata_filter.enrollment_year.from_year"] == {"$lte": 2022}
 
 
+@pytest.mark.parametrize("role", ["lecture", "admin"])
+async def test_find_faq_ids_for_corpus_privileged_roles_include_both_visibility_values(role):
+    svc = FaqService.__new__(FaqService)
+    repo = MagicMock()
+    repo.find_ids_by_query = AsyncMock(return_value={"public", "restricted"})
+    svc._faq_repo = repo
+
+    result = await svc.find_ids_for_corpus({}, role)
+
+    assert result == {"public", "restricted"}
+    query = repo.find_ids_by_query.await_args.args[0]
+    assert query["deleted_at"] is None
+    assert "lecturer_only" not in query
+
+
 def test_dtos_expose_lecturer_only_with_safe_defaults():
     create = FaqCreateRequest(question="Câu hỏi mẫu?", answer_rich_text="<p>Trả lời</p>")
     assert create.lecturer_only is False
