@@ -55,7 +55,7 @@ class ChatStreamService(ChatService):
             if event.get("type") == "_corpus_tree":
                 step = {
                     "type": "corpus_tree",
-                    "content": event.get("content") or "Đã tải cây chủ đề phù hợp.",
+                    "content": event.get("content") or "Tải cây chủ đề phù hợp.",
                     "tree": event.get("tree") or [],
                 }
                 pipeline_steps.append(step)

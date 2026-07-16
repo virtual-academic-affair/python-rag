@@ -228,14 +228,14 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
     async def traverse_query(**kwargs):
         await kwargs["on_traversal_step"]({
             "type": "corpus_tree",
-            "content": "Đã tải cây chủ đề phù hợp.",
+            "content": "Tải cây chủ đề phù hợp.",
             "tree": [{"nodeKey": "root", "title": "Gốc", "summary": "", "children": []}],
         })
         await kwargs["on_traversal_step"]({
             "type": "corpus_traversal",
             "action": "expand",
             "node_key": "root",
-            "content": "Đã mở chủ đề Gốc.",
+            "content": 'Mở chủ đề "Gốc".',
         })
         await release_traversal.wait()
         return RetrievalSeeds()
@@ -248,7 +248,7 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
     tree_event = await anext(stream)
     assert tree_event == {
         "type": "_corpus_tree",
-        "content": "Đã tải cây chủ đề phù hợp.",
+        "content": "Tải cây chủ đề phù hợp.",
         "tree": [{"nodeKey": "root", "title": "Gốc", "summary": "", "children": []}],
     }
     corpus_event = await anext(stream)
@@ -258,7 +258,7 @@ async def test_stream_chat_emits_corpus_steps_before_traversal_finishes():
             "type": "corpus_traversal",
             "action": "expand",
             "node_key": "root",
-            "content": "Đã mở chủ đề Gốc.",
+            "content": 'Mở chủ đề "Gốc".',
         },
     }
 

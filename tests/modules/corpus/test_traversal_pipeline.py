@@ -87,7 +87,7 @@ async def test_traversal_pipeline_emits_ephemeral_tree_before_agent_steps():
 
     assert emitted == [{
         "type": "corpus_tree",
-        "content": "Đã tải cây chủ đề phù hợp.",
+        "content": "Tải cây chủ đề phù hợp.",
         "tree": [{
             "nodeKey": "root",
             "title": "Gốc",

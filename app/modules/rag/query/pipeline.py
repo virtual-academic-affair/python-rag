@@ -269,7 +269,7 @@ class RagQueryPipeline:
                         steps.append(step)
                         yield {
                             "type": "_corpus_tree",
-                            "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
+                            "content": step.get("content") or "Tải cây chủ đề phù hợp.",
                             "tree": step.get("tree") or [],
                         }
                     else:
@@ -285,7 +285,7 @@ class RagQueryPipeline:
                     steps.append(step)
                     yield {
                         "type": "_corpus_tree",
-                        "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
+                        "content": step.get("content") or "Tải cây chủ đề phù hợp.",
                         "tree": step.get("tree") or [],
                     }
                 else:

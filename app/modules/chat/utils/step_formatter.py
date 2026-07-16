@@ -26,7 +26,7 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
 
     if step_type == "query_analysis":
         effective_question = str(step.get("effective_question") or "").strip()
-        content = effective_question or "Đã phân tích câu hỏi."
+        content = effective_question or "Phân tích câu hỏi."
 
     elif step_type == "corpus_tree":
         return {
@@ -54,7 +54,7 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
     elif step_type == "faq_retrieval":
         count = step.get("faq_count", 0)
         if count:
-            content = f"Đã chọn {count} FAQ liên quan để kiểm tra câu trả lời."
+            content = f"Chọn {count} FAQ liên quan để kiểm tra câu trả lời."
         else:
             content = "Không tìm thấy FAQ phù hợp."
 
@@ -62,9 +62,9 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
         questions = step.get("questions") or []
         if step.get("answered"):
             if len(questions) > 1:
-                content = f"{len(questions)} FAQ đã cùng trả lời đầy đủ câu hỏi."
+                content = f"{len(questions)} FAQ cùng trả lời đầy đủ câu hỏi."
             else:
-                content = "FAQ đã trả lời đầy đủ câu hỏi."
+                content = "FAQ trả lời đầy đủ câu hỏi."
         else:
             content = "FAQ chưa đủ để trả lời toàn bộ câu hỏi, tiếp tục tra cứu tài liệu."
 

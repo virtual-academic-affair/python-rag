@@ -35,7 +35,7 @@ async def run_corpus_traversal_pipeline(
     if on_step is not None:
         await on_step({
             "type": "corpus_tree",
-            "content": "Đã tải cây chủ đề phù hợp.",
+            "content": "Tải cây chủ đề phù hợp.",
             "tree": topic_tree_payload(snapshot.topic_tree),
         })
 

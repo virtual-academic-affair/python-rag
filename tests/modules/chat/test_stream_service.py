@@ -32,7 +32,7 @@ async def test_chat_non_stream_returns_corpus_reasoning_without_persisting_it():
                 "type": "corpus_traversal",
                 "action": "select",
                 "node_keys": ["tot-nghiep", "ngoai-ngu"],
-                "content": "Đã chọn các chủ đề: Tốt nghiệp, Ngoại ngữ.",
+                "content": 'Chọn các chủ đề: "Tốt nghiệp", "Ngoại ngữ".',
             },
         ],
         is_direct_reply=False,
@@ -54,7 +54,7 @@ async def test_chat_non_stream_returns_corpus_reasoning_without_persisting_it():
             "type": "corpus_traversal",
             "action": "select",
             "nodeKeys": ["tot-nghiep", "ngoai-ngu"],
-            "content": "Đã chọn các chủ đề: Tốt nghiệp, Ngoại ngữ.",
+            "content": 'Chọn các chủ đề: "Tốt nghiệp", "Ngoại ngữ".',
         },
     ]
     assert "corpus_tree" in PERSISTED_STEP_TYPES
@@ -151,7 +151,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
             }
             yield {
                 "type": "_corpus_tree",
-                "content": "Đã tải cây chủ đề phù hợp.",
+                "content": "Tải cây chủ đề phù hợp.",
                 "tree": [{
                     "nodeKey": "root",
                     "title": "Gốc",
@@ -165,7 +165,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
                     "type": "corpus_traversal",
                     "action": "select",
                     "node_keys": ["root", "other"],
-                    "content": "Đã chọn các chủ đề: Gốc, Khác.",
+                    "content": 'Chọn các chủ đề: "Gốc", "Khác".',
                 },
             }
             yield {
@@ -213,7 +213,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
     assert any(row.get("content") == "Đang tra cứu cấu trúc mục lục của 'Quy chế'." for row in rows)
     tree = next(row for row in rows if row.get("type") == "corpus_tree")
     assert tree["tree"][0]["nodeKey"] == "root"
-    assert tree["content"] == "Đã tải cây chủ đề phù hợp."
+    assert tree["content"] == "Tải cây chủ đề phù hợp."
     query_analysis = next(row for row in rows if row.get("type") == "query_analysis" and row.get("content"))
     assert query_analysis["content"] == "câu hỏi tra cứu đã chuẩn hóa"
     assert "câu hỏi gốc" not in query_analysis["content"]
@@ -223,7 +223,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
         "type": "corpus_traversal",
         "action": "select",
         "nodeKeys": ["root", "other"],
-        "content": "Đã chọn các chủ đề: Gốc, Khác.",
+        "content": 'Chọn các chủ đề: "Gốc", "Khác".',
         "done": False,
     }
     assert any(row.get("content") == "Câu trả lời" for row in rows)

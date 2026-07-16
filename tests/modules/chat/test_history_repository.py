@@ -39,14 +39,14 @@ def test_strip_corpus_tree_summaries_removes_summary_recursively():
 def test_sanitize_persisted_step_only_strips_corpus_tree():
     corpus_tree_step = {
         "type": "corpus_tree",
-        "content": "Đã tải cây chủ đề phù hợp.",
+        "content": "Tải cây chủ đề phù hợp.",
         "tree": [{"nodeKey": "root", "title": "Gốc", "summary": "Mô tả", "children": []}],
     }
     traversal_step = {
         "type": "corpus_traversal",
         "action": "expand",
         "nodeKey": "root",
-        "content": "Đã mở chủ đề Gốc.",
+        "content": 'Mở chủ đề "Gốc".',
     }
 
     assert _sanitize_persisted_step(corpus_tree_step)["tree"] == [

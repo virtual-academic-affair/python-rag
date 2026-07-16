@@ -22,7 +22,7 @@ def build_traversal_activity_steps(
             "type": "corpus_traversal",
             "action": "expand",
             "node_key": node_key,
-            "content": f"Đã mở chủ đề {title}.",
+            "content": f'Mở chủ đề "{title}".',
         }]
 
     if tool_name == "inspect_topic" and status == "ok":
@@ -33,7 +33,7 @@ def build_traversal_activity_steps(
             "type": "corpus_traversal",
             "action": "inspect",
             "node_key": node_key,
-            "content": f"Đã kiểm tra chủ đề {title}.",
+            "content": f'Kiểm tra chủ đề "{title}".',
         }]
 
     if tool_name == "select_topics" and status == "selected":
@@ -44,11 +44,12 @@ def build_traversal_activity_steps(
         ]
         node_keys = [str(topic.get("nodeKey") or "") for topic in topics if topic.get("nodeKey")]
         titles = [str(topic.get("nodeTitle") or topic.get("nodeKey")) for topic in topics]
+        quoted_titles = ", ".join(f'"{title}"' for title in titles) or "liên quan"
         return [{
             "type": "corpus_traversal",
             "action": "select",
             "node_keys": node_keys,
-            "content": f"Đã chọn các chủ đề: {', '.join(titles) or 'liên quan'}.",
+            "content": f"Chọn các chủ đề: {quoted_titles}.",
         }]
 
     if tool_name == "select_no_match" and status == "no_match":

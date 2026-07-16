@@ -106,5 +106,5 @@ def test_select_activity_returns_one_step_with_all_node_keys():
         "type": "corpus_traversal",
         "action": "select",
         "node_keys": ["first", "second"],
-        "content": "Đã chọn các chủ đề: Một, Hai.",
+        "content": 'Chọn các chủ đề: "Một", "Hai".',
     }]

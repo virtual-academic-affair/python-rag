@@ -25,5 +25,5 @@ def test_simplify_faq_answer_does_not_repeat_question():
 
     assert step == {
         "type": "faq_answer",
-        "content": "FAQ đã trả lời đầy đủ câu hỏi.",
+        "content": "FAQ trả lời đầy đủ câu hỏi.",
     }
