@@ -61,7 +61,8 @@ async def async_retry(
                 raise
             # Exponential backoff with full jitter
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
-            if getattr(exc, "code", None) == 429:
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+            if status_code == 429:
                 delay = max(delay, rate_limit_min_delay)
             delay += random.uniform(0, delay * 0.2)  # ±20% jitter
             logger.warning(

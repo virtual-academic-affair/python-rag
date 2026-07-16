@@ -1,13 +1,36 @@
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock, MagicMock
-from app.modules.rag.ingestion.corpus_linker import CorpusLinker, assign_topics
+from app.integrations.llm.contracts import LLMResponse
+from app.modules.rag.ingestion.corpus_linker import CorpusLinker, assign_topics, call_corpus_llm
 
 ACTIVE = [
     ("chuan-dau-ra-ngoai-ngu", "Chuẩn đầu ra ngoại ngữ", "Quy định ngoại ngữ tốt nghiệp"),
     ("hoc-phi-mien-giam",      "Học phí & miễn giảm",    "Mức học phí và chính sách miễn giảm"),
     ("dieu-kien-tot-nghiep",   "Điều kiện tốt nghiệp",   "Các điều kiện để xét tốt nghiệp"),
 ]
+
+
+@pytest.mark.asyncio
+async def test_corpus_assignment_uses_system_and_user_messages():
+    response = LLMResponse(
+        text='{"selected": [], "new_topics": []}',
+        tool_calls=[],
+        assistant_message={"role": "assistant", "content": "{}"},
+    )
+    gateway = SimpleNamespace(complete=AsyncMock(return_value=response))
+
+    with patch(
+        "app.modules.rag.ingestion.corpus_linker.get_llm_gateway",
+        return_value=gateway,
+    ):
+        await call_corpus_llm("Tài liệu và catalog")
+
+    messages = gateway.complete.await_args.kwargs["messages"]
+    assert [message["role"] for message in messages] == ["system", "user"]
+    assert "classify university academic-affairs content" in messages[0]["content"]
+    assert messages[1]["content"] == "Tài liệu và catalog"
 
 
 @pytest.mark.asyncio

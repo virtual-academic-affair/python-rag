@@ -2,9 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.genai import types
 
 from app.core.exceptions import CorpusTraversalError
+from app.integrations.llm.contracts import LLMResponse, LLMToolCall
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.rag.query.retrieval.traversal.loop import run_corpus_traversal
 from app.modules.rag.query.retrieval.traversal.runtime.snapshot import build_filtered_snapshot_from_nodes
@@ -25,8 +25,30 @@ def _make_node(node_key, file_ids=None, child_keys=None, parent_key=None):
 
 
 def _tool_call_response(name: str, args: dict):
-    part = types.Part.from_function_call(name=name, args=args)
-    return SimpleNamespace(candidates=[SimpleNamespace(content=types.Content(role="model", parts=[part]))])
+    call = LLMToolCall(id=f"call-{name}", name=name, arguments=args)
+    return LLMResponse(
+        text="",
+        tool_calls=[call],
+        assistant_message={
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": call.id,
+                "type": "function",
+                "function": {"name": name, "arguments": "{}"},
+            }],
+        },
+    )
+
+
+def _gateway_patch(responses):
+    complete = AsyncMock(side_effect=responses if isinstance(responses, list) else None)
+    if not isinstance(responses, list):
+        complete.return_value = responses
+    return patch(
+        "app.modules.rag.query.retrieval.traversal.loop.get_llm_gateway",
+        return_value=SimpleNamespace(complete=complete),
+    )
 
 
 @pytest.mark.asyncio
@@ -36,7 +58,7 @@ async def test_run_corpus_traversal_requires_explicit_valid_selection():
     responses = [
         _tool_call_response("select_topics", {"selections": [{"node_key": "valid-topic", "scope": "subtree"}]}),
     ]
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+    with _gateway_patch(responses):
         result = await run_corpus_traversal("Câu hỏi", snapshot)
 
     assert result.status == "selected"
@@ -54,11 +76,46 @@ async def test_run_corpus_traversal_omits_invalid_tool_attempt_from_public_steps
         _tool_call_response("expand_topic", {"node_key": "not-revealed"}),
         _tool_call_response("select_topics", {"selections": [{"node_key": "valid-topic", "scope": "subtree"}]}),
     ]
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+    with _gateway_patch(responses):
         result = await run_corpus_traversal("Câu hỏi", snapshot)
 
     assert result.status == "selected"
     assert [step["action"] for step in result.steps] == ["select"]
+
+
+@pytest.mark.asyncio
+async def test_run_corpus_traversal_retries_tool_call_with_missing_required_arguments():
+    valid = _make_node("valid-topic", file_ids=["file-ok"])
+    snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
+    responses = [
+        _tool_call_response("select_topics", {}),
+        _tool_call_response("select_topics", {
+            "selections": [{"node_key": "valid-topic", "scope": "subtree"}],
+            "reasoning": "Chủ đề này phù hợp với câu hỏi.",
+        }),
+    ]
+    gateway = SimpleNamespace(complete=AsyncMock(side_effect=responses))
+
+    with patch(
+        "app.modules.rag.query.retrieval.traversal.loop.get_llm_gateway",
+        return_value=gateway,
+    ):
+        result = await run_corpus_traversal(
+            "Câu hỏi",
+            snapshot,
+            include_reasoning=True,
+        )
+
+    assert result.status == "selected"
+    assert result.turn_count == 2
+    assert [step["type"] for step in result.steps] == ["reasoning", "corpus_traversal"]
+    retry_history = gateway.complete.await_args_list[1].kwargs["messages"]
+    invalid_result = next(
+        message
+        for message in retry_history
+        if message.get("role") == "tool" and "missing required arguments" in message.get("content", "")
+    )
+    assert "missing required arguments: selections, reasoning" in invalid_result["content"]
 
 
 @pytest.mark.asyncio
@@ -68,7 +125,7 @@ async def test_run_corpus_traversal_records_explicit_no_match_step():
     responses = [
         _tool_call_response("select_no_match", {"reason": "Không phù hợp"}),
     ]
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+    with _gateway_patch(responses):
         result = await run_corpus_traversal("Câu hỏi", snapshot)
 
     assert result.status == "no_match"
@@ -82,10 +139,7 @@ async def test_run_corpus_traversal_returns_no_match_at_max_turns():
     snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
     response = _tool_call_response("expand_topic", {"node_key": "valid-topic"})
 
-    with patch(
-        "app.modules.rag.query.retrieval.traversal.loop.async_retry",
-        AsyncMock(return_value=response),
-    ):
+    with _gateway_patch(response):
         result = await run_corpus_traversal("Câu hỏi", snapshot, max_turns=1)
 
     assert result.status == "no_match"
@@ -121,7 +175,7 @@ async def test_run_corpus_traversal_emits_reasoning_only_for_valid_tool_calls():
     async def on_step(step):
         emitted.append(step)
 
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+    with _gateway_patch(responses):
         result = await run_corpus_traversal(
             "Câu hỏi",
             snapshot,
@@ -140,7 +194,11 @@ async def test_run_corpus_traversal_emits_reasoning_only_for_valid_tool_calls():
 @pytest.mark.asyncio
 async def test_run_corpus_traversal_llm_failure_raises_app_exception():
     snapshot = build_filtered_snapshot_from_nodes([], {"file-ok"}, set())
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=RuntimeError("gemini down"))):
+    complete = AsyncMock(side_effect=RuntimeError("gemini down"))
+    with patch(
+        "app.modules.rag.query.retrieval.traversal.loop.get_llm_gateway",
+        return_value=SimpleNamespace(complete=complete),
+    ):
         with pytest.raises(CorpusTraversalError) as exc:
             await run_corpus_traversal("Câu hỏi", snapshot)
     assert exc.value.status_code == 502
@@ -149,7 +207,11 @@ async def test_run_corpus_traversal_llm_failure_raises_app_exception():
 @pytest.mark.asyncio
 async def test_run_corpus_traversal_no_tool_call_is_failure():
     snapshot = build_filtered_snapshot_from_nodes([], {"file-ok"}, set())
-    response = SimpleNamespace(candidates=[SimpleNamespace(content=types.Content(role="model", parts=[types.Part.from_text(text="done")]))])
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(return_value=response)):
+    response = LLMResponse(
+        text="done",
+        tool_calls=[],
+        assistant_message={"role": "assistant", "content": "done"},
+    )
+    with _gateway_patch(response):
         with pytest.raises(CorpusTraversalError, match="without explicit selection"):
             await run_corpus_traversal("Câu hỏi", snapshot)

@@ -4,10 +4,8 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-from google.genai import types
-
 from app.core.config import settings
-from app.integrations.llm.gemini import gemini_client
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
 from app.modules.faq.repositories.faq_repository import FaqRepository
 from app.modules.rag.query.answering.faq_answering.contracts import FaqAnswerEntry, FaqAnswerResult
 from app.modules.rag.query.answering.faq_answering.parser import parse_faq_answer_response
@@ -15,7 +13,6 @@ from app.modules.rag.query.answering.faq_answering.prompts import (
     CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
     build_faq_answer_prompt,
 )
-from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -23,35 +20,25 @@ logger = logging.getLogger(__name__)
 class FaqAnswerService:
     """Generate a direct answer from retrieved FAQ context when it fully covers the query."""
 
-    def __init__(self):
+    def __init__(self, llm_gateway: LLMGateway | None = None):
         self._faq_repo = FaqRepository()
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
     async def _llm_answer(
         self,
         prompt: str,
         system_prompt: str,
     ) -> tuple[str, dict[str, int] | None]:
-        model = settings.FAQ_MATCHER_MODEL or settings.GEMINI_MODEL
-        resp = await async_retry(
-            gemini_client.client.aio.models.generate_content,
-            model=model,
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.0,
-                response_mime_type="application/json",
-            ),
+        resp = await self._llm_gateway.complete(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            model=settings.LLM_MODEL,
+            temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+            response_format={"type": "json_object"},
         )
-        usage = None
-        if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-            prompt_tokens = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
-            completion_tokens = getattr(resp.usage_metadata, "candidates_token_count", 0) or 0
-            usage = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            }
-        return resp.text or "{}", usage
+        return resp.text or "{}", resp.usage.as_dict() if resp.usage else None
 
     async def answer(
         self,

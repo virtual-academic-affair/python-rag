@@ -1,13 +1,11 @@
 import logging
 import time
-from typing import List, Callable, Any
-from google.genai import types
-from google.genai import errors as genai_errors
+from typing import Any
 
 from app.core.config import settings
-from app.integrations.llm.gemini import gemini_client
+from app.integrations.llm.contracts import LLMTool, ToolHandler
+from app.integrations.llm.gateway import get_llm_gateway
 from app.utils.format_utils import sanitize_latex_in_markdown
-from app.utils.retry import async_retry
 from app.modules.rag.query.answering.pageindex_agent.prompts import CHAT_SYSTEM_PROMPT
 from app.modules.rag.query.answering.pageindex_agent.tools import build_pageindex_tools
 from app.modules.rag.query.answering.pageindex_agent.citations import (
@@ -22,20 +20,13 @@ def get_agent_config(
     candidate_files: list[dict], 
     system_prompt: str = CHAT_SYSTEM_PROMPT,
     include_reasoning: bool = False
-) -> tuple[list[Callable], dict[str, Callable], Any]:
+) -> tuple[list[LLMTool], dict[str, ToolHandler]]:
     """
-    Build tools, map, and GenerateContentConfig for the RAG agent.
+    Build provider-neutral tools and handler map for the RAG agent.
     """
     tools = build_pageindex_tools(candidate_files, include_reasoning=include_reasoning)
-    tool_map = {tool.__name__: tool for tool in tools}
-
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        tools=tools,
-        temperature=0.0,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-    )
-    return tools, tool_map, config
+    tool_map = {tool.name: tool.handler for tool in tools}
+    return tools, tool_map
 
 
 async def run_pageindex_agent_loop(
@@ -49,20 +40,22 @@ async def run_pageindex_agent_loop(
     """
     Run the manual PageIndex agent loop and return a structured result.
     """
-    max_turns = max_turns or settings.AGENT_MAX_TURNS
-    tools, tool_map, config = get_agent_config(
+    max_turns = max_turns or settings.PAGEINDEX_AGENT_MAX_TURNS
+    tools, tool_map = get_agent_config(
         candidate_files, 
         system_prompt=system_prompt,
         include_reasoning=include_reasoning
     )
 
-    # Normalise prompt_contents into a list of Content
+    # Normalise prompt contents into OpenAI-compatible messages.
     if isinstance(prompt_contents, str):
-        history = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_contents)])]
-    elif isinstance(prompt_contents, types.Content):
+        history = [{"role": "user", "content": prompt_contents}]
+    elif isinstance(prompt_contents, dict):
         history = [prompt_contents]
     else:
-        history = list(prompt_contents)  # already a list of Content
+        history = list(prompt_contents)
+    history.insert(0, {"role": "system", "content": system_prompt})
+    llm_gateway = get_llm_gateway()
 
     steps: list[dict] = []
     final_answer = ""
@@ -82,12 +75,11 @@ async def run_pageindex_agent_loop(
         turns_completed = turn_idx + 1
         logger.info("[RAG][%s][pageindex.turn.start] turn=%d", trace_id, turn_idx + 1)
         start_gen = time.perf_counter()
-        resp = await async_retry(
-            gemini_client.client.aio.models.generate_content,
-            model=settings.GEMINI_MODEL,
-            contents=history,
-            config=config,
-            retryable_exceptions=(genai_errors.ServerError,),
+        resp = await llm_gateway.complete(
+            model=settings.LLM_MODEL,
+            messages=history,
+            temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+            tools=tools,
         )
         gen_dur = time.perf_counter() - start_gen
         logger.info(
@@ -97,38 +89,26 @@ async def run_pageindex_agent_loop(
             int(gen_dur * 1000),
         )
 
-        if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-            total_prompt_tokens += getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0
-            total_candidates_tokens += getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0
+        if resp.usage:
+            total_prompt_tokens += resp.usage.prompt_tokens
+            total_candidates_tokens += resp.usage.completion_tokens
 
-        if not resp.candidates or not resp.candidates[0].content or not resp.candidates[0].content.parts:
-            break
-
-        model_parts = resp.candidates[0].content.parts
-        history.append(types.Content(role="model", parts=model_parts))
-
-        tool_calls = []
-        turn_text = ""
-        for part in model_parts:
-            if hasattr(part, "thought") and part.thought:
-                steps.append({"type": "thought", "content": str(part.thought)})
-            if part.function_call:
-                call = part.function_call
-                tool_calls.append(call)
-                args = dict(call.args)
-                reason_val = args.pop("reasoning", None)
-                if reason_val:
-                    steps.append({"type": "reasoning", "content": reason_val})
-                steps.append({"type": "call", "name": call.name, "args": args})
-                logger.info(
-                    "[RAG][%s][pageindex.tool.call] turn=%d tool=%s args=%s",
-                    trace_id,
-                    turn_idx + 1,
-                    call.name,
-                    args,
-                )
-            if part.text:
-                turn_text += part.text
+        history.append(resp.assistant_message)
+        tool_calls = resp.tool_calls
+        turn_text = resp.text
+        for call in tool_calls:
+            args = dict(call.arguments)
+            reason_val = args.pop("reasoning", None)
+            if reason_val:
+                steps.append({"type": "reasoning", "content": reason_val})
+            steps.append({"type": "call", "name": call.name, "args": args})
+            logger.info(
+                "[RAG][%s][pageindex.tool.call] turn=%d tool=%s args=%s",
+                trace_id,
+                turn_idx + 1,
+                call.name,
+                args,
+            )
 
         if not tool_calls:
             logger.info("[RAG][%s][pageindex.answer] turn=%d", trace_id, turn_idx + 1)
@@ -139,13 +119,13 @@ async def run_pageindex_agent_loop(
             final_answer = parsed_answer
             break
 
-        tool_response_parts = []
+        tool_response_messages = []
         for call in tool_calls:
             try:
                 tool_func = tool_map.get(call.name)
                 start_tool = time.perf_counter()
                 result = (
-                    await tool_func(**call.args)
+                    await tool_func(**call.arguments)
                     if tool_func
                     else f"Error: Tool {call.name} not found."
                 )
@@ -159,21 +139,27 @@ async def run_pageindex_agent_loop(
                     str(result)[:500],
                 )
                 steps.append({"type": "tool_output", "name": call.name, "output": str(result)})
-                tool_response_parts.append(
-                    types.Part.from_function_response(name=call.name, response={"result": result})
-                )
-            except Exception:
+                tool_response_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": str(result),
+                })
+            except Exception as e:
                 logger.exception(
                     "[RAG][%s][pageindex.tool.error] turn=%d tool=%s",
                     trace_id,
                     turn_idx + 1,
                     call.name,
                 )
-                tool_response_parts.append(
-                    types.Part.from_function_response(name=call.name, response={"error": str(e)})
-                )
+                tool_response_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": f"Error: {e}",
+                })
 
-        history.append(types.Content(role="user", parts=tool_response_parts))
+        history.extend(tool_response_messages)
     else:
         max_turns_reached = True
 

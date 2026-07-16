@@ -21,20 +21,20 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
     
     prompt = f"""
-    Nhiệm vụ của bạn là kiểm tra xem mục (section) đã cho có xuất hiện hoặc bắt đầu trong đoạn văn bản (page_text) hay không.
+    Determine whether the given section appears or begins in the supplied page text.
 
-    Lưu ý: so khớp mềm, bỏ qua các khoảng trắng không nhất quán trong page_text.
+    Use fuzzy matching and ignore inconsistent whitespace in the page text.
 
-    Tiêu đề mục đã cho: {title}.
-    Đoạn văn bản đã cho: {page_text}.
+    Section title: {title}.
+    Page text: {page_text}.
     
-    Định dạng trả về:
+    Return JSON in this format:
     {{
         
-        "thinking": <lý do tại sao bạn cho rằng mục xuất hiện hoặc bắt đầu trong page_text>
-        "answer": "yes or no" (yes nếu mục xuất hiện hoặc bắt đầu trong page_text, no nếu ngược lại)
+        "thinking": <why you believe the section appears or begins in the page text>,
+        "answer": "yes or no"
     }}
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     response = await llm_acompletion(model=model, prompt=prompt)
     response = extract_json(response)
@@ -47,22 +47,22 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
 async def check_title_appearance_in_start(title, page_text, model=None, logger=None):    
     prompt = f"""
-    Bạn sẽ được cung cấp tiêu đề mục hiện tại và đoạn văn bản (page_text) hiện tại.
-    Nhiệm vụ của bạn là kiểm tra xem mục hiện tại có bắt đầu ngay ở đầu đoạn page_text hay không.
-    Nếu có nội dung khác trước tiêu đề mục hiện tại, thì mục đó không bắt đầu ở đầu page_text.
-    Nếu tiêu đề mục hiện tại là nội dung đầu tiên trong page_text, thì mục đó bắt đầu ở đầu page_text.
+    You are given a section title and page text.
+    Determine whether the section starts at the very beginning of the page text.
+    If any other content appears before the section title, the section does not start at the beginning.
+    If the section title is the first content in the page text, it does start at the beginning.
 
-    Lưu ý: thực hiện fuzzy matching, bỏ qua các khoảng trắng không nhất quán trong page_text.
+    Use fuzzy matching and ignore inconsistent whitespace in the page text.
 
-    Tiêu đề mục đã cho: {title}.
-    Đoạn văn bản đã cho: {page_text}.
+    Section title: {title}.
+    Page text: {page_text}.
     
-    Định dạng trả về:
+    Return JSON in this format:
     {{
-        "thinking": <lý do tại sao bạn cho rằng mục xuất hiện hoặc bắt đầu trong page_text>
-        "start_begin": "yes or no" (yes nếu mục bắt đầu ngay ở đầu page_text, no nếu ngược lại)
+        "thinking": <why you believe the section does or does not start at the beginning>,
+        "start_begin": "yes or no"
     }}
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     response = await llm_acompletion(model=model, prompt=prompt)
     response = extract_json(response)
@@ -103,18 +103,18 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
 
 def toc_detector_single_page(content, model=None):
     prompt = f"""
-    Nhiệm vụ của bạn là phát hiện xem có mục lục (table of contents) trong đoạn văn bản đã cho hay không.
+    Determine whether the supplied text contains a table of contents.
 
-    Văn bản đã cho: {content}
+    Supplied text: {content}
 
-    Trả về theo định dạng JSON sau:
+    Return JSON in this format:
     {{
-        "thinking": <lý do tại sao bạn cho rằng có mục lục trong văn bản đã cho>
+        "thinking": <why you believe the supplied text does or does not contain a table of contents>,
         "toc_detected": "<yes or no>",
     }}
 
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác.
-    Lưu ý: tóm tắt, danh sách ký hiệu, danh sách hình ảnh, danh sách bảng biểu, v.v. không phải là mục lục."""
+    Return only the final JSON object and no other text.
+    Summaries, symbol lists, lists of figures, lists of tables, and similar sections are not tables of contents."""
 
     response = llm_completion(model=model, prompt=prompt)
     # print('response', response)
@@ -124,15 +124,15 @@ def toc_detector_single_page(content, model=None):
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
     prompt = f"""
-    Bạn được cung cấp một phần tài liệu và một mục lục.
-    Nhiệm vụ của bạn là kiểm tra xem mục lục đó có đầy đủ hay không, tức là liệu nó có chứa tất cả các mục chính trong phần tài liệu hay không.
+    You are given a document section and a table of contents.
+    Determine whether the table of contents is complete, meaning that it contains every main section in the document section.
 
-    Định dạng trả về:
+    Return JSON in this format:
     {{
-        "thinking": <lý do tại sao bạn cho rằng mục lục đã đầy đủ hay chưa>
+        "thinking": <why you believe the table of contents is complete or incomplete>,
         "completed": "yes" or "no"
     }}
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
     response = llm_completion(model=model, prompt=prompt)
@@ -142,15 +142,15 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
     prompt = f"""
-    Bạn được cung cấp mục lục dạng thô và mục lục đã được chuẩn hóa.
-    Nhiệm vụ của bạn là kiểm tra xem mục lục chuẩn hóa có đầy đủ hay không.
+    You are given a raw table of contents and its normalized version.
+    Determine whether the normalized table of contents is complete.
 
-    Định dạng trả về:
+    Return JSON in this format:
     {{
-        "thinking": <lý do tại sao bạn cho rằng mục lục đã chuẩn hóa có đầy đủ hay chưa>
+        "thinking": <why you believe the normalized table of contents is complete or incomplete>,
         "completed": "yes" or "no"
     }}
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
     response = llm_completion(model=model, prompt=prompt)
@@ -159,11 +159,11 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
 
 def extract_toc_content(content, model=None):
     prompt = f"""
-    Nhiệm vụ của bạn là trích xuất toàn bộ mục lục từ văn bản đã cho, thay thế ... bằng :
+    Extract the entire table of contents from the supplied text and replace dotted leaders such as ... with :
 
-    Văn bản đã cho: {content}
+    Supplied text: {content}
 
-    Trả về trực tiếp nội dung mục lục đầy đủ. Không xuất bất kỳ nội dung nào khác."""
+    Return only the complete table-of-contents content and no other text."""
 
     response, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True)
     
@@ -175,7 +175,7 @@ def extract_toc_content(content, model=None):
         {"role": "user", "content": prompt}, 
         {"role": "assistant", "content": response},    
     ]
-    prompt = f"""hãy tiếp tục tạo mục lục, xuất trực tiếp phần còn lại của cấu trúc"""
+    prompt = "Continue the table of contents and return only the remaining content."
     new_response, finish_reason = llm_completion(model=model, prompt=prompt, chat_history=chat_history, return_finish_reason=True)
     response = response + new_response
     if_complete = check_if_toc_transformation_is_complete(content, response, model)
@@ -192,7 +192,7 @@ def extract_toc_content(content, model=None):
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": response},
         ]
-        prompt = f"""hãy tiếp tục tạo mục lục, xuất trực tiếp phần còn lại của cấu trúc"""
+        prompt = "Continue the table of contents and return only the remaining content."
         new_response, finish_reason = llm_completion(model=model, prompt=prompt, chat_history=chat_history, return_finish_reason=True)
         response = response + new_response
         if_complete = check_if_toc_transformation_is_complete(content, response, model)
@@ -202,18 +202,18 @@ def extract_toc_content(content, model=None):
 def detect_page_index(toc_content, model=None):
     print('start detect_page_index')
     prompt = f"""
-    Bạn sẽ được cung cấp một mục lục.
+    You are given a table of contents.
 
-    Nhiệm vụ của bạn là phát hiện xem có số trang/chỉ mục được cung cấp trong mục lục hay không.
+    Determine whether it includes page numbers or page indexes.
 
-    Văn bản đã cho: {toc_content}
+    Supplied text: {toc_content}
 
-    Định dạng trả về:
+    Return JSON in this format:
     {{
-        "thinking": <lý do tại sao bạn cho rằng có số trang/chỉ mục trong mục lục hay không>
+        "thinking": <why you believe page numbers or indexes are or are not present>,
         "page_index_given_in_toc": "<yes or no>"
     }}
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     response = llm_completion(model=model, prompt=prompt)
     json_content = extract_json(response)
@@ -243,25 +243,25 @@ def toc_extractor(page_list, toc_page_list, model):
 def toc_index_extractor(toc, content, model=None):
     print('start toc_index_extractor')
     toc_extractor_prompt = """
-    Bạn được cung cấp một mục lục ở định dạng JSON và một vài trang của một tài liệu. Nhiệm vụ của bạn là thêm chỉ mục vật lý (physical_index) vào mục lục trong định dạng JSON đó.
+    You are given a table of contents in JSON format and several document pages. Add physical_index values to that JSON table of contents.
 
-    Các trang được cung cấp chứa các thẻ như <physical_index_X> và <physical_index_X> để chỉ định vị trí vật lý của trang X.
+    The supplied pages contain tags such as <physical_index_X> and <physical_index_X> that mark the physical position of page X.
 
-    Biến 'structure' là hệ thống số đại diện cho chỉ mục của cấu trúc phân cấp trong mục lục. Ví dụ: mục đầu tiên có chỉ số cấu trúc là 1, mục con đầu tiên có chỉ số cấu trúc là 1.1, mục con thứ hai có chỉ số cấu trúc là 1.2, v.v.
+    'structure' is a numbering system for the hierarchical position of each table-of-contents item. For example, the first item is 1, its first child is 1.1, its second child is 1.2, and so on.
 
-    Câu trả lời phải ở định dạng JSON sau: 
+    Return JSON in this format:
     [
         {
-            "structure": <chỉ số cấu trúc, "x.x.x" hoặc null> (string),
-            "title": <tiêu đề của mục>,
-            "physical_index": "<physical_index_X>" (giữ nguyên định dạng)
+            "structure": <hierarchical index, "x.x.x" or null> (string),
+            "title": <section title>,
+            "physical_index": "<physical_index_X>" (preserve this format)
         },
         ...
     ]
 
-    Chỉ thêm physical_index cho các mục có xuất hiện trong các trang được cung cấp.
-    Nếu mục không có trong các trang được cung cấp, đừng thêm physical_index cho mục đó.
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Add physical_index only to sections that appear in the supplied pages.
+    If a section is absent from those pages, do not add physical_index to it.
+    Return only the final JSON array and no other text."""
 
     prompt = toc_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
     response = llm_completion(model=model, prompt=prompt)
@@ -273,23 +273,23 @@ def toc_index_extractor(toc, content, model=None):
 def toc_transformer(toc_content, model=None):
     print('start toc_transformer')
     init_prompt = """
-    Bạn được cung cấp một mục lục. Nhiệm vụ của bạn là chuyển đổi toàn bộ mục lục đó sang định dạng JSON bao gồm 'table_of_contents'.
+    You are given a table of contents. Convert the entire table of contents to JSON containing 'table_of_contents'.
 
-    'structure' là hệ thống số đại diện cho chỉ mục của cấu trúc phân cấp trong mục lục. Ví dụ: mục đầu tiên có chỉ số cấu trúc là 1, mục con đầu tiên có chỉ số cấu trúc là 1.1, mục con thứ hai có chỉ số cấu trúc là 1.2, v.v.
+    'structure' is a numbering system for the hierarchical position of each table-of-contents item. For example, the first item is 1, its first child is 1.1, its second child is 1.2, and so on.
 
-    Câu trả lời phải ở định dạng JSON sau: 
+    Return JSON in this format:
     {
     "table_of_contents": [
         {
-            "structure": <chỉ số cấu trúc, "x.x.x" hoặc null> (string),
-            "title": <tiêu đề của mục>,
-            "page": <số trang hoặc null>,
+            "structure": <hierarchical index, "x.x.x" or null> (string),
+            "title": <section title>,
+            "page": <page number or null>,
         },
         ...
         ],
     }
-    Bạn nên chuyển đổi toàn bộ mục lục trong một lần duy nhất.
-    Trả về trực tiếp cấu trúc JSON cuối cùng, không xuất bất kỳ nội dung nào khác. """
+    Convert the entire table of contents in a single response whenever possible.
+    Return only the final JSON object and no other text. """
 
     prompt = init_prompt + '\n Given table of contents\n:' + toc_content
     last_complete, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True)
@@ -310,16 +310,16 @@ def toc_transformer(toc_content, model=None):
         if position != -1:
             last_complete = last_complete[:position+2]
         prompt = f"""
-        Nhiệm vụ của bạn là tiếp tục hoàn thiện cấu trúc JSON của mục lục, xuất trực tiếp phần còn lại của cấu trúc JSON.
-        Câu trả lời phải ở định dạng JSON.
+        Continue and complete the table-of-contents JSON structure. Return only the remaining portion of the JSON structure.
+        The response must be JSON.
 
-        Cấu trúc JSON mục lục thô là:
+        Raw table of contents:
         {toc_content}
 
-        Cấu trúc JSON mục lục đang chuyển đổi dở dang là:
+        Partially converted table-of-contents JSON:
         {last_complete}
 
-        Vui lòng tiếp tục cấu trúc JSON, xuất trực tiếp phần còn lại của cấu trúc JSON."""
+        Continue the JSON structure and return only its remaining portion."""
 
         new_complete, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True)
 
@@ -460,26 +460,26 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
 
 def add_page_number_to_toc(part, structure, model=None):
     fill_prompt_seq = """
-    Bạn được cung cấp một cấu trúc JSON của một tài liệu và một phần của tài liệu đó. Nhiệm vụ của bạn là kiểm tra xem tiêu đề được mô tả trong cấu trúc có bắt đầu trong phần tài liệu được cung cấp hay không.
+    You are given a document structure in JSON and one part of that document. Determine whether each title in the structure begins in the supplied document part.
 
-    Văn bản được cung cấp chứa các thẻ như <physical_index_X> và <physical_index_X> để chỉ định vị trí vật lý của trang X. 
+    The supplied text contains tags such as <physical_index_X> and <physical_index_X> that mark the physical position of page X.
 
-    Nếu toàn bộ mục mục tiêu bắt đầu trong phần tài liệu được cung cấp, hãy chèn vào cấu trúc JSON được cho với "start": "yes", và "physical_index": "<physical_index_X>".
+    If the target section begins in the supplied document part, set "start": "yes" and "physical_index": "<physical_index_X>" in the supplied JSON structure.
 
-    Nếu toàn bộ mục mục tiêu không bắt đầu trong phần tài liệu được cung cấp, hãy chèn "start": "no", "physical_index": null.
+    If it does not begin there, set "start": "no" and "physical_index": null.
 
-    Câu trả lời nên theo định dạng sau:
+    Return JSON in this format:
         [
             {
-                "structure": <chỉ số cấu trúc, "x.x.x" hoặc null> (string),
-                "title": <tiêu đề của mục>,
-                "start": "<yes hoặc no>",
-                "physical_index": "<physical_index_X> (giữ nguyên định dạng)" hoặc null
+                "structure": <hierarchical index, "x.x.x" or null> (string),
+                "title": <section title>,
+                "start": "<yes or no>",
+                "physical_index": "<physical_index_X> (preserve this format)" or null
             },
             ...
-        ]    
-    Cấu trúc được cung cấp chứa kết quả của phần trước đó, bạn cần điền kết quả của phần hiện tại, không thay đổi kết quả trước đó.
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+        ]
+    The supplied structure includes results from previous document parts. Fill in results for the current part without modifying previous results.
+    Return only the final JSON array and no other text."""
 
     prompt = fill_prompt_seq + f"\n\nCurrent Partial Document:\n{part}\n\nGiven Structure\n{json.dumps(structure, indent=2)}\n"
     current_json_raw = llm_completion(model=model, prompt=prompt)
@@ -507,29 +507,29 @@ def remove_first_physical_index_section(text):
 def generate_toc_continue(toc_content, part, model=None):
     print('start generate_toc_continue')
     prompt = """
-    Bạn là một chuyên gia về trích xuất cấu trúc cây phân cấp.
-    Bạn được cung cấp một cấu trúc cây của phần trước và văn bản của phần hiện tại.
-    Nhiệm vụ của bạn là tiếp tục cấu trúc cây từ phần trước để bao gồm cả phần hiện tại.
+    You are an expert in hierarchical tree extraction.
+    You are given the tree structure from the previous document part and the text of the current part.
+    Continue the previous tree structure so that it also covers the current part.
 
-    Biến 'structure' là hệ thống số đại diện cho chỉ mục của cấu trúc phân cấp trong mục lục. Ví dụ: mục đầu tiên có chỉ số cấu trúc là 1, mục con đầu tiên có chỉ số cấu trúc là 1.1, mục con thứ hai có chỉ số cấu trúc là 1.2, v.v.
+    'structure' is a numbering system for the hierarchical position of each table-of-contents item. For example, the first item is 1, its first child is 1.1, its second child is 1.2, and so on.
 
-    Đối với tiêu đề, bạn cần trích xuất tiêu đề gốc từ văn bản, chỉ sửa các lỗi không nhất quán về khoảng trắng.
+    Extract each title exactly as written in the source text, correcting only inconsistent whitespace. Preserve the source language.
 
-    Văn bản được cung cấp chứa các thẻ như <physical_index_X> và <physical_index_X> để chỉ định điểm bắt đầu và kết thúc của trang X. 
+    The supplied text contains tags such as <physical_index_X> and <physical_index_X> that mark the beginning and end of page X.
     
-    Đối với physical_index, bạn cần trích xuất chỉ số vật lý của điểm bắt đầu của mục từ văn bản. Giữ nguyên định dạng <physical_index_X>.
+    For physical_index, extract the physical index at which the section begins. Preserve the <physical_index_X> format.
 
-    Câu trả lời nên theo định dạng sau:
+    Return JSON in this format:
         [
             {
-                "structure": <chỉ số cấu trúc, "x.x.x"> (string),
-                "title": <tiêu đề của mục, giữ nguyên tiêu đề gốc>,
-                "physical_index": "<physical_index_X> (giữ nguyên định dạng)"
+                "structure": <hierarchical index, "x.x.x"> (string),
+                "title": <section title, preserved from the source>,
+                "physical_index": "<physical_index_X> (preserve this format)"
             },
             ...
-        ]    
+        ]
 
-    Trả về trực tiếp phần bổ sung của cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the additional portion of the final JSON structure and no other text."""
 
     prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
     response, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True)
@@ -542,28 +542,28 @@ def generate_toc_continue(toc_content, part, model=None):
 def generate_toc_init(part, model=None):
     print('start generate_toc_init')
     prompt = """
-    Bạn là một chuyên gia về trích xuất cấu trúc cây phân cấp, nhiệm vụ của bạn là tạo ra cấu trúc cây của tài liệu.
+    You are an expert in hierarchical tree extraction. Build the document's tree structure.
 
-    Biến 'structure' là hệ thống số đại diện cho chỉ mục của cấu trúc phân cấp trong mục lục. Ví dụ: mục đầu tiên có chỉ số cấu trúc là 1, mục con đầu tiên có chỉ số cấu trúc là 1.1, mục con thứ hai có chỉ số cấu trúc là 1.2, v.v.
+    'structure' is a numbering system for the hierarchical position of each table-of-contents item. For example, the first item is 1, its first child is 1.1, its second child is 1.2, and so on.
 
-    Đối với tiêu đề, bạn cần trích xuất tiêu đề gốc từ văn bản, chỉ sửa các lỗi không nhất quán về khoảng trắng.
+    Extract each title exactly as written in the source text, correcting only inconsistent whitespace. Preserve the source language.
 
-    Văn bản được cung cấp chứa các thẻ như <physical_index_X> và <physical_index_X> để chỉ định điểm bắt đầu và kết thúc của trang X. 
+    The supplied text contains tags such as <physical_index_X> and <physical_index_X> that mark the beginning and end of page X.
 
-    Đối với physical_index, bạn cần trích xuất chỉ số vật lý của điểm bắt đầu của mục từ văn bản. Giữ nguyên định dạng <physical_index_X>.
+    For physical_index, extract the physical index at which the section begins. Preserve the <physical_index_X> format.
 
-    Câu trả lời nên theo định dạng sau:
+    Return JSON in this format:
         [
             {{
-                "structure": <chỉ số cấu trúc, "x.x.x"> (string),
-                "title": <tiêu đề của mục, giữ nguyên tiêu đề gốc>,
-                "physical_index": "<physical_index_X> (giữ nguyên định dạng)"
+                "structure": <hierarchical index, "x.x.x"> (string),
+                "title": <section title, preserved from the source>,
+                "physical_index": "<physical_index_X> (preserve this format)"
             }},
             
         ],
 
 
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON structure and no other text."""
 
     prompt = prompt + '\nGiven text\n:' + part
     response, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True)
@@ -739,16 +739,16 @@ def check_toc(page_list, opt=None):
 ################### fix incorrect toc #########################################################
 async def single_toc_item_index_fixer(section_title, content, model=None):
     toc_extractor_prompt = """
-    Bạn được cung cấp một tiêu đề mục và một vài trang của một tài liệu, nhiệm vụ của bạn là tìm chỉ số vật lý (physical_index) của trang bắt đầu của mục đó trong phần tài liệu.
+    You are given a section title and several document pages. Find the physical_index of the page where that section begins.
 
-    Các trang được cung cấp chứa các thẻ như <physical_index_X> và <physical_index_X> để chỉ định vị trí vật lý của trang X.
+    The supplied pages contain tags such as <physical_index_X> and <physical_index_X> that mark the physical position of page X.
 
-    Trả lời theo định dạng JSON:
+    Return JSON in this format:
     {
-        "thinking": <giải thích trang nào, được bắt đầu và kết thúc bởi <physical_index_X>, chứa điểm bắt đầu của mục này>,
-        "physical_index": "<physical_index_X>" (giữ nguyên định dạng)
+        "thinking": <identify which page, delimited by <physical_index_X> tags, contains the beginning of this section>,
+        "physical_index": "<physical_index_X>" (preserve this format)
     }
-    Trả về trực tiếp cấu trúc JSON cuối cùng. Không xuất bất kỳ nội dung nào khác."""
+    Return only the final JSON object and no other text."""
 
     prompt = toc_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
     response = await llm_acompletion(model=model, prompt=prompt)

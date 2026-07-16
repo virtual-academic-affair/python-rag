@@ -8,17 +8,17 @@ from app.modules.rag.query.answering.pageindex_agent.prompts import (
 
 def test_pageindex_prompts_enforce_tool_and_answer_contracts():
     assert "get_document_structure" in BASE_PAGEINDEX_SYSTEM_PROMPT
-    assert "bắt buộc dùng `get_page_content" in BASE_PAGEINDEX_SYSTEM_PROMPT
-    assert "đúng một câu tiếng Việt ngắn" in BASE_PAGEINDEX_SYSTEM_PROMPT
-    assert "Không chèn citation sau từng câu" in BASE_PAGEINDEX_SYSTEM_PROMPT
-    assert "không dùng câu chào" in CHAT_SYSTEM_PROMPT.lower()
-    assert "lịch sử hội thoại" in CHAT_SYSTEM_PROMPT
-    assert "Trả lời trực tiếp câu hỏi đã chuẩn hóa" in EMAIL_SYSTEM_PROMPT
+    assert "call `get_page_content" in BASE_PAGEINDEX_SYSTEM_PROMPT
+    assert "exactly one short Vietnamese sentence" in BASE_PAGEINDEX_SYSTEM_PROMPT
+    assert "Do not cite every sentence" in BASE_PAGEINDEX_SYSTEM_PROMPT
+    assert "without a greeting" in CHAT_SYSTEM_PROMPT.lower()
+    assert "conversation history" in CHAT_SYSTEM_PROMPT
+    assert "Answer the normalized question directly" in EMAIL_SYSTEM_PROMPT
     assert "email" not in EMAIL_SYSTEM_PROMPT.lower()
     assert CHAT_SYSTEM_PROMPT != EMAIL_SYSTEM_PROMPT
 
 
-def test_email_prompt_uses_vietnamese_numbered_document_context():
+def test_email_prompt_uses_english_numbered_document_context():
     prompt = build_email_prompt_text(
         question="Điều kiện tốt nghiệp là gì?",
         subject="Hỏi tốt nghiệp",
@@ -35,9 +35,9 @@ def test_email_prompt_uses_vietnamese_numbered_document_context():
     )
 
     assert "Subject: Hỏi tốt nghiệp" in prompt
-    assert "Nội dung email gốc:\nEm cần biết điều kiện." in prompt
-    assert "Câu hỏi cần trả lời: Điều kiện tốt nghiệp là gì?" in prompt
+    assert "Original email body:\nEm cần biết điều kiện." in prompt
+    assert "Question to answer: Điều kiện tốt nghiệp là gì?" in prompt
     assert "[1] ID: file-1" in prompt
-    assert "Khóa sinh viên: 2022-2022" in prompt
+    assert "Enrollment years: 2022-2022" in prompt
     assert "soạn" not in prompt.lower()
     assert "trả lời email" not in prompt.lower()

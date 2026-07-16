@@ -4,41 +4,37 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from langchain_core.prompts import ChatPromptTemplate
-
 from app.core.config import settings
-from app.integrations.llm.gemini import GeminiGenAIChat, build_extraction_llm, chain_prompt
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
 from app.modules.rag.query.analyzer.contracts import EmailQueryAnalysis
 from app.utils.json_utils import parse_json_safely
-from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
 
 EMAIL_QUERY_ANALYZE_SYSTEM_PROMPT = (
-    "Bạn là chuyên gia phân tích email giáo vụ cho hệ thống tư vấn Phòng Giáo vụ.\n"
-    "Hãy phân tích email dưới đây (bao gồm Tiêu đề và Nội dung) để trích xuất dữ liệu sau:\n\n"
-    "1. 'question': Câu hỏi chính hoặc ý định cốt lõi của người dùng.\n"
-    "   - Viết lại thành câu HOÀN CHỈNH, TỰ LẬP (không cần ngữ cảnh tiêu đề/nội dung để hiểu).\n"
-    "   - Điền đầy đủ thông tin ngầm hiểu (khóa học, năm học, chủ đề đang hỏi).\n"
-    "   - Giữ nguyên Tiếng Việt, KHÔNG thay đổi ý nghĩa gốc.\n"
-    "2. 'inquiry_types': Danh sách các loại thắc mắc (chọn từ: ['graduation', 'training']).\n"
-    "   - 'graduation': Các vấn đề liên quan đến tốt nghiệp, xét tốt nghiệp, chứng nhận, bằng cấp.\n"
-    "   - 'training': Các vấn đề về đào tạo, học phần, đăng ký học tập, thời khóa biểu, điểm số, học vụ.\n"
-    "   - Nếu không rõ ràng hoặc thuộc loại khác, mặc định chọn ['training'].\n"
-    "3. 'metadata_filter': Trích xuất bộ lọc năm học (academic_year) và khóa tuyển sinh (enrollment_year) từ toàn bộ ngữ cảnh email:\n"
-    "   - 'enrollment_year': Khóa sinh viên. Quy tắc BẮT BUỘC: \"K22\" hoặc \"Khóa 22\" -> from_year=2022, to_year=2022.\n"
-    "     Công thức: năm = 2000 + số sau K (ví dụ K20 -> 2020, K19 -> 2019, K22 -> 2022). TUYỆT ĐỐI KHÔNG suy diễn khác. Thiết lập: {{\"from_year\": năm, \"to_year\": năm}}.\n"
-    "   - 'academic_year': Năm học.\n"
-    "     + Nếu có dạng cụ thể như \"NH 2024-2025\" hoặc \"năm học 24-25\" -> from_year=2024, to_year=2025.\n"
-    "     + Nếu chỉ có dạng \"năm học 2024\" -> from_year=2024, to_year=2024.\n"
-    "     + QUY TẮC ĐẶC BIỆT KHI CÓ NIÊN KHÓA: Nếu trích xuất được enrollment_year (K) và email đề cập đến năm học thứ N (năm nhất/1, năm hai/2,...) của khóa đó:\n"
-    "       * Tính toán: from_year = K + N - 1, to_year = K + N.\n"
-    "       * Ví dụ: Năm nhất (năm 1) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2022, to_year=2023 (Năm học 2022-2023).\n"
-    "       * Ví dụ: Năm tư (năm 4) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2025, to_year=2026 (Năm học 2025-2026).\n"
-    "   - Nếu không tìm thấy thông tin tương ứng -> null.\n\n"
-    "Trả về DUY NHẤT một đối tượng JSON hợp lệ theo schema sau (không có ký tự nào khác ngoài JSON):\n"
+    "You analyze academic-affairs emails for a university advisory system.\n"
+    "Analyze the email subject and body and extract the following data:\n\n"
+    "1. 'question': the user's primary question or core intent.\n"
+    "   - Rewrite it as a complete, standalone Vietnamese question.\n"
+    "   - Resolve implicit details such as cohort, academic year, and the subject being discussed.\n"
+    "   - Preserve the original meaning and language.\n"
+    "2. 'inquiry_types': choose values from ['graduation', 'training'].\n"
+    "   - 'graduation': graduation eligibility, graduation review, certificates, or degrees.\n"
+    "   - 'training': curriculum, courses, registration, schedules, grades, or other academic matters.\n"
+    "   - Default to ['training'] when unclear or outside these categories.\n"
+    "3. 'metadata_filter': extract academic_year and enrollment_year from the full email context.\n"
+    "   - enrollment_year is the student's admission cohort. Mandatory mapping: \"K22\" or \"Khóa 22\" means from_year=2022 and to_year=2022.\n"
+    "     Formula: year = 2000 + the number after K. For example, K20=2020, K19=2019, and K22=2022. Do not infer another mapping.\n"
+    "   - academic_year is the school year.\n"
+    "     + A range such as \"NH 2024-2025\" or \"năm học 24-25\" means from_year=2024 and to_year=2025.\n"
+    "     + A single year such as \"năm học 2024\" means from_year=2024 and to_year=2024.\n"
+    "     + When enrollment_year K is known and the email mentions study year N for that cohort, calculate from_year = K + N - 1 and to_year = K + N.\n"
+    "       * First study year of cohort 22 means academic year 2022-2023.\n"
+    "       * Fourth study year of cohort 22 means academic year 2025-2026.\n"
+    "   - Use null when the corresponding information is absent.\n\n"
+    "Return only one valid JSON object matching this schema, with no surrounding text:\n"
     "{{\n"
     "  \"question\": string,\n"
     "  \"inquiry_types\": [string],\n"
@@ -59,16 +55,8 @@ EMAIL_QUERY_ANALYZE_SYSTEM_PROMPT = (
 class EmailQueryAnalyzer:
     """Analyze email subject/body into normalized query intent and filters."""
 
-    def __init__(self, extraction_llm: GeminiGenAIChat | None = None):
-        self._extraction_llm = extraction_llm or build_extraction_llm(
-            api_key=settings.GOOGLE_API_KEY,
-            model=settings.GEMINI_MODEL,
-            temperature=0.0,
-        )
-        self.extraction_prompt = ChatPromptTemplate.from_messages([
-            ("system", EMAIL_QUERY_ANALYZE_SYSTEM_PROMPT),
-            ("human", "Tiêu đề: {title}\nNội dung:\n{content}"),
-        ])
+    def __init__(self, llm_gateway: LLMGateway | None = None):
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
     async def analyze_email(
         self,
@@ -105,9 +93,16 @@ class EmailQueryAnalyzer:
 
     async def _extract_structured_data(self, title: str, content: str) -> dict[str, Any]:
         try:
-            chain = chain_prompt(self.extraction_prompt, self._extraction_llm)
-            result = await async_retry(chain.ainvoke, {"title": title, "content": content})
-            return parse_json_safely(result.content or "", repair=True)
+            response = await self._llm_gateway.complete(
+                messages=[
+                    {"role": "system", "content": EMAIL_QUERY_ANALYZE_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Email subject: {title}\nEmail body:\n{content}"},
+                ],
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
+            )
+            return parse_json_safely(response.text or "", repair=True)
         except Exception as exc:
             logger.error("[EmailAnalyzer] Error during email inquiry analysis: %s", exc, exc_info=True)
             return {}

@@ -35,23 +35,16 @@ class Settings(BaseSettings):
     DOCUMENT_VIEW_URL_PREFIX: str = "https://vaa.hcmus.app/?viewDocumentId="
 
     # ====================================
-    # Google Gemini Configuration
+    # Shared LLM Provider Configuration
     # ====================================
-    GOOGLE_API_KEY: str
+    LLM_API_KEY: str
 
-    # Classification settings (from python-rag)
-    LLM_MODEL: str = "gemini-2.5-flash"
-    LLM_TEMPERATURE: float = 0.1
-    LLM_THINKING_LEVEL: str = "none"
-    GENAI_REQUEST_TIMEOUT: int = 60
-
-    # RAG settings (from rag-service)
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    GEMINI_TEMPERATURE: float = 0.7
-    GEMINI_TOP_P: float = 0.95
-    GEMINI_TOP_K: int = 40
-    GEMINI_TIMEOUT_SECONDS: int = 60
-    AGENT_MAX_TURNS: int = 7
+    # LiteLLM model names include provider prefix.
+    LLM_MODEL: str = "gemini/gemini-2.5-flash"
+    LLM_TIMEOUT_SECONDS: int = 60
+    LLM_MAX_ATTEMPTS: int = 3
+    LLM_DETERMINISTIC_TEMPERATURE: float = 0.0
+    LLM_DIRECT_REPLY_TEMPERATURE: float = 0.5
 
     # LlamaParse configuration (Sprint 1)
     LLAMA_CLOUD_API_KEY: Optional[str] = None
@@ -61,8 +54,7 @@ class Settings(BaseSettings):
 
     # PageIndex configuration
     PAGEINDEX_WORKSPACE: str = "storage/pageindex_workspace"
-    PAGEINDEX_MODEL: str = "gemma-4-31b-it" 
-    PAGEINDEX_RETRIEVE_MODEL: str = "gemma-4-31b-it" 
+    PAGEINDEX_AGENT_MAX_TURNS: int = 7
     PAGEINDEX_TOC_CHECK_PAGE_NUM: int = 20
     PAGEINDEX_MAX_PAGE_NUM_EACH_NODE: int = 10
     PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE: int = 20000
@@ -75,11 +67,7 @@ class Settings(BaseSettings):
     # ====================================
     # FAQ Configuration
     # ====================================
-    # FAQ_MATCHER_MODEL: None -> falls back to GEMINI_MODEL.
     FAQ_MATCHER_MAX_CATALOG: int = 200
-    FAQ_MATCHER_MODEL: Optional[str] = None
-    # None -> falls back to GEMINI_MODEL.
-    CORPUS_TOPIC_MODEL: Optional[str] = None
 
     # Cohere Rerank v2 for file candidates and FAQ context ranking.
     COHERE_API_KEY: Optional[str] = None
@@ -101,8 +89,6 @@ class Settings(BaseSettings):
     CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT: int = 5
 
     FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
-    FAQ_SYNTHESIS_ENABLED: bool = False
-    FAQ_SYNTHESIS_INTERVAL_DAYS: int = 7
     FAQ_SYNTHESIS_MIN_CLUSTER_SIZE: int = 10
     FAQ_SYNTHESIS_LOOKBACK_DAYS: int = 30
     FAQ_LOG_RETENTION_DAYS: int = 90
@@ -124,7 +110,6 @@ class Settings(BaseSettings):
     R2_ACCESS_KEY: str = ""
     R2_SECRET_KEY: str = ""
     R2_BUCKET_NAME: str = "rag-files"
-    R2_USE_SSL: bool = False
     R2_REGION: str = "us-east-1"
     R2_PUBLIC_DOMAIN: Optional[str] = None
 
@@ -160,11 +145,6 @@ class Settings(BaseSettings):
     # File Upload Configuration
     # ====================================
     MAX_FILE_SIZE_MB: int = 20
-
-    # ====================================
-    # Rate Limiting
-    # ====================================
-    MAX_REQUESTS_PER_MINUTE: int = 60
 
     # ====================================
     # CORS Configuration
