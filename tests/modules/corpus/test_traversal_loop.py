@@ -93,3 +93,21 @@ async def test_run_corpus_traversal_no_tool_call_is_failure():
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(return_value=response)):
         with pytest.raises(CorpusTraversalError, match="without explicit selection"):
             await run_corpus_traversal("Câu hỏi", snapshot)
+
+
+@pytest.mark.asyncio
+async def test_run_corpus_traversal_max_turns_returns_no_match():
+    valid = _make_node("valid-topic", file_ids=["file-ok"])
+    snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
+    responses = [
+        _tool_call_response("list_root_topics", {}),
+        _tool_call_response("list_root_topics", {}),
+    ]
+    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+        result = await run_corpus_traversal("Câu hỏi", snapshot, max_turns=2)
+
+    assert result.status == "no_match"
+    assert result.termination_reason == "max_turns_reached_2"
+    assert result.turn_count == 2
+    assert result.file_candidates == []
+    assert result.faq_candidates == []

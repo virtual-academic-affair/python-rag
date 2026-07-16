@@ -203,6 +203,28 @@ async def run_corpus_traversal(
 
         history.append(types.Content(role="user", parts=tool_response_parts))
 
-    raise CorpusTraversalError(
-        f"Corpus traversal agent reached max turns ({max_turns}) without explicit selection"
+    # Exhausted turns without select_topics / select_no_match — treat as soft
+    # no_match so chat returns the existing "không tìm thấy tài liệu" message
+    # instead of bubbling a 502 API error to the client.
+    session = await get_session()
+    traversal_result = TraversalResult(
+        status="no_match",
+        selected_topics=[],
+        expanded_node_keys=session.expanded_node_keys,
+        inspected_node_keys=session.inspected_node_keys,
+        termination_reason=f"max_turns_reached_{max_turns}",
+        turn_count=max_turns,
+        token_usage={
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_prompt_tokens + total_completion_tokens,
+        },
+        steps=activity_steps,
     )
+    logger.info(
+        "[RAG][%s][traversal.agent.no_match] turns=%d reason=%s",
+        trace_id,
+        traversal_result.turn_count,
+        traversal_result.termination_reason,
+    )
+    return traversal_result
