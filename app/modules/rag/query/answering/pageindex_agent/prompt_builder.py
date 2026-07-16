@@ -51,19 +51,19 @@ def build_email_prompt_text(
 ) -> str:
     faq_context = build_faq_context(faq_docs)
     files_info_str = "\n".join(
-        f"- ID: {c['file_id']} | Name: {c['file_name']} | Description: {c.get('doc_description', '')}"
-        for c in candidate_files
+        f"[{i + 1}] ID: {c['file_id']} | Tên: {c['file_name']} | Mô tả: {c.get('doc_description', '')}"
+        for i, c in enumerate(candidate_files)
     )
     context_str = build_metadata_context(metadata_filter)
     return (
-        f"Email Subject: {subject}\n"
-        f"Email Body:\n{content}\n\n"
+        f"Subject: {subject}\n"
+        f"Nội dung email gốc:\n{content}\n\n"
+        f"Câu hỏi cần trả lời: {question}\n\n"
         f"{faq_context}"
         f"{context_str}"
-        f"Relevant documents found:\n{files_info_str}\n\n"
-        f"Please answer the user's specific inquiry based on these documents. "
-        f"Respect the specific rules for the given academic year and cohort if provided.\n\n"
-        f"Extracted question: {question}"
+        f"Các tài liệu liên quan:\n{files_info_str}\n\n"
+        "Hãy dùng số thứ tự [n] để đọc đúng tài liệu và trả lời trực tiếp câu hỏi trên. "
+        "Tuân thủ đúng quy định theo năm học và khóa sinh viên nếu được cung cấp."
     )
 
 
@@ -73,10 +73,10 @@ def build_metadata_context(metadata_filter: dict[str, Any]) -> str:
         academic_year = metadata_filter["academic_year"]
         from_year = academic_year.get("from_year") or academic_year.get("fromYear")
         to_year = academic_year.get("to_year") or academic_year.get("toYear")
-        context_blocks.append(f"Academic Year: {from_year}-{to_year}")
+        context_blocks.append(f"Năm học: {from_year}-{to_year}")
     if metadata_filter.get("enrollment_year"):
         enrollment_year = metadata_filter["enrollment_year"]
         from_year = enrollment_year.get("from_year") or enrollment_year.get("fromYear")
         to_year = enrollment_year.get("to_year") or enrollment_year.get("toYear")
-        context_blocks.append(f"Enrollment Year: {from_year}-{to_year}")
-    return f"Context Information: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""
+        context_blocks.append(f"Khóa sinh viên: {from_year}-{to_year}")
+    return f"Thông tin áp dụng: [{', '.join(context_blocks)}]\n\n" if context_blocks else ""

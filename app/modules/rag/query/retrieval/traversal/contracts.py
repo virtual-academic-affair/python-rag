@@ -18,6 +18,14 @@ class EligibleNodeCounts:
         return self.subtree_file_count + self.subtree_faq_count
 
 
+@dataclass(frozen=True)
+class TopicTreeNode:
+    node_key: str
+    title: str
+    summary: str
+    children: list["TopicTreeNode"] = field(default_factory=list)
+
+
 @dataclass
 class FilteredCorpusSnapshot:
     node_map: dict[str, CorpusNodeDocument]
@@ -28,13 +36,13 @@ class FilteredCorpusSnapshot:
     allowed_file_ids: set[str]
     allowed_faq_ids: set[str]
     prefilter: dict[str, int]
+    topic_tree: list[TopicTreeNode] = field(default_factory=list)
     trace_id: str = ""
 
 
 @dataclass
 class TraversalSession:
     snapshot: FilteredCorpusSnapshot
-    roots_listed: bool = False
     revealed_node_keys: set[str] = field(default_factory=set)
     expanded_node_keys: list[str] = field(default_factory=list)
     inspected_node_keys: list[str] = field(default_factory=list)

@@ -68,12 +68,12 @@ class RagQueryPipeline:
         return self._faq_answer_service
 
     async def answer_chat(self, query_input: RagQueryInput) -> RagQueryResult:
-        return await self._run(query_input, self._with_request_citations(CHAT_BEHAVIOR, query_input))
+        return await self._run(query_input, CHAT_BEHAVIOR)
 
     async def stream_chat(self, query_input: RagQueryInput) -> AsyncGenerator[dict[str, Any], None]:
         async for event in self._run_stream(
             query_input,
-            self._with_request_citations(CHAT_STREAM_BEHAVIOR, query_input),
+            CHAT_STREAM_BEHAVIOR,
         ):
             yield event
 
@@ -126,6 +126,7 @@ class RagQueryPipeline:
             metadata_filter=analysis.metadata_filter,
             user_role=query_input.user_role,
             trace_id=trace_id,
+            include_reasoning=behavior.include_reasoning,
         )
         steps.extend(seeds.traversal_steps)
         faq_docs: list[Any] = []
@@ -133,7 +134,7 @@ class RagQueryPipeline:
         if seeds.faq_candidates:
             faq_docs = await self._prepare_faq_context(analysis, seeds, trace_id=trace_id)
             steps.append(self._build_faq_retrieval_step(seeds, faq_docs))
-            faq_answer = await self._try_answer_from_faqs(analysis, faq_docs)
+            faq_answer = await self._try_answer_from_faqs(analysis, faq_docs, behavior)
             if faq_docs:
                 steps.append(self._build_faq_answer_step(faq_answer, faq_docs))
         if faq_answer:
@@ -145,6 +146,7 @@ class RagQueryPipeline:
                 token_usage=faq_answer.token_usage,
                 candidate_files=[],
                 faq_docs=faq_docs,
+                used_faq_docs=faq_answer.matched_faqs,
                 analysis=analysis,
             )
             logger.info("[RAG][%s][pipeline.complete] source=faq faq_docs=%d duration_ms=%d", trace_id, len(faq_docs), int((time.perf_counter() - started_at) * 1000))
@@ -171,8 +173,6 @@ class RagQueryPipeline:
         agent_result = await run_pageindex_agent_loop(
             candidate_files=prepared.candidate_files,
             prompt_contents=prepared.prompt_contents,
-            resolve_citations=behavior.resolve_citations,
-            citation_link_type=behavior.citation_link_type,
             system_prompt=prepared.system_prompt,
             include_reasoning=behavior.include_reasoning,
             trace_id=trace_id,
@@ -253,6 +253,7 @@ class RagQueryPipeline:
                 user_role=query_input.user_role,
                 trace_id=trace_id,
                 on_traversal_step=emit_traversal_step,
+                include_reasoning=behavior.include_reasoning,
             )
         )
         try:
@@ -264,16 +265,30 @@ class RagQueryPipeline:
                 )
                 if next_step_task in done:
                     step = next_step_task.result()
-                    steps.append(step)
-                    yield {"type": "_corpus_traversal", "step": step}
+                    if step.get("type") == "corpus_tree":
+                        yield {
+                            "type": "_corpus_tree",
+                            "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
+                            "tree": step.get("tree") or [],
+                        }
+                    else:
+                        steps.append(step)
+                        yield {"type": "_corpus_traversal", "step": step}
                 else:
                     next_step_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await next_step_task
             while not traversal_steps.empty():
                 step = traversal_steps.get_nowait()
-                steps.append(step)
-                yield {"type": "_corpus_traversal", "step": step}
+                if step.get("type") == "corpus_tree":
+                    yield {
+                        "type": "_corpus_tree",
+                        "content": step.get("content") or "Đã tải cây chủ đề phù hợp.",
+                        "tree": step.get("tree") or [],
+                    }
+                else:
+                    steps.append(step)
+                    yield {"type": "_corpus_traversal", "step": step}
             seeds = await traversal_task
         except BaseException:
             if not traversal_task.done():
@@ -289,7 +304,7 @@ class RagQueryPipeline:
             faq_retrieval_step = self._build_faq_retrieval_step(seeds, faq_docs)
             steps.append(faq_retrieval_step)
             yield {"type": "_pipeline_step", "step": faq_retrieval_step}
-            faq_answer = await self._try_answer_from_faqs(analysis, faq_docs)
+            faq_answer = await self._try_answer_from_faqs(analysis, faq_docs, behavior)
             if faq_docs:
                 faq_answer_step = self._build_faq_answer_step(faq_answer, faq_docs)
                 steps.append(faq_answer_step)
@@ -304,6 +319,7 @@ class RagQueryPipeline:
                 "token_usage": faq_answer.token_usage,
                 "candidate_files": [],
                 "faq_docs": faq_docs,
+                "used_faq_docs": faq_answer.matched_faqs,
                 "max_turns_reached": False,
                 "analysis": analysis,
                 "is_direct_reply": False,
@@ -338,8 +354,6 @@ class RagQueryPipeline:
         async for event in stream_pageindex_agent_loop(
             candidate_files=prepared.candidate_files,
             prompt_contents=prepared.prompt_contents,
-            resolve_citations=behavior.resolve_citations,
-            citation_link_type=behavior.citation_link_type,
             system_prompt=prepared.system_prompt,
             include_reasoning=behavior.include_reasoning,
             trace_id=trace_id,
@@ -432,7 +446,6 @@ class RagQueryPipeline:
         candidate_files = await self._retrieval.retrieve_file_context(
             analysis.effective_question,
             seeds.file_candidates,
-            max_files=query_input.max_files,
             trace_id=trace_id,
         )
 
@@ -466,6 +479,7 @@ class RagQueryPipeline:
         self,
         analysis: RagQueryAnalysis,
         faq_docs: list[Any],
+        behavior: RagQueryBehavior,
     ) -> Any | None:
         if not faq_docs:
             return None
@@ -473,6 +487,7 @@ class RagQueryPipeline:
         return await self._get_faq_answer_service().answer(
             analysis.effective_question,
             faq_docs,
+            system_prompt=behavior.faq_system_prompt,
         )
 
     @staticmethod
@@ -508,23 +523,6 @@ class RagQueryPipeline:
                 for f in candidate_files
             ],
         }
-
-    @staticmethod
-    def _with_request_citations(
-        behavior: RagQueryBehavior,
-        query_input: RagQueryInput,
-    ) -> RagQueryBehavior:
-        return RagQueryBehavior(
-            mode=behavior.mode,
-            analyzer_mode=behavior.analyzer_mode,
-            allow_direct_reply=behavior.allow_direct_reply,
-            allow_enrollment_fallback=behavior.allow_enrollment_fallback,
-            include_reasoning=behavior.include_reasoning,
-            system_prompt=behavior.system_prompt,
-            no_candidate_message=behavior.no_candidate_message,
-            resolve_citations=query_input.resolve_citations,
-            citation_link_type=query_input.citation_link_type,
-        )
 
     @staticmethod
     def _combine_direct_usage(

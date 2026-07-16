@@ -42,8 +42,6 @@ async def run_pageindex_agent_loop(
     candidate_files: list[dict],
     prompt_contents: Any,
     max_turns: int = None,
-    resolve_citations: bool = False,
-    citation_link_type: str = "original",
     system_prompt: str = CHAT_SYSTEM_PROMPT,
     include_reasoning: bool = False,
     trace_id: str = "",
@@ -180,7 +178,7 @@ async def run_pageindex_agent_loop(
         max_turns_reached = True
 
     sources_data = await build_sources_from_steps(steps, candidate_files)
-    final_answer = verify_citations(final_answer, sources_data, resolve_citations, citation_link_type)
+    final_answer = verify_citations(final_answer, sources_data)
     final_answer = sanitize_latex_in_markdown(final_answer)
     logger.info(
         "[RAG][%s][pageindex.complete] turns=%d max_turns=%s sources=%d tokens=%d/%d",

@@ -4,10 +4,12 @@ import logging
 import time
 from typing import Any, Optional
 
-from app.modules.chat.dtos import ChatHistoryItem, UserContext, TokenUsage
+from app.modules.chat.dtos import ChatHistoryItem, FaqRecommendation, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
 from app.modules.faq.services.faq_service import get_faq_service
+from app.modules.metadata.dtos import FaqMetadataResponse
+from app.modules.metadata.models.value_objects import FaqMetadata, YearRange
 from app.modules.rag.query import RagQueryInput, get_rag_query_pipeline
 from app.utils.format_utils import markdown_to_rich_text
 
@@ -43,8 +45,6 @@ class ChatService:
         question: str,
         user_context: UserContext,
         chat_history: list[ChatHistoryItem],
-        resolve_citations: bool = False,
-        citation_link_type: str = "markdown",
         to_rich_text: bool = False,
     ) -> dict:
         """
@@ -62,8 +62,6 @@ class ChatService:
                 user_name=user_context.name,
                 enrollment_year=user_context.enrollment_year,
                 chat_history=chat_history,
-                resolve_citations=resolve_citations,
-                citation_link_type=citation_link_type,
             )
         )
         candidate_files = rag_result.candidate_files
@@ -74,7 +72,14 @@ class ChatService:
         final_answer = markdown_to_rich_text(answer_markdown) if to_rich_text else answer_markdown
         token_usage_obj = self._token_usage_obj(rag_result.token_usage)
         simplified_steps = [simplify_step(s, candidate_files) for s in rag_result.steps]
-        simplified_steps = [step for step in simplified_steps if step.get("type") in PERSISTED_STEP_TYPES]
+        public_step_types = PERSISTED_STEP_TYPES | {"reasoning"}
+        simplified_steps = [step for step in simplified_steps if step.get("type") in public_step_types]
+        faq_recommendation = self._build_faq_recommendation(
+            analysis=rag_result.analysis,
+            sources=rag_result.sources,
+            candidate_files=candidate_files,
+            used_faq_docs=getattr(rag_result, "used_faq_docs", []),
+        )
 
         if rag_result.is_direct_reply:
             return {
@@ -83,6 +88,7 @@ class ChatService:
                 "steps": simplified_steps,
                 "token_usage": token_usage_obj,
                 "processing_time_ms": processing_time_ms,
+                "faq_recommendation": None,
             }
 
         logger.info(f"[Chat] Final answer for user {user_context.name}: '{answer_markdown[:200]}...' (Completed in {processing_time_ms}ms)")
@@ -107,7 +113,69 @@ class ChatService:
             "steps": simplified_steps,
             "token_usage": token_usage_obj,
             "processing_time_ms": processing_time_ms,
+            "faq_recommendation": faq_recommendation,
         }
+
+    @classmethod
+    def _build_faq_recommendation(
+        cls,
+        *,
+        analysis: Any,
+        sources: list[Any],
+        candidate_files: list[dict[str, Any]],
+        used_faq_docs: list[Any],
+    ) -> FaqRecommendation | None:
+        if not analysis or not cls._analysis_value(analysis, "needs_rag", True):
+            return None
+
+        metadata_filter = cls._analysis_value(analysis, "metadata_filter", {}) or {}
+        metadata = FaqMetadata(
+            enrollment_year=cls._year_range(metadata_filter, "enrollment_year", "enrollmentYear"),
+            academic_year=cls._year_range(metadata_filter, "academic_year", "academicYear"),
+        )
+
+        used_file_ids = {
+            str(cls._item_value(source, "file_id", "fileId") or "")
+            for source in sources or []
+        }
+        lecturer_only = any(
+            bool(candidate.get("lecturer_only", False))
+            for candidate in candidate_files or []
+            if str(candidate.get("file_id") or "") in used_file_ids
+        ) or any(
+            bool(getattr(faq, "lecturer_only", False))
+            for faq in used_faq_docs or []
+        )
+
+        return FaqRecommendation(
+            effective_question=str(
+                cls._analysis_value(analysis, "effective_question", "") or ""
+            ),
+            metadata=FaqMetadataResponse.from_model(metadata),
+            lecturer_only=lecturer_only,
+        )
+
+    @staticmethod
+    def _analysis_value(analysis: Any, field: str, default: Any) -> Any:
+        if isinstance(analysis, dict):
+            return analysis.get(field, default)
+        return getattr(analysis, field, default)
+
+    @staticmethod
+    def _item_value(item: Any, snake_name: str, camel_name: str) -> Any:
+        if isinstance(item, dict):
+            return item.get(snake_name, item.get(camel_name))
+        return getattr(item, snake_name, None)
+
+    @staticmethod
+    def _year_range(metadata_filter: dict[str, Any], snake_name: str, camel_name: str) -> YearRange:
+        value = metadata_filter.get(snake_name) or metadata_filter.get(camel_name)
+        if not isinstance(value, dict):
+            return YearRange()
+        return YearRange.from_null_pair(
+            value.get("from_year", value.get("fromYear")),
+            value.get("to_year", value.get("toYear")),
+        )
 
     @staticmethod
     def _token_usage_obj(token_usage: dict[str, Any] | None) -> TokenUsage | None:

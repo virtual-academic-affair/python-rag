@@ -20,9 +20,6 @@ class RagQueryInput:
     chat_history: list[Any] = field(default_factory=list)
     email_subject: str | None = None
     email_content: str | None = None
-    resolve_citations: bool = False
-    citation_link_type: str = "markdown"
-    max_files: int = 5
 
 
 @dataclass
@@ -33,9 +30,8 @@ class RagQueryBehavior:
     allow_enrollment_fallback: bool
     include_reasoning: bool
     system_prompt: str
+    faq_system_prompt: str
     no_candidate_message: str
-    resolve_citations: bool = False
-    citation_link_type: str = "markdown"
 
 
 @dataclass
@@ -67,6 +63,7 @@ class RagQueryResult:
     token_usage: dict[str, Any] | None
     candidate_files: list[dict[str, Any]]
     faq_docs: list[Any]
+    used_faq_docs: list[Any] = field(default_factory=list)
     max_turns_reached: bool = False
     analysis: RagQueryAnalysis | None = None
     is_direct_reply: bool = False

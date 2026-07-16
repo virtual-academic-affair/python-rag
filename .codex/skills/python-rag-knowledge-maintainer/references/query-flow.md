@@ -26,7 +26,7 @@ Service layers remain adapters for API formatting, rich text conversion, SSE JSO
 
 - Non-stream chat returns final Markdown and may be converted to HTML by chat service when `toRichText=True`.
 - Stream chat forwards reasoning/tool/text/final events and never performs rich text conversion.
-- Email inquiry uses `RagQueryPipeline.answer_email`, keeps gRPC/email side effects outside `rag/query`, and uses original citation behavior when requested.
+- Email inquiry uses `RagQueryPipeline.answer_email`, keeps gRPC/email side effects outside `rag/query`, and shares the same document-view citation behavior as chat.
 
 ## Location Rules
 

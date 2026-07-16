@@ -5,6 +5,7 @@ from typing import Any, Optional
 from pymongo import ReturnDocument
 
 from app.core.exceptions import NotFoundException
+from app.modules.chat.dtos.faq_recommendation import FaqRecommendation
 from app.modules.chat.dtos.send_message import TokenUsage
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
@@ -66,6 +67,7 @@ class ChatHistoryRepository:
         steps: Optional[list[dict[str, Any]]] = None,
         processing_time_ms: Optional[int] = None,
         message_type: str = "text",
+        faq_recommendation: Optional[FaqRecommendation | dict[str, Any]] = None,
     ) -> ChatMessageDocument:
         now = datetime.now(timezone.utc)
         coll = ChatSessionDocument.get_motor_collection()
@@ -107,6 +109,11 @@ class ChatHistoryRepository:
         ]
         token_usage_model = TokenUsage.model_validate(token_usage) if token_usage else None
         source_models = [SourceCitation.model_validate(source) for source in (sources or [])]
+        faq_recommendation_model = (
+            FaqRecommendation.model_validate(faq_recommendation)
+            if faq_recommendation
+            else None
+        )
 
         message_doc = ChatMessageDocument(
             session_id=session_id,
@@ -118,6 +125,7 @@ class ChatHistoryRepository:
             sources=source_models,
             steps=persisted_steps,
             processing_time_ms=processing_time_ms,
+            faq_recommendation=faq_recommendation_model,
             sequence=sequence,
         )
         await message_doc.insert()

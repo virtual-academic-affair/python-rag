@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Application logging
     LOG_LEVEL: str = "INFO"
 
+    # Application URLs
+    DOCUMENT_VIEW_URL_PREFIX: str = "https://vaa.hcmus.app/?viewDocumentId="
+
     # ====================================
     # Google Gemini Configuration
     # ====================================
@@ -85,6 +88,8 @@ class Settings(BaseSettings):
     # The traversal selection contract prevents pools larger than this value.
     # Cohere recommends keeping a rerank request at or below 1,000 documents.
     COHERE_RERANK_MAX_CANDIDATES: int = 1000
+    COHERE_RERANK_FILE_TOP_N: int = 5
+    COHERE_RERANK_FAQ_TOP_N: int = 3
     COHERE_RERANK_MAX_TOKENS_PER_DOC: int = 1024
     COHERE_RERANK_TIMEOUT_SECONDS: float = 10.0
 

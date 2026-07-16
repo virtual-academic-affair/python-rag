@@ -11,7 +11,10 @@ from app.integrations.llm.gemini import gemini_client
 from app.modules.faq.repositories.faq_repository import FaqRepository
 from app.modules.rag.query.answering.faq_answering.contracts import FaqAnswerEntry, FaqAnswerResult
 from app.modules.rag.query.answering.faq_answering.parser import parse_faq_answer_response
-from app.modules.rag.query.answering.faq_answering.prompts import build_faq_answer_prompt
+from app.modules.rag.query.answering.faq_answering.prompts import (
+    CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
+    build_faq_answer_prompt,
+)
 from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
@@ -23,13 +26,18 @@ class FaqAnswerService:
     def __init__(self):
         self._faq_repo = FaqRepository()
 
-    async def _llm_answer(self, prompt: str) -> tuple[str, dict[str, int] | None]:
+    async def _llm_answer(
+        self,
+        prompt: str,
+        system_prompt: str,
+    ) -> tuple[str, dict[str, int] | None]:
         model = settings.FAQ_MATCHER_MODEL or settings.GEMINI_MODEL
         resp = await async_retry(
             gemini_client.client.aio.models.generate_content,
             model=model,
             contents=[prompt],
             config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
                 temperature=0.0,
                 response_mime_type="application/json",
             ),
@@ -51,13 +59,14 @@ class FaqAnswerService:
         faq_docs: list[Any],
         *,
         increment_view_count: bool = True,
+        system_prompt: str = CHAT_FAQ_ANSWER_SYSTEM_PROMPT,
     ) -> Optional[FaqAnswerResult]:
         if not faq_docs:
             return None
 
         entries = self._build_entries(faq_docs)
         prompt = build_faq_answer_prompt(question, entries)
-        raw_response, token_usage = await self._llm_answer(prompt)
+        raw_response, token_usage = await self._llm_answer(prompt, system_prompt)
         parsed = parse_faq_answer_response(raw_response, {entry.faq_id for entry in entries})
         if not parsed:
             logger.info("[FAQ-Answer] FAQ context did not fully answer: '%s'", question[:80])

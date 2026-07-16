@@ -63,6 +63,24 @@ async def test_find_file_ids_for_corpus_builds_filter_in_file_domain():
     assert query["custom_metadata.enrollment_year.from_year"] == {"$lte": 2022}
 
 
+@pytest.mark.parametrize("role", ["lecture", "admin"])
+@pytest.mark.asyncio
+async def test_find_file_ids_for_corpus_privileged_roles_include_both_visibility_values(role):
+    svc = FileService.__new__(FileService)
+    repo = MagicMock()
+    repo.find_ids_by_query = AsyncMock(return_value={"public", "restricted"})
+    svc._file_repo = repo
+    svc._metadata_svc = None
+
+    result = await svc.find_ids_for_corpus({}, role)
+
+    assert result == {"public", "restricted"}
+    query = repo.find_ids_by_query.await_args.args[0]
+    assert query["status"] == FileStatus.READY.value
+    assert query["deleted_at"] is None
+    assert "lecturer_only" not in query
+
+
 @pytest.mark.asyncio
 async def test_process_file_background_uses_ingestion_service_and_marks_ready():
     svc = FileService.__new__(FileService)

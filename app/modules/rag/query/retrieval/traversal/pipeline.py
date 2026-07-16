@@ -7,6 +7,7 @@ from typing import Optional
 from app.modules.corpus.contracts import TraversalResult
 from app.modules.corpus.services.corpus_service import get_corpus_service
 from app.modules.rag.query.retrieval.traversal.loop import run_corpus_traversal
+from app.modules.rag.query.retrieval.traversal.runtime.presentation import topic_tree_payload
 from app.modules.rag.query.retrieval.traversal.runtime.snapshot import build_filtered_snapshot
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ async def run_corpus_traversal_pipeline(
     user_role: Optional[str] = None,
     trace_id: str = "",
     on_step: Callable[[dict], Awaitable[None]] | None = None,
+    include_reasoning: bool = False,
 ) -> TraversalResult:
     """Run deterministic prefiltering, traversal, and candidate resolution."""
     corpus_svc = get_corpus_service()
@@ -30,6 +32,13 @@ async def run_corpus_traversal_pipeline(
         trace_id=trace_id,
     )
 
+    if on_step is not None:
+        await on_step({
+            "type": "corpus_tree",
+            "content": "Đã tải cây chủ đề phù hợp.",
+            "tree": topic_tree_payload(snapshot.topic_tree),
+        })
+
     if not snapshot.allowed_file_ids and not snapshot.allowed_faq_ids:
         logger.info("[RAG][%s][traversal.prefilter_empty]", trace_id)
         return TraversalResult(
@@ -38,7 +47,10 @@ async def run_corpus_traversal_pipeline(
             prefilter=snapshot.prefilter,
         )
 
-    traversal_kwargs = {"trace_id": trace_id}
+    traversal_kwargs = {
+        "trace_id": trace_id,
+        "include_reasoning": include_reasoning,
+    }
     if on_step is not None:
         traversal_kwargs["on_step"] = on_step
     result = await run_corpus_traversal(question, snapshot, **traversal_kwargs)

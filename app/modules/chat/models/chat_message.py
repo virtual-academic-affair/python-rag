@@ -3,6 +3,7 @@ from pydantic import Field
 from app.core.base_document import BaseDocument
 from pymongo import IndexModel, ASCENDING, DESCENDING
 
+from app.modules.chat.dtos.faq_recommendation import FaqRecommendation
 from app.modules.chat.dtos.send_message import TokenUsage
 from app.modules.rag.query.dtos import SourceCitation
 
@@ -16,6 +17,7 @@ class ChatMessageDocument(BaseDocument):
     sources: List[SourceCitation] = Field(default_factory=list)
     steps: List[Dict[str, Any]] = Field(default_factory=list)
     processing_time_ms: Optional[int] = None
+    faq_recommendation: Optional[FaqRecommendation] = None
     sequence: int
 
     class Settings:

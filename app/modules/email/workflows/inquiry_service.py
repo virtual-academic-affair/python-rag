@@ -43,8 +43,6 @@ class InquiryService:
                 email_subject=title,
                 email_content=content,
                 enrollment_year=enrollment_year,
-                resolve_citations=True,
-                citation_link_type="original",
             )
         )
 

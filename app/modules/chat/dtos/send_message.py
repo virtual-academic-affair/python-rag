@@ -1,8 +1,9 @@
-from typing import List, Optional, Literal
+from typing import List, Optional
 from pydantic import Field
 from app.core.base_schema import BaseSchema
 from app.modules.rag.query.dtos import SourceCitation
 from app.modules.rag.query.dtos import TokenUsage
+from app.modules.chat.dtos.faq_recommendation import FaqRecommendation
 
 class UserContext(BaseSchema):
     user_id: str = Field(..., description="Anonymized user ID")
@@ -18,8 +19,6 @@ class ChatHistoryItem(BaseSchema):
 class ChatQueryRequest(BaseSchema):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     session_id: Optional[str] = Field(default=None, description="Chat session ID")
-    resolve_citations: Optional[bool] = Field(default=False, description="Whether to resolve citations to links")
-    citation_link_type: Literal["original", "markdown"] = Field(default="markdown", description="Type of link to use for citations: 'original' or 'markdown'")
     to_rich_text: Optional[bool] = Field(default=False, description="Convert final markdown answer to HTML rich text")
 
 class ChatQueryResponse(BaseSchema):
@@ -30,3 +29,7 @@ class ChatQueryResponse(BaseSchema):
     steps: Optional[List[dict]] = Field(default=None, description="RAG activity timeline: analysis, Corpus traversal, FAQ/file retrieval, and document reads")
     token_usage: Optional[TokenUsage] = Field(default=None, description="Token consumption statistics")
     processing_time_ms: int = Field(..., description="Processing time in milliseconds")
+    faq_recommendation: Optional[FaqRecommendation] = Field(
+        default=None,
+        description="Draft-ready FAQ metadata derived from the answer's actual sources",
+    )

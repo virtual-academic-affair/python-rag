@@ -34,7 +34,6 @@ async def test_run_corpus_traversal_requires_explicit_valid_selection():
     valid = _make_node("valid-topic", file_ids=["file-ok"])
     snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
     responses = [
-        _tool_call_response("list_root_topics", {}),
         _tool_call_response("select_topics", {"selections": [{"node_key": "valid-topic", "scope": "subtree"}]}),
     ]
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
@@ -42,8 +41,9 @@ async def test_run_corpus_traversal_requires_explicit_valid_selection():
 
     assert result.status == "selected"
     assert [candidate.file_id for candidate in result.file_candidates] == ["file-ok"]
-    assert result.turn_count == 2
-    assert [step["action"] for step in result.steps] == ["list_roots", "select"]
+    assert result.turn_count == 1
+    assert [step["action"] for step in result.steps] == ["select"]
+    assert result.steps[0]["node_keys"] == ["valid-topic"]
 
 
 @pytest.mark.asyncio
@@ -51,15 +51,14 @@ async def test_run_corpus_traversal_omits_invalid_tool_attempt_from_public_steps
     valid = _make_node("valid-topic", file_ids=["file-ok"])
     snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
     responses = [
-        _tool_call_response("expand_topic", {"node_key": "valid-topic"}),
-        _tool_call_response("list_root_topics", {}),
+        _tool_call_response("expand_topic", {"node_key": "not-revealed"}),
         _tool_call_response("select_topics", {"selections": [{"node_key": "valid-topic", "scope": "subtree"}]}),
     ]
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
         result = await run_corpus_traversal("Câu hỏi", snapshot)
 
     assert result.status == "selected"
-    assert [step["action"] for step in result.steps] == ["list_roots", "select"]
+    assert [step["action"] for step in result.steps] == ["select"]
 
 
 @pytest.mark.asyncio
@@ -67,14 +66,75 @@ async def test_run_corpus_traversal_records_explicit_no_match_step():
     valid = _make_node("valid-topic", file_ids=["file-ok"])
     snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
     responses = [
-        _tool_call_response("list_root_topics", {}),
         _tool_call_response("select_no_match", {"reason": "Không phù hợp"}),
     ]
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
         result = await run_corpus_traversal("Câu hỏi", snapshot)
 
     assert result.status == "no_match"
-    assert [step["action"] for step in result.steps] == ["list_roots", "no_match"]
+    assert result.turn_count == 1
+    assert [step["action"] for step in result.steps] == ["no_match"]
+
+
+@pytest.mark.asyncio
+async def test_run_corpus_traversal_returns_no_match_at_max_turns():
+    valid = _make_node("valid-topic", file_ids=["file-ok"])
+    snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
+    response = _tool_call_response("expand_topic", {"node_key": "valid-topic"})
+
+    with patch(
+        "app.modules.rag.query.retrieval.traversal.loop.async_retry",
+        AsyncMock(return_value=response),
+    ):
+        result = await run_corpus_traversal("Câu hỏi", snapshot, max_turns=1)
+
+    assert result.status == "no_match"
+    assert result.termination_reason == "max_turns"
+    assert result.turn_count == 1
+    assert result.file_candidates == []
+    assert result.faq_candidates == []
+    assert result.expanded_node_keys == ["valid-topic"]
+    assert [step["action"] for step in result.steps] == ["expand"]
+    assert result.token_usage == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_corpus_traversal_emits_reasoning_only_for_valid_tool_calls():
+    valid = _make_node("valid-topic", file_ids=["file-ok"])
+    snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
+    responses = [
+        _tool_call_response("expand_topic", {
+            "node_key": "not-revealed",
+            "reasoning": "Không được phát ra",
+        }),
+        _tool_call_response("select_topics", {
+            "selections": [{"node_key": "valid-topic", "scope": "subtree"}],
+            "reasoning": "Chủ đề này phù hợp trực tiếp với câu hỏi.",
+        }),
+    ]
+    emitted = []
+
+    async def on_step(step):
+        emitted.append(step)
+
+    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
+        result = await run_corpus_traversal(
+            "Câu hỏi",
+            snapshot,
+            include_reasoning=True,
+            on_step=on_step,
+        )
+
+    assert [step["type"] for step in emitted] == ["reasoning", "corpus_traversal"]
+    assert emitted[0] == {
+        "type": "reasoning",
+        "content": "Chủ đề này phù hợp trực tiếp với câu hỏi.",
+    }
+    assert result.steps == emitted
 
 
 @pytest.mark.asyncio
@@ -93,21 +153,3 @@ async def test_run_corpus_traversal_no_tool_call_is_failure():
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(return_value=response)):
         with pytest.raises(CorpusTraversalError, match="without explicit selection"):
             await run_corpus_traversal("Câu hỏi", snapshot)
-
-
-@pytest.mark.asyncio
-async def test_run_corpus_traversal_max_turns_returns_no_match():
-    valid = _make_node("valid-topic", file_ids=["file-ok"])
-    snapshot = build_filtered_snapshot_from_nodes([valid], {"file-ok"}, set())
-    responses = [
-        _tool_call_response("list_root_topics", {}),
-        _tool_call_response("list_root_topics", {}),
-    ]
-    with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=responses)):
-        result = await run_corpus_traversal("Câu hỏi", snapshot, max_turns=2)
-
-    assert result.status == "no_match"
-    assert result.termination_reason == "max_turns_reached_2"
-    assert result.turn_count == 2
-    assert result.file_candidates == []
-    assert result.faq_candidates == []

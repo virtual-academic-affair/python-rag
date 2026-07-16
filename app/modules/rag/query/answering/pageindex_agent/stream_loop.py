@@ -27,8 +27,6 @@ async def stream_pageindex_agent_loop(
     *,
     candidate_files: list[dict],
     prompt_contents: Any,
-    resolve_citations: bool = False,
-    citation_link_type: str = "markdown",
     system_prompt: str = CHAT_SYSTEM_PROMPT,
     include_reasoning: bool = True,
     trace_id: str = "",
@@ -130,11 +128,7 @@ async def stream_pageindex_agent_loop(
                     if in_answer_block:
                         if stream_formatter is None:
                             current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                            stream_formatter = CitationStreamFormatter(
-                                current_sources,
-                                resolve_citations=resolve_citations,
-                                citation_link_type=citation_link_type,
-                            )
+                            stream_formatter = CitationStreamFormatter(current_sources)
 
                         match = re.search(r"<answer>\r?\n?(.*)", turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
                         if match:
@@ -167,11 +161,7 @@ async def stream_pageindex_agent_loop(
                 new_text = final_text[yielded_text_length:]
                 if stream_formatter is None:
                     current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                    stream_formatter = CitationStreamFormatter(
-                        current_sources,
-                        resolve_citations=resolve_citations,
-                        citation_link_type=citation_link_type,
-                    )
+                    stream_formatter = CitationStreamFormatter(current_sources)
 
                 formatted = stream_formatter.process_chunk(new_text)
                 formatted_flush = stream_formatter.flush()

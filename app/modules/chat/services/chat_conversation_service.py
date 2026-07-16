@@ -95,8 +95,6 @@ class ChatQueryConversationService:
             question=request.question,
             user_context=user_context,
             chat_history=chat_history,
-            resolve_citations=request.resolve_citations,
-            citation_link_type=request.citation_link_type,
             to_rich_text=request.to_rich_text,
         )
 
@@ -111,6 +109,7 @@ class ChatQueryConversationService:
                 sources=result.get("sources"),
                 steps=result.get("steps"),
                 processing_time_ms=result.get("processing_time_ms"),
+                faq_recommendation=result.get("faq_recommendation"),
             )
 
         return ChatQueryResponse(session_id=session_id, **result)
@@ -148,8 +147,6 @@ class ChatStreamConversationService:
             question=request.question,
             user_context=user_context,
             chat_history=chat_history,
-            resolve_citations=request.resolve_citations,
-            citation_link_type=request.citation_link_type,
         ):
             payload = json.loads(chunk_json)
 
@@ -200,6 +197,7 @@ class ChatStreamConversationService:
             steps=payload.get("steps"),
             processing_time_ms=payload.get("processing_time_ms") or payload.get("processingTimeMs"),
             message_type="text",
+            faq_recommendation=payload.get("faq_recommendation") or payload.get("faqRecommendation"),
         )
 
 

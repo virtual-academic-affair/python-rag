@@ -10,6 +10,7 @@ from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRep
 from app.modules.rag.query.retrieval.traversal.contracts import (
     EligibleNodeCounts,
     FilteredCorpusSnapshot,
+    TopicTreeNode,
 )
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,36 @@ logger = logging.getLogger(__name__)
 
 def _count_allowed(ids: list[str], allowed_ids: set[str]) -> int:
     return sum(item_id in allowed_ids for item_id in ids)
+
+
+def _build_topic_tree(
+    node_map: dict[str, CorpusNodeDocument],
+    visible_child_keys_by_parent: dict[str, list[str]],
+    root_keys: list[str],
+) -> list[TopicTreeNode]:
+    def build(node_key: str, seen: frozenset[str]) -> TopicTreeNode | None:
+        if node_key in seen:
+            return None
+        node = node_map.get(node_key)
+        if node is None:
+            return None
+        children = [
+            child
+            for child_key in sorted(visible_child_keys_by_parent.get(node_key, []))
+            if (child := build(child_key, seen | {node_key})) is not None
+        ]
+        return TopicTreeNode(
+            node_key=node.node_key,
+            title=node.title or "",
+            summary=node.summary or "",
+            children=children,
+        )
+
+    return [
+        tree
+        for root_key in sorted(root_keys)
+        if (tree := build(root_key, frozenset())) is not None
+    ]
 
 
 def build_filtered_snapshot_from_nodes(
@@ -41,26 +72,34 @@ def build_filtered_snapshot_from_nodes(
         if counts.total_subtree_count:
             visible_node_keys.add(node.node_key)
 
+    visible_child_keys_by_parent = {
+        node.node_key: sorted(key for key in node.child_keys if key in visible_node_keys)
+        for node in nodes
+        if node.node_key in visible_node_keys
+    }
+    visible_root_keys = sorted(
+        node.node_key
+        for node in nodes
+        if node.parent_key is None and node.node_key in visible_node_keys
+    )
+
     return FilteredCorpusSnapshot(
         node_map=node_map,
         counts_by_key=counts_by_key,
         visible_node_keys=visible_node_keys,
-        visible_child_keys_by_parent={
-            node.node_key: [key for key in node.child_keys if key in visible_node_keys]
-            for node in nodes
-            if node.node_key in visible_node_keys
-        },
-        visible_root_keys=[
-            node.node_key
-            for node in nodes
-            if node.parent_key is None and node.node_key in visible_node_keys
-        ],
+        visible_child_keys_by_parent=visible_child_keys_by_parent,
+        visible_root_keys=visible_root_keys,
         allowed_file_ids=allowed_file_ids,
         allowed_faq_ids=allowed_faq_ids,
         prefilter={
             "allowed_file_count": len(allowed_file_ids),
             "allowed_faq_count": len(allowed_faq_ids),
         },
+        topic_tree=_build_topic_tree(
+            node_map,
+            visible_child_keys_by_parent,
+            visible_root_keys,
+        ),
         trace_id=trace_id,
     )
 
