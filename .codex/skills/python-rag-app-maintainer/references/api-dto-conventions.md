@@ -9,6 +9,7 @@ Use this when changing routers, DTOs, response bodies, query/path params, Postma
 - DTO classes inherit `app.core.base_schema.BaseSchema`, which accepts snake_case or camelCase input and serializes aliases as camelCase.
 - Do not manually camelize response dicts in routers. Prefer typed DTOs with `BaseSchema`.
 - Route and query parameter names are public API too. Prefer camelCase names such as `{topicKey}` and `toRichText`.
+- Multipart field names follow the actual endpoint declaration: DTO-backed `from_form` inputs accept schema aliases, while direct FastAPI `Form(...)` parameters use their declared names. Verify them against OpenAPI instead of assuming JSON camelCase rules.
 
 ## File Organization
 
@@ -42,6 +43,8 @@ When changing a route, request body, response body, query/path param, or SSE/eve
 - `docs/project-overview.txt`
 - `docs/AI_Service.postman_collection.json`
 - focused DTO/router/service tests
+
+Preserve the current document layout and examples that remain valid. Patch the affected sections rather than replacing an entire document unless the user asks for a rewrite or the existing file is corrupted.
 
 ## Role Contract
 

@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 
 from app.modules.corpus.contracts import FileCandidate, FaqCandidate, TopicSelection
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
+from app.modules.rag.cache import CorpusNodeCacheEntry
+
+CorpusNodeLike = CorpusNodeDocument | CorpusNodeCacheEntry
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,7 @@ class TopicTreeNode:
 
 @dataclass
 class FilteredCorpusSnapshot:
-    node_map: dict[str, CorpusNodeDocument]
+    node_map: dict[str, CorpusNodeLike]
     counts_by_key: dict[str, EligibleNodeCounts]
     visible_node_keys: set[str]
     visible_child_keys_by_parent: dict[str, list[str]]

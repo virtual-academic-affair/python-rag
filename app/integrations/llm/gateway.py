@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -19,6 +20,8 @@ from app.integrations.llm.contracts import (
     LLMUsage,
 )
 from app.utils.retry import async_retry
+
+logger = logging.getLogger(__name__)
 
 
 _RETRYABLE_EXCEPTIONS = (
@@ -211,6 +214,13 @@ class LLMGateway:
             raise
         except Exception as exc:
             raise LLMGatewayError(str(exc), status_code=_status_code(exc)) from exc
+        finally:
+            close_stream = getattr(stream, "aclose", None)
+            if close_stream is not None:
+                try:
+                    await close_stream()
+                except Exception as exc:
+                    logger.warning("Failed to close LiteLLM response stream: %s", exc)
 
 
 _gateway: LLMGateway | None = None
@@ -221,3 +231,8 @@ def get_llm_gateway() -> LLMGateway:
     if _gateway is None:
         _gateway = LLMGateway()
     return _gateway
+
+
+async def close_llm_clients() -> None:
+    """Close LiteLLM's cached async HTTP clients on application shutdown."""
+    await litellm.close_litellm_async_clients()

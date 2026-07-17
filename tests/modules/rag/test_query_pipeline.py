@@ -210,9 +210,10 @@ async def test_stream_chat_emits_common_pipeline_events_and_agent_events():
             ))
         ]
 
-    assert [events[0]["type"], events[1]["type"], events[2]["type"]] == [
+    assert [events[0]["type"], events[1]["type"], events[2]["type"], events[3]["type"]] == [
         "_query_analysis_start",
         "_query_analysis",
+        "_corpus_traversal_end",
         "_pipeline_step",
     ]
     pipe._retrieval.retrieve_faq_context.assert_not_awaited()

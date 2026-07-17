@@ -1,5 +1,4 @@
 """Inquiry email flow: mock only the shared RAG pipeline."""
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.modules.email.workflows.inquiry_service import InquiryService
 from app.modules.rag.query import RagQueryAnalysis, RagQueryResult
@@ -45,14 +44,7 @@ async def test_process_maps_llm_pipeline_result():
         faq_docs=[object()],
         analysis=_analysis(inquiry_types=["graduation"]),
     ))
-    faq_svc = MagicMock(log_interaction=AsyncMock())
-
-    def close_background_coro(coro):
-        coro.close()
-
-    with patch("app.modules.email.workflows.inquiry_service.get_faq_service", AsyncMock(return_value=faq_svc)), \
-        patch("app.modules.email.workflows.inquiry_service.asyncio.create_task", side_effect=close_background_coro):
-        out = await svc.process("Tiêu đề", "Nội dung", message_id=123, to_rich_text=False, enrollment_year=2022)
+    out = await svc.process("Tiêu đề", "Nội dung", message_id=123, to_rich_text=False, enrollment_year=2022)
 
     assert out["source"] == "llm"
     assert out["answer"] == "Câu trả lời tài liệu"
@@ -69,7 +61,6 @@ async def test_process_maps_llm_pipeline_result():
     assert request.enrollment_year == 2022
     assert not hasattr(request, "resolve_citations")
     assert not hasattr(request, "citation_link_type")
-    faq_svc.log_interaction.assert_called_once()
 
 
 async def test_process_maps_faq_pipeline_result_without_sources():
@@ -83,22 +74,14 @@ async def test_process_maps_faq_pipeline_result_without_sources():
         faq_docs=[object()],
         analysis=_analysis(),
     ))
-    faq_svc = MagicMock(log_interaction=AsyncMock())
-
-    def close_background_coro(coro):
-        coro.close()
-
-    with patch("app.modules.email.workflows.inquiry_service.get_faq_service", AsyncMock(return_value=faq_svc)), \
-        patch("app.modules.email.workflows.inquiry_service.asyncio.create_task", side_effect=close_background_coro):
-        out = await svc.process("Tiêu đề", "Nội dung", to_rich_text=False)
+    out = await svc.process("Tiêu đề", "Nội dung", to_rich_text=False)
 
     assert out["source"] == "faq"
     assert out["sources"] == []
     assert out["answer"] == "Câu trả lời FAQ"
-    faq_svc.log_interaction.assert_called_once()
 
 
-async def test_process_maps_bypass_without_logging():
+async def test_process_maps_bypass_result():
     """Retrieval context rỗng → bypass."""
     svc = _svc(RagQueryResult(
         answer_markdown="Không tìm thấy tài liệu phù hợp để trả lời email này.",
@@ -110,15 +93,9 @@ async def test_process_maps_bypass_without_logging():
         faq_docs=[],
         analysis=_analysis(question="Câu hỏi không có tài liệu?"),
     ))
-    get_faq_service_mock = AsyncMock()
-
-    with patch("app.modules.email.workflows.inquiry_service.get_faq_service", get_faq_service_mock), \
-        patch("app.modules.email.workflows.inquiry_service.asyncio.create_task") as create_task:
-        out = await svc.process("Tiêu đề", "Nội dung", message_id=123, to_rich_text=False)
+    out = await svc.process("Tiêu đề", "Nội dung", message_id=123, to_rich_text=False)
 
     assert out["source"] == "bypass"
-    get_faq_service_mock.assert_not_awaited()
-    create_task.assert_not_called()
 
 
 async def test_process_can_return_rich_text():
@@ -134,22 +111,14 @@ async def test_process_can_return_rich_text():
             analysis=_analysis(),
         ),
     )
-    faq_svc = MagicMock(log_interaction=AsyncMock())
-
-    def close_background_coro(coro):
-        coro.close()
-
-    with patch("app.modules.email.workflows.inquiry_service.get_faq_service", AsyncMock(return_value=faq_svc)), \
-        patch("app.modules.email.workflows.inquiry_service.asyncio.create_task", side_effect=close_background_coro):
-        out = await svc.process(
-            "Tiêu đề",
-            "Nội dung",
-            message_id=123,
-            to_rich_text=True,
-            enrollment_year=2022,
-        )
+    out = await svc.process(
+        "Tiêu đề",
+        "Nội dung",
+        message_id=123,
+        to_rich_text=True,
+        enrollment_year=2022,
+    )
 
     assert "<strong>Câu trả lời</strong>" in out["answer"]
     request = svc._rag_query.requests[0]
     assert request.question == "Tiêu đề\nNội dung"
-    faq_svc.log_interaction.assert_called_once()

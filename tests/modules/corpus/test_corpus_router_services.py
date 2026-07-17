@@ -7,6 +7,8 @@ from app.core.exceptions import ConflictException
 from app.modules.corpus.contracts import FaqCandidate, FileCandidate, TraversalResult
 from app.modules.corpus.dtos import CorpusTraversalRequest
 from app.modules.corpus.services.corpus_debug_service import CorpusDebugService
+from app.modules.rag.query.debug_service import RagDebugService
+from app.modules.rag.query.dtos import RagChatPreviewRequest
 from app.modules.corpus.services.corpus_job_service import CorpusJobService
 from app.modules.corpus.routers.corpus_router import corpus_tree
 
@@ -86,8 +88,6 @@ async def test_rag_debug_service_chat_preview_uses_shared_pipeline():
         token_usage=None,
     )
     pipeline = SimpleNamespace(answer_chat=AsyncMock(return_value=rag_result))
-    from app.modules.rag.query.debug_service import RagDebugService
-    from app.modules.rag.query.dtos import RagChatPreviewRequest
     svc = RagDebugService()
 
     with patch(

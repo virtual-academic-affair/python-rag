@@ -2,31 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pymongo.errors import DuplicateKeyError
 
-from app.core.config import settings
 from app.core.exceptions import AppException, ValidationException, ConflictException, NotFoundException
 from app.core.pagination import PagedResult
+from app.modules.corpus.services.corpus_service import get_corpus_service
 from app.modules.faq.dtos.create_faq import FaqBulkCreateItem
 from app.modules.faq.models.faq import FaqDocument
-from app.modules.faq.models.faq_candidate import FaqCandidateDocument
-from app.modules.faq.repositories.faq_candidate_repository import FaqCandidateRepository
 from app.modules.faq.repositories.faq_repository import FaqRepository
-from app.modules.faq.repositories.interaction_log_repository import InteractionLogRepository
 from app.modules.rag.query.answering.faq_answering import FaqAnswerService
 from app.modules.metadata.models.value_objects import FaqMetadata
 from app.modules.metadata.services.metadata_service import get_metadata_service
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
+from app.modules.rag.cache import get_rag_cache_service
 from app.utils.format_utils import markdown_to_rich_text, rich_text_to_markdown
 from app.utils.text_utils import remove_accents
 
 
 logger = logging.getLogger(__name__)
 
+_FAQ_DEBUG_CATALOG_LIMIT = 200
 _faq_service_instance: Optional["FaqService"] = None
 _faq_service_lock = asyncio.Lock()
 
@@ -34,8 +32,6 @@ _faq_service_lock = asyncio.Lock()
 class FaqService:
     def __init__(self):
         self._faq_repo = FaqRepository()
-        self._candidate_repo = FaqCandidateRepository()
-        self._log_repo = InteractionLogRepository()
 
     # ------------------------------------------------------------------
     # CRUD
@@ -47,7 +43,6 @@ class FaqService:
         answer_rich_text: str,
         metadata_filter: Dict[str, Any],
         source: str = "manual",
-        candidate_id: Optional[str] = None,
         lecturer_only: bool = False,
         # question_vector kept as ignored kwarg for caller backward-compat during migration
         question_vector: Optional[List[float]] = None,
@@ -69,7 +64,6 @@ class FaqService:
             lecturer_only=lecturer_only,
             metadata_filter=metadata_model,
             source=source,
-            candidate_id=candidate_id,
             view_count=0,
         )
         try:
@@ -97,6 +91,9 @@ class FaqService:
             await self._faq_repo.delete(created)
             raise e
 
+        cache = get_rag_cache_service()
+        await cache.invalidate_faq(str(created.id))
+        await cache.bump_faq_eligibility_revision()
         return created
 
     async def check_duplicate_question(self, question: str) -> Optional[FaqDocument]:
@@ -159,8 +156,10 @@ class FaqService:
         if not doc:
             return None
 
-        if data.get("lecturer_only") is not None:
+        eligibility_changed = False
+        if data.get("lecturer_only") is not None and data["lecturer_only"] != doc.lecturer_only:
             doc.lecturer_only = data["lecturer_only"]
+            eligibility_changed = True
 
         if "question" in data and data["question"] != doc.question:
             doc.question = data["question"]
@@ -183,12 +182,20 @@ class FaqService:
             )
             if not is_valid:
                 raise ValidationException(f"Invalid merged FAQ metadata: {', '.join(errors)}")
-            doc.metadata_filter = meta_model or FaqMetadata()
+            new_metadata = meta_model or FaqMetadata()
+            if new_metadata != doc.metadata_filter:
+                eligibility_changed = True
+            doc.metadata_filter = new_metadata
 
         try:
-            return await self._faq_repo.save(doc)
+            updated = await self._faq_repo.save(doc)
         except DuplicateKeyError:
             raise ConflictException(f"FAQ with question '{doc.question}' already exists.")
+        cache = get_rag_cache_service()
+        await cache.invalidate_faq(faq_id)
+        if eligibility_changed:
+            await cache.bump_faq_eligibility_revision()
+        return updated
 
     async def delete_faq(self, faq_id: str, deleted_by: str) -> bool:
         doc = await self._faq_repo.find_by_id_including_deleted(faq_id)
@@ -196,8 +203,6 @@ class FaqService:
             return False
 
         if doc.deleted_at is None:
-            from app.modules.corpus.services.corpus_service import get_corpus_service
-
             node_keys = await get_corpus_service().get_payload_node_keys("faq", faq_id)
             await self._faq_repo.soft_delete(
                 faq_id,
@@ -207,6 +212,9 @@ class FaqService:
 
         # Idempotent cleanup for retries after a partial failure.
         await get_corpus_linker().unindex_faq(faq_id)
+        cache = get_rag_cache_service()
+        await cache.invalidate_faq(faq_id)
+        await cache.bump_faq_eligibility_revision()
         return True
 
     async def restore_faq(self, faq_id: str) -> FaqDocument:
@@ -219,10 +227,6 @@ class FaqService:
         duplicate = await self._faq_repo.find_by_unaccented_question(doc.question_unaccented)
         if duplicate:
             raise ConflictException(f"Active FAQ with question '{doc.question}' already exists")
-        if doc.candidate_id and await self._faq_repo.find_by_candidate_id(doc.candidate_id):
-            raise ConflictException("An active FAQ already references the same candidate")
-
-        from app.modules.corpus.services.corpus_service import get_corpus_service
 
         corpus_svc = get_corpus_service()
         valid_keys = await corpus_svc.existing_node_keys(doc.deleted_corpus_node_keys)
@@ -250,6 +254,9 @@ class FaqService:
         restored = await self._faq_repo.find_by_id(faq_id)
         if not restored:
             raise AppException("FAQ restore completed but active record could not be loaded", status_code=500)
+        cache = get_rag_cache_service()
+        await cache.invalidate_faq(faq_id)
+        await cache.bump_faq_eligibility_revision()
         return restored
 
     async def purge_faq(self, faq_id: str) -> bool:
@@ -260,6 +267,9 @@ class FaqService:
             raise ConflictException("FAQ must be soft-deleted before purge")
         await get_corpus_linker().unindex_faq(faq_id)
         await self._faq_repo.delete(doc)
+        cache = get_rag_cache_service()
+        await cache.invalidate_faq(faq_id)
+        await cache.bump_faq_eligibility_revision()
         return True
 
     async def get_faq(self, faq_id: str) -> Optional[FaqDocument]:
@@ -370,7 +380,7 @@ class FaqService:
         faqs, _ = await self._faq_repo.list_faqs(
             metadata_filter=mongo_filter,
             skip=0,
-            limit=settings.FAQ_MATCHER_MAX_CATALOG,
+            limit=_FAQ_DEBUG_CATALOG_LIMIT,
         )
         if not faqs:
             logger.info(f"[FAQ] No active FAQs in catalog for metadata {metadata_filter}")
@@ -392,115 +402,6 @@ class FaqService:
             [str(getattr(faq, "id", "")) for faq in answer.matched_faqs],
         )
         return answer
-
-    # ------------------------------------------------------------------
-    # Interaction logging
-    # ------------------------------------------------------------------
-
-    async def log_interaction(
-        self,
-        question: str,
-        answer_markdown: str,
-        metadata_filter: Dict[str, Any],
-        source_type: str,
-        processing_time_ms: int = 0,
-        email_message_id: Optional[int] = None,
-        # question_vector kept as ignored kwarg during transition (synthesis still reads old logs)
-        question_vector: Optional[List[float]] = None,
-    ) -> None:
-        is_valid, errors, meta_model = get_metadata_service().validate_and_parse_faq_metadata(metadata_filter)
-        if not is_valid:
-            raise ValidationException(f"Invalid FAQ metadata: {', '.join(errors)}")
-
-        await self._log_repo.log(
-            question=question,
-            answer_markdown=answer_markdown,
-            question_vector=None,
-            metadata_filter=(meta_model or FaqMetadata()).model_dump(),
-            source_type=source_type,
-            processing_time_ms=processing_time_ms,
-            email_message_id=email_message_id,
-        )
-
-    # ------------------------------------------------------------------
-    # Candidate review
-    # ------------------------------------------------------------------
-
-    async def list_candidates(
-        self,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        page: int = 1,
-        limit: int = 20,
-    ) -> PagedResult[FaqCandidateDocument]:
-        items, total = await self._candidate_repo.list_candidates(
-            status=status,
-            search_text=remove_accents(search) if search else None,
-            skip=(page - 1) * limit,
-            limit=limit,
-        )
-        return PagedResult(items=items, total=total, page=page, limit=limit)
-
-    async def get_candidate(self, candidate_id: str) -> Optional[FaqCandidateDocument]:
-        return await self._candidate_repo.find_by_id(candidate_id)
-
-    async def review_candidate(
-        self,
-        candidate_id: str,
-        action: str,
-        reviewer_id: str,
-        question_override: Optional[str] = None,
-        answer_rich_text_override: Optional[str] = None,
-        metadata_filter_override: Optional[Dict[str, Any]] = None,
-        note: Optional[str] = None,
-    ) -> FaqCandidateDocument:
-        candidate = await self._candidate_repo.find_by_id(candidate_id)
-        if not candidate:
-            raise ValueError(f"Candidate {candidate_id} not found")
-
-        if candidate.status != "pending":
-            raise ValueError(f"Candidate {candidate_id} is already {candidate.status}")
-
-        now = datetime.now(timezone.utc)
-
-        if action == "approve":
-            existing_faq = await self._faq_repo.find_by_candidate_id(candidate_id)
-            if not existing_faq:
-                final_question = question_override or candidate.question
-                final_answer_rt = answer_rich_text_override or candidate.answer_draft_rich_text
-                final_meta = metadata_filter_override or candidate.metadata_filter_suggestion.model_dump()
-
-                await self.create_faq(
-                    question=final_question,
-                    answer_rich_text=final_answer_rt or "",
-                    metadata_filter=final_meta,
-                    source="synthesized",
-                    candidate_id=candidate_id,
-                )
-            else:
-                logger.info(f"[FAQ] FAQ for candidate {candidate_id} already exists. Skipping creation.")
-
-            candidate.status = "approved"
-            if question_override:
-                candidate.question = question_override
-                candidate.question_unaccented = remove_accents(question_override)
-            if answer_rich_text_override:
-                answer_md = rich_text_to_markdown(answer_rich_text_override)
-                candidate.answer_draft_rich_text = answer_rich_text_override
-                candidate.answer_draft_markdown = answer_md
-                candidate.answer_draft_unaccented = remove_accents(answer_md)
-            if metadata_filter_override:
-                candidate.metadata_filter_suggestion = FaqMetadata(**metadata_filter_override)
-        elif action == "reject":
-            candidate.status = "rejected"
-        else:
-            raise ValueError("Action must be 'approve' or 'reject'")
-
-        candidate.reviewed_by = reviewer_id
-        candidate.reviewed_at = now
-        candidate.review_note = note
-        return await self._candidate_repo.save(candidate)
-
 
 async def get_faq_service() -> FaqService:
     global _faq_service_instance

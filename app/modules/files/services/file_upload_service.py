@@ -18,6 +18,7 @@ from app.modules.files.utils.upload_state import UploadStep, UploadState
 from app.modules.rag.ingestion.ingestion_service import get_ingestion_service
 from app.utils.text_utils import remove_accents
 from app.modules.metadata.services.metadata_service import get_metadata_service
+from app.modules.rag.cache import get_rag_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,10 @@ class FileUploadMixin:
             )
             if not ready_doc:
                 raise NotFoundException("File", file_id)
+
+            cache = get_rag_cache_service()
+            await cache.invalidate_file(file_id)
+            await cache.bump_file_eligibility_revision()
 
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Background processing for file {file_id} completed in {bg_dur:.2f}s")

@@ -15,8 +15,10 @@ class FaqDocument(BaseDocument):
     lecturer_only: bool = Field(default=False, description="Nếu True, chỉ admin/lecture mới xem được")
     metadata_filter: FaqMetadata = Field(default_factory=FaqMetadata, description="Fixed schema metadata filter")
     view_count: int = Field(0, description="Number of times this FAQ was matched")
-    source: str = Field("manual", description="Source of the FAQ: 'manual' or 'synthesized'")
-    candidate_id: Optional[str] = Field(None, description="Reference to FaqCandidate if synthesized")
+    source: str = Field(
+        "manual",
+        description="FAQ provenance: manual, bulk_import, seed, or legacy synthesized",
+    )
     deleted_at: Optional[datetime] = Field(default=None, description="Soft-delete timestamp")
     deleted_by: Optional[str] = Field(default=None, description="Admin user ID that soft-deleted the FAQ")
     deleted_corpus_node_keys: List[str] = Field(
@@ -41,13 +43,4 @@ class FaqDocument(BaseDocument):
                 [("deleted_at", ASCENDING), ("created_at", DESCENDING)],
                 name="idx_faqs_deleted_created",
             ),
-            IndexModel(
-                [("candidate_id", ASCENDING)],
-                unique=True,
-                partialFilterExpression={
-                    "candidate_id": {"$type": "string"},
-                    "deleted_at": None,
-                },
-                name="idx_faqs_candidate_id_unique"
-            )
         ]

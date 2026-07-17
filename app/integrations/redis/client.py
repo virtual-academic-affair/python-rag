@@ -65,6 +65,51 @@ class RedisClient:
             logger.warning("Failed to get key %s from Redis: %s", key, e)
             return None
 
+    async def mget_json(self, keys: list[str]) -> list[Optional[Any]]:
+        """Retrieve JSON values while preserving the input key order."""
+        if not keys:
+            return []
+        if not self._redis:
+            return [None] * len(keys)
+        try:
+            values = await self._redis.mget(keys)
+        except Exception as e:
+            logger.warning("Failed to MGET %d Redis keys: %s", len(keys), e)
+            return [None] * len(keys)
+
+        decoded: list[Optional[Any]] = []
+        for key, value in zip(keys, values):
+            if value is None:
+                decoded.append(None)
+                continue
+            try:
+                decoded.append(json.loads(value))
+            except (TypeError, json.JSONDecodeError) as e:
+                logger.warning("Invalid JSON in Redis key %s: %s", key, e)
+                decoded.append(None)
+        return decoded
+
+    async def get_int(self, key: str) -> Optional[int]:
+        """Retrieve an integer value from Redis."""
+        if not self._redis:
+            return None
+        try:
+            value = await self._redis.get(key)
+            return int(value) if value is not None else None
+        except Exception as e:
+            logger.warning("Failed to get integer key %s from Redis: %s", key, e)
+            return None
+
+    async def incr(self, key: str) -> Optional[int]:
+        """Increment a Redis counter and return its new value."""
+        if not self._redis:
+            return None
+        try:
+            return int(await self._redis.incr(key))
+        except Exception as e:
+            logger.warning("Failed to increment Redis key %s: %s", key, e)
+            return None
+
     async def set_json(self, key: str, value: Any, ex: Optional[int] = None):
         """Store JSON data in Redis with optional expiry (seconds)."""
         if not self._redis:
@@ -82,6 +127,19 @@ class RedisClient:
             await self._redis.delete(key)
         except Exception as e:
             logger.warning("Failed to delete key %s from Redis: %s", key, e)
+
+    async def delete_many(self, keys: list[str]) -> bool:
+        """Delete multiple exact keys without scanning Redis."""
+        if not keys:
+            return True
+        if not self._redis:
+            return False
+        try:
+            await self._redis.delete(*keys)
+            return True
+        except Exception as e:
+            logger.warning("Failed to delete %d Redis keys: %s", len(keys), e)
+            return False
 
 _redis_client_instance = None
 

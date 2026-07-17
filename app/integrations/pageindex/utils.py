@@ -1,21 +1,19 @@
-import litellm
+import asyncio
+import copy
+import json
 import logging
 import os
 import textwrap
-from datetime import datetime
 import time
-import json
-import PyPDF2
-import copy
-import asyncio
-import pymupdf
+from datetime import datetime
 from io import BytesIO
-from dotenv import load_dotenv
-load_dotenv()
-import logging
-import yaml
 from pathlib import Path
 from types import SimpleNamespace as config
+
+import litellm
+import pymupdf
+import PyPDF2
+import yaml
 
 from app.core.config import settings
 

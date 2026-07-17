@@ -14,6 +14,10 @@ Use focused tests first; run broader tests when changing shared contracts.
   ```bash
   .venv/bin/python -m pytest tests/modules/rag
   ```
+- RAG/PageIndex cache changes:
+  ```bash
+  .venv/bin/python -m pytest tests/modules/rag tests/integrations/test_pageindex_document_cache.py
+  ```
 - Corpus traversal/retrieval:
   ```bash
   .venv/bin/python -m pytest tests/modules/corpus tests/modules/rag

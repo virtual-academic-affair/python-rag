@@ -2,7 +2,6 @@
 import logging
 import asyncio
 import time
-from datetime import datetime
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -16,8 +15,6 @@ from beanie import init_beanie
 from app.modules.files.models.file import FileDocument
 from app.modules.files.toc_tree.models.toc_tree import FileTocTree
 from app.modules.faq.models.faq import FaqDocument
-from app.modules.faq.models.faq_candidate import FaqCandidateDocument
-from app.modules.faq.models.interaction_log import InteractionLogDocument
 from app.modules.chat.models.chat_session import ChatSessionDocument
 from app.modules.chat.models.chat_message import ChatMessageDocument
 from app.modules.forms.models.form import FormDocument
@@ -28,7 +25,7 @@ from app.modules.email import EmailWorkflowOrchestrator
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
-from app.integrations.llm.gateway import get_llm_gateway
+from app.integrations.llm.gateway import close_llm_clients, get_llm_gateway
 from app.integrations.redis.client import get_redis_client
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
@@ -74,59 +71,6 @@ async def _run_artifact_cleanup():
             await asyncio.sleep(60)  # Wait a bit before retrying if crashed
 
 
-async def _run_monthly_faq_synthesis():
-    """
-    Background task to run FAQ synthesis on the 1st of every month.
-    """
-    logger.info("⏳ Monthly FAQ synthesis scheduler started")
-    
-    while True:
-        try:
-            now = datetime.now()
-            # Calculate time until the 1st of next month at 01:00 AM
-            if now.day == 1 and now.hour < 1:
-                # If today is the 1st but before 1 AM, target today 1 AM
-                target = now.replace(hour=1, minute=0, second=0, microsecond=0)
-            else:
-                # Otherwise, target the 1st of next month
-                if now.month == 12:
-                    target = now.replace(year=now.year + 1, month=1, day=1, hour=1, minute=0, second=0, microsecond=0)
-                else:
-                    target = now.replace(month=now.month + 1, day=1, hour=1, minute=0, second=0, microsecond=0)
-            
-            wait_seconds = (target - now).total_seconds()
-            logger.info(f"Next FAQ synthesis scheduled at {target} (in {wait_seconds/3600:.2f} hours)")
-            
-            await asyncio.sleep(wait_seconds)
-            
-            # Run synthesis
-            logger.info("🚀 Starting scheduled monthly FAQ synthesis...")
-            service = await get_faq_synthesis_service()
-            # For monthly run, we use the default lookback (likely 30 days) or specify last month
-            # Calculate last month range for precision
-            last_month_end = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            if now.month == 1:
-                last_month_start = now.replace(year=now.year - 1, month=12, day=1, hour=0, minute=0, second=0, microsecond=0)
-            else:
-                last_month_start = now.replace(month=now.month - 1, day=1, hour=0, minute=0, second=0, microsecond=0)
-            
-            result = await service.run(
-                date_from_str=last_month_start.isoformat(),
-                date_to_str=last_month_end.isoformat()
-            )
-            logger.info(f"✅ Scheduled FAQ synthesis complete: {result}")
-            
-            # Sleep for at least a day to avoid re-triggering within the same day
-            await asyncio.sleep(86400)
-            
-        except asyncio.CancelledError:
-            logger.info("🛑 Monthly FAQ synthesis task cancelled")
-            break
-        except Exception as e:
-            logger.error(f"❌ Error in monthly FAQ synthesis task: {e}")
-            await asyncio.sleep(3600)  # Retry in an hour if something failed
-
-
 # ====================================
 # LIFESPAN EVENTS
 # ====================================
@@ -164,8 +108,6 @@ async def lifespan(_: FastAPI):
                 FileDocument,
                 FileTocTree,
                 FaqDocument,
-                FaqCandidateDocument,
-                InteractionLogDocument,
                 ChatSessionDocument,
                 ChatMessageDocument,
                 FormDocument,
@@ -221,9 +163,6 @@ async def lifespan(_: FastAPI):
     
     # 7. Start Background Tasks
     _cleanup_task = asyncio.create_task(_run_artifact_cleanup())
-    
-    _synthesis_task = None
-    logger.info("ℹ️ FAQ synthesis background task is temporarily disabled pending architecture migration")
 
     # 8. Initialize Redis
     if settings.REDIS_ENABLED:
@@ -266,14 +205,12 @@ async def lifespan(_: FastAPI):
             pass
         logger.info("✅ Artifact cleanup task stopped")
 
-    # Cancel synthesis task
-    if _synthesis_task:
-        _synthesis_task.cancel()
-        try:
-            await _synthesis_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("✅ FAQ synthesis task stopped")
+    # Close LiteLLM's aiohttp/httpx connection pools while this event loop is alive.
+    try:
+        await close_llm_clients()
+        logger.info("✅ LiteLLM HTTP clients closed")
+    except Exception as e:
+        logger.warning(f"⚠️ LiteLLM client cleanup failed: {e}")
 
     # Close Redis
     if settings.REDIS_ENABLED:

@@ -2,10 +2,15 @@ import logging
 from typing import Optional
 
 from app.core.exceptions import NotFoundException
-from app.modules.files.toc_tree.models.toc_tree import FileTocTree, TocTreeUpsertData
+from app.modules.files.toc_tree.models.toc_tree import (
+    FileTocTree,
+    TocTreeUpsertData,
+    serialize_toc_structure,
+)
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.files.repositories.file_repository import FileRepository
 from app.modules.files.models.file import FileStatus
+from app.modules.rag.cache import get_rag_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +38,25 @@ class TocTreeService:
     async def upsert_toc_tree(self, file_id: str, data: TocTreeUpsertData) -> bool:
         """Insert or replace the TOC tree for a given file_id."""
         logger.info(f"Upserting TOC tree for file: {file_id}")
-        return await self._repo.upsert_by_file_id(file_id, data)
+        updated = await self._repo.upsert_by_file_id(file_id, data)
+        if updated:
+            # PageIndexClient imports this TOC package; keep this edge lazy.
+            from app.integrations.pageindex.client import get_page_index_client
+
+            pageindex = get_page_index_client()
+            if data.markdown_storage_path:
+                await pageindex.warm_doc_cache(
+                    doc_id=file_id,
+                    doc_name=data.doc_name,
+                    doc_description=data.doc_description,
+                    line_count=data.line_count,
+                    structure=serialize_toc_structure(data.structure),
+                    markdown_storage_path=data.markdown_storage_path,
+                )
+            else:
+                await pageindex.evict_doc(file_id)
+            await get_rag_cache_service().invalidate_file(file_id)
+        return updated
 
 _toc_tree_service_instance: Optional[TocTreeService] = None
 

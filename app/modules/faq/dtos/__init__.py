@@ -5,26 +5,15 @@ from app.modules.faq.dtos.create_faq import (
     FaqBulkCreateError,
     FaqBulkCreateResponse,
 )
-from app.modules.faq.dtos.update_faq import (
-    FaqUpdateRequest,
-    FaqReviewRequest,
-)
+from app.modules.faq.dtos.update_faq import FaqUpdateRequest
 from app.modules.faq.dtos.search_faq import (
     FaqMatchRequest,
     FaqMatchResponse,
-    FaqSynthesisRequest,
-    FaqSynthesisResponse,
 )
-from app.modules.faq.dtos.list_faqs import (
-    FaqListResponse,
-    FaqCandidateListResponse,
-)
+from app.modules.faq.dtos.list_faqs import FaqListResponse
 from app.modules.faq.dtos.import_faq import (
     FaqImportRow,
     FaqImportPreviewResponse,
     FaqImportExcelRequest,
 )
-from app.modules.faq.dtos.faq_out import (
-    FaqResponse,
-    FaqCandidateResponse,
-)
+from app.modules.faq.dtos.faq_out import FaqResponse

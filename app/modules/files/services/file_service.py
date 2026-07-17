@@ -9,6 +9,7 @@ from app.core.exceptions import (
     StorageException,
     ValidationException,
 )
+from app.modules.corpus.services.corpus_service import get_corpus_service
 from app.modules.files.models.file import FileDocument, FileListProjection, FileStatus
 from app.modules.files.repositories.file_repository import FileRepository
 from app.integrations.storage.client import r2_storage
@@ -17,6 +18,7 @@ from app.utils.text_utils import remove_accents
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 from app.modules.metadata.utils.filter_builder import get_filter_builder
 from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
+from app.modules.rag.cache import get_rag_cache_service
 from app.modules.files.services.file_upload_service import FileUploadMixin
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,6 @@ class FileService(FileUploadMixin):
             raise NotFoundException("File", file_id)
 
         if file_doc.deleted_at is None:
-            from app.modules.corpus.services.corpus_service import get_corpus_service
-
             node_keys = await get_corpus_service().get_payload_node_keys("file", file_id)
             await self.file_repo.soft_delete(
                 file_id,
@@ -91,9 +91,13 @@ class FileService(FileUploadMixin):
         # Idempotent cleanup: retrying DELETE repairs any previous partial unindex/cache eviction.
         await get_corpus_linker().unindex_file(file_id)
 
+        # PageIndexClient imports the files package and would cycle at module import time.
         from app.integrations.pageindex.client import get_page_index_client
 
         await get_page_index_client().evict_doc(file_id)
+        cache = get_rag_cache_service()
+        await cache.invalidate_file(file_id)
+        await cache.bump_file_eligibility_revision()
         logger.info("File %s soft-deleted by %s", file_id, deleted_by)
         return True
 
@@ -121,8 +125,6 @@ class FileService(FileUploadMixin):
         reindexed = False
         try:
             if file_doc.status == FileStatus.READY:
-                from app.modules.corpus.services.corpus_service import get_corpus_service
-
                 corpus_svc = get_corpus_service()
                 valid_keys = await corpus_svc.existing_node_keys(file_doc.deleted_corpus_node_keys)
                 if valid_keys:
@@ -148,6 +150,9 @@ class FileService(FileUploadMixin):
         restored = await self.file_repo.find_by_id(file_id)
         if not restored:
             raise AppException("File restore completed but active record could not be loaded", status_code=500)
+        cache = get_rag_cache_service()
+        await cache.invalidate_file(file_id)
+        await cache.bump_file_eligibility_revision()
         return restored
 
     async def purge_file(self, file_id: str) -> bool:
@@ -158,6 +163,7 @@ class FileService(FileUploadMixin):
             raise ConflictException("File must be soft-deleted before purge")
 
         await get_corpus_linker().unindex_file(file_id)
+        # PageIndexClient imports the files package and would cycle at module import time.
         from app.integrations.pageindex.client import get_page_index_client
 
         await get_page_index_client().evict_doc(file_id)
@@ -168,6 +174,9 @@ class FileService(FileUploadMixin):
                 raise StorageException(f"Failed to purge R2 object: {storage_path}")
 
         await self.file_repo.delete(file_doc)
+        cache = get_rag_cache_service()
+        await cache.invalidate_file(file_id)
+        await cache.bump_file_eligibility_revision()
         logger.info("File %s permanently purged", file_id)
         return True
 
@@ -184,6 +193,7 @@ class FileService(FileUploadMixin):
             raise NotFoundException("File", file_id)
 
         changed = False
+        eligibility_changed = False
 
         if display_name is not None and display_name != file_doc.display_name:
             file_doc.display_name = display_name
@@ -201,16 +211,22 @@ class FileService(FileUploadMixin):
             if meta_model != file_doc.custom_metadata:
                 file_doc.custom_metadata = meta_model
                 changed = True
+                eligibility_changed = True
 
         if lecturer_only is not None and lecturer_only != file_doc.lecturer_only:
             file_doc.lecturer_only = lecturer_only
             changed = True
+            eligibility_changed = True
 
         if changed:
             try:
                 await self.file_repo.save(file_doc)
             except Exception as e:
                 raise AppException(f"Failed to save file update: {str(e)}", status_code=500) from e
+            cache = get_rag_cache_service()
+            await cache.invalidate_file(file_id)
+            if eligibility_changed:
+                await cache.bump_file_eligibility_revision()
 
         return file_doc
 

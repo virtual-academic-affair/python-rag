@@ -52,7 +52,7 @@ async def test_delete_file_soft_deletes_and_keeps_artifacts():
     pageindex = MagicMock()
     pageindex.evict_doc = AsyncMock()
 
-    with patch("app.modules.corpus.services.corpus_service.get_corpus_service", return_value=corpus), patch(
+    with patch("app.modules.files.services.file_service.get_corpus_service", return_value=corpus), patch(
         "app.modules.files.services.file_service.get_corpus_linker", return_value=linker
     ), patch("app.integrations.pageindex.client.get_page_index_client", return_value=pageindex), patch(
         "app.modules.files.services.file_service.r2_storage.delete_file", new=AsyncMock()

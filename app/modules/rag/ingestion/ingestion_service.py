@@ -5,6 +5,7 @@ import io
 import logging
 
 from app.integrations.storage.client import r2_storage
+from app.modules.rag.cache import get_rag_cache_service
 from app.modules.rag.ingestion.corpus_linker import get_corpus_linker
 from app.modules.rag.ingestion.document_parser import get_document_parser
 
@@ -25,6 +26,7 @@ class IngestionService:
     """Orchestrates file ingestion artifacts for RAG."""
 
     def __init__(self):
+        # The files package imports FileUploadMixin, which imports this service.
         from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 
         self._document_parser = get_document_parser()
@@ -39,6 +41,7 @@ class IngestionService:
         file_path: str,
         original_storage_path: str,
     ) -> FileIngestionResult:
+        # Keep files-package imports lazy for the FileUploadMixin cycle above.
         from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
 
         markdown_storage_path = original_storage_path.rsplit(".", 1)[0] + ".md"
@@ -69,6 +72,19 @@ class IngestionService:
                     markdown_storage_path=markdown_storage_path,
                 ),
             )
+
+            # PageIndexClient also imports the files package.
+            from app.integrations.pageindex.client import get_page_index_client
+
+            await get_page_index_client().warm_doc_cache(
+                doc_id=file_id,
+                doc_name=display_name,
+                doc_description=ingest_result.get("summary", ""),
+                line_count=ingest_result.get("line_count", 0),
+                structure=ingest_result.get("toc_structure", []),
+                markdown_storage_path=markdown_storage_path,
+            )
+            await get_rag_cache_service().invalidate_file(file_id)
 
             logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{display_name}') vào corpus tree")
             node_keys = await self._corpus_linker.index_file(
@@ -116,6 +132,16 @@ class IngestionService:
             await self._corpus_linker.unindex_file(file_id)
         except Exception as e:
             logger.warning(f"Failed to cleanup corpus index for failed file {file_id}: {e}")
+
+        try:
+            # PageIndexClient also imports the files package.
+            from app.integrations.pageindex.client import get_page_index_client
+
+            await get_page_index_client().evict_doc(file_id)
+        except Exception as e:
+            logger.warning(f"Failed to evict PageIndex cache for failed file {file_id}: {e}")
+
+        await get_rag_cache_service().invalidate_file(file_id)
 
         await self._cleanup_local_artifacts(file_id)
 

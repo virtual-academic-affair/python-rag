@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "AI Service API",
-    "description": "Generated from OpenAPI, keeping request bodies.",
+    "description": "AI Service v5.0.0 — synchronized with FastAPI routes and DTOs on 2026-07-18.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -723,6 +723,17 @@
                   "key": "customMetadata",
                   "value": "{\"type\":\"cong_van\",\"academicYear\":{\"fromYear\":2024,\"toYear\":2025}}",
                   "type": "text"
+                },
+                {
+                  "key": "lecturerOnly",
+                  "value": "false",
+                  "type": "text"
+                },
+                {
+                  "key": "clientId",
+                  "value": "postman-upload",
+                  "type": "text",
+                  "disabled": true
                 }
               ]
             }
@@ -1061,7 +1072,7 @@
             "description": "Create a new FAQ manually.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ và GPA >= 2.0.\",\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 2022,\n      \"toYear\": 2022\n    }\n  }\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì?\",\n  \"answerRichText\": \"<p>Sinh viên cần tích lũy đủ 120 tín chỉ và GPA &gt;= 2.0.</p>\",\n  \"lecturerOnly\": false,\n  \"metadataFilter\": {\n    \"academicYear\": {\n      \"fromYear\": 2024,\n      \"toYear\": 2025\n    },\n    \"enrollmentYear\": {\n      \"fromYear\": 2022,\n      \"toYear\": 2022\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1096,108 +1107,6 @@
           "response": []
         },
         {
-          "name": "List Candidates",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/faqs/candidates/list",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "faqs",
-                "candidates",
-                "list"
-              ]
-            },
-            "description": "List FAQ candidates from synthesis."
-          },
-          "response": []
-        },
-        {
-          "name": "Get Candidate",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "faqs",
-                "candidates",
-                "{{candidate_id}}"
-              ]
-            },
-            "description": "Get a specific FAQ candidate by ID."
-          },
-          "response": []
-        },
-        {
-          "name": "Review Candidate",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/faqs/candidates/{{candidate_id}}/review",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "faqs",
-                "candidates",
-                "{{candidate_id}}",
-                "review"
-              ]
-            },
-            "description": "Approve or reject an FAQ candidate.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"action\": \"approve\",\n  \"questionOverride\": null,\n  \"answerRichTextOverride\": null,\n  \"metadataFilterOverride\": null,\n  \"note\": \"Câu trả lời chính xác\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
-          "name": "Trigger Synthesis",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/faqs/synthesis",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "faqs",
-                "synthesis"
-              ]
-            },
-            "description": "FAQ synthesis endpoint is currently disabled and returns 501 pending architecture migration.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"dateFrom\": null,\n  \"sources\": []\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          },
-          "response": []
-        },
-        {
           "name": "Update Faq",
           "request": {
             "method": "PATCH",
@@ -1216,7 +1125,7 @@
             "description": "Update an existing FAQ.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì? (cập nhật)\",\n  \"answer\": \"Sinh viên cần tích lũy đủ 120 tín chỉ, GPA >= 2.0, và hoàn thành học phần GDQP.\"\n}",
+              "raw": "{\n  \"question\": \"Điều kiện tốt nghiệp là gì? (cập nhật)\",\n  \"answerRichText\": \"<p>Sinh viên cần tích lũy đủ 120 tín chỉ, GPA &gt;= 2.0, và hoàn thành học phần GDQP.</p>\",\n  \"lecturerOnly\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1395,8 +1304,18 @@
                   "type": "text"
                 },
                 {
-                  "key": "skip_duplicates",
+                  "key": "metadataFilterJson",
+                  "value": "{}",
+                  "type": "text"
+                },
+                {
+                  "key": "skipDuplicates",
                   "value": "true",
+                  "type": "text"
+                },
+                {
+                  "key": "lecturerOnly",
+                  "value": "false",
                   "type": "text"
                 }
               ]
@@ -1423,7 +1342,7 @@
             "description": "Bulk create FAQs from JSON data.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Học phí CLC là bao nhiêu?\",\n      \"answer\": \"25 triệu đồng/năm học.\",\n      \"metadataFilter\": {\n        \"type\": \"cong_van\"\n      }\n    }\n  ],\n  \"skipDuplicates\": true\n}",
+              "raw": "{\n  \"items\": [\n    {\n      \"question\": \"Học phí CLC là bao nhiêu?\",\n      \"answerRichText\": \"<p>25 triệu đồng/năm học.</p>\",\n      \"lecturerOnly\": false,\n      \"metadataFilter\": {\n        \"academicYear\": {\n          \"fromYear\": 2024,\n          \"toYear\": 2025\n        }\n      }\n    }\n  ],\n  \"skipDuplicates\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1576,17 +1495,17 @@
                   "description": "Excel file (.xlsx)"
                 },
                 {
-                  "key": "documentTypeCol",
+                  "key": "document_type_col",
                   "value": "A",
                   "type": "text"
                 },
                 {
-                  "key": "contentLinkCol",
+                  "key": "content_link_col",
                   "value": "B",
                   "type": "text"
                 },
                 {
-                  "key": "notesCol",
+                  "key": "notes_col",
                   "value": "C",
                   "type": "text"
                 }
@@ -1621,17 +1540,17 @@
                   "type": "file"
                 },
                 {
-                  "key": "documentTypeCol",
+                  "key": "document_type_col",
                   "value": "documentType",
                   "type": "text"
                 },
                 {
-                  "key": "contentLinkCol",
+                  "key": "content_link_col",
                   "value": "contentLink",
                   "type": "text"
                 },
                 {
-                  "key": "notesCol",
+                  "key": "notes_col",
                   "value": "notes",
                   "type": "text"
                 }
@@ -1653,7 +1572,7 @@
       "key": "token",
       "value": "",
       "type": "string",
-      "description": "JWT access token from nest-api (POST /auth/login or GET /auth/google). Required for Store, File, and Metadata write endpoints."
+      "description": "HS256 JWT issued by nest-api. AI Service verifies it locally; required for authenticated APIs and admin role for mutations/debug endpoints."
     },
     {
       "key": "file_id",
@@ -1673,11 +1592,6 @@
     },
     {
       "key": "faq_id",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "candidate_id",
       "value": "",
       "type": "string"
     },

@@ -1,13 +1,13 @@
 import jwt
 import logging
+from typing import Optional
+
 from fastapi import HTTPException, status
+from pydantic import BaseModel, Field, ValidationError
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-
-from typing import Optional
-from pydantic import BaseModel, Field, ValidationError
 
 class JWTPayload(BaseModel):
     sub: str

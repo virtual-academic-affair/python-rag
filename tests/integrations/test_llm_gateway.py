@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -5,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.integrations.llm.contracts import LLMStreamAccumulator, LLMTool
-from app.integrations.llm.gateway import LLMGateway
+from app.integrations.llm.gateway import LLMGateway, close_llm_clients
 
 
 def _response(*, content="", tool_calls=None, usage=None):
@@ -84,6 +85,7 @@ async def test_complete_normalizes_tool_calls_and_schemas():
 class _AsyncStream:
     def __init__(self, chunks):
         self._chunks = chunks
+        self.closed = False
 
     def __aiter__(self):
         self._iterator = iter(self._chunks)
@@ -94,6 +96,9 @@ class _AsyncStream:
             return next(self._iterator)
         except StopIteration:
             raise StopAsyncIteration
+
+    async def aclose(self):
+        self.closed = True
 
 
 def _chunk(*, content="", tool_calls=None, usage=None, finish_reason=None):
@@ -120,11 +125,12 @@ async def test_stream_accumulates_fragmented_tool_arguments_and_usage():
             function=SimpleNamespace(name=None, arguments='"pages":"1-2"}'),
         ),
     ]
-    completion = AsyncMock(return_value=_AsyncStream([
+    raw_stream = _AsyncStream([
         _chunk(tool_calls=[deltas[0]]),
         _chunk(tool_calls=[deltas[1]], finish_reason="tool_calls"),
         _chunk(usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10)),
-    ]))
+    ])
+    completion = AsyncMock(return_value=raw_stream)
     gateway = LLMGateway(completion_fn=completion)
     accumulator = LLMStreamAccumulator()
 
@@ -142,3 +148,45 @@ async def test_stream_accumulates_fragmented_tool_arguments_and_usage():
         "completion_tokens": 3,
         "total_tokens": 10,
     }
+    assert raw_stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_provider_stream_when_consumer_is_cancelled():
+    waiting = asyncio.Event()
+
+    class BlockingStream:
+        def __init__(self):
+            self.closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            waiting.set()
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            self.closed = True
+
+    raw_stream = BlockingStream()
+    gateway = LLMGateway(completion_fn=AsyncMock(return_value=raw_stream))
+    stream = gateway.stream(messages=[{"role": "user", "content": "Read"}])
+    next_chunk = asyncio.create_task(anext(stream))
+    await waiting.wait()
+
+    next_chunk.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await next_chunk
+
+    assert raw_stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_llm_clients_delegates_to_litellm_cleanup(monkeypatch):
+    cleanup = AsyncMock()
+    monkeypatch.setattr("app.integrations.llm.gateway.litellm.close_litellm_async_clients", cleanup)
+
+    await close_llm_clients()
+
+    cleanup.assert_awaited_once_with()

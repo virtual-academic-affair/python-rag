@@ -20,6 +20,7 @@ Use this skill for changes that create, index, retrieve, rerank, or answer from 
 - Ingestion/indexing: `references/ingestion-flow.md`
 - Query lifecycle: `references/query-flow.md`
 - Corpus traversal/retrieval seeds: `references/corpus-retrieval.md`
+- Redis and local artifact caching: `references/cache.md`
 - PageIndex indexing/answering: `references/pageindex.md`
 - Test selection: `references/testing.md`
 
@@ -32,5 +33,8 @@ Use this skill for changes that create, index, retrieve, rerank, or answer from 
 
 - FAQ should be attempted before file hydration/rerank; if FAQ fully answers, do not run PageIndex.
 - File candidates and FAQ docs are reranked separately with Cohere.
+- `app.modules.corpus.contracts.FaqCandidate` is a retrieval seed and must not be confused with the removed FAQ synthesis/review candidate model.
+- RAG/PageIndex caches are best-effort accelerators. Redis failures must fall back to source data and must not fail queries or successful mutations.
+- Do not cache final answers, analyzer/traversal LLM output, Cohere rerank results, presigned R2 URLs, or whole request-filtered snapshots.
 - Do not move HTML conversion, SSE JSON formatting, persistence, gRPC commits, or email workflow side effects into `rag/query`.
 - Keep role values as `student | lecture | admin`.

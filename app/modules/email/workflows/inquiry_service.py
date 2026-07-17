@@ -1,10 +1,8 @@
 """Inquiry workflow service: email workflow adapter around the shared RAG query pipeline."""
-import asyncio
 import logging
 import time
 from typing import Any, Dict, Optional
 
-from app.modules.faq.services.faq_service import get_faq_service
 from app.modules.rag.query import RagQueryInput, get_rag_query_pipeline
 from app.utils.format_utils import markdown_to_rich_text
 
@@ -66,17 +64,6 @@ class InquiryService:
             rag_result.source,
             len(answer_markdown),
         )
-
-        if rag_result.source != "bypass":
-            faq_svc = await get_faq_service()
-            asyncio.create_task(faq_svc.log_interaction(
-                question=extracted_question,
-                answer_markdown=answer_markdown,
-                metadata_filter=metadata_filter,
-                source_type="inquiry_email",
-                processing_time_ms=processing_time_ms,
-                email_message_id=message_id,
-            ))
 
         final_answer = answer_markdown
         if to_rich_text:

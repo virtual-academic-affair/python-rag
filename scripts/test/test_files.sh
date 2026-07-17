@@ -8,31 +8,29 @@ UPLOADS_DIR="$REPO_ROOT/scripts/uploads"
 mkdir -p "$UPLOADS_DIR"
 TEST_FILE="${UPLOADS_DIR}/test_doc_${TIMESTAMP}.txt"
 cat > "$TEST_FILE" << EOF
-QUY ĐỊNH XÉT TỐT NGHIỆP VÀ ĐĂNG KÝ GIẤY CHỨNG NHẬN SINH VIÊN
+QUY ĐỊNH VỀ ĐIỀU KIỆN XÉT TỐT NGHIỆP
 
 Mã tài liệu smoke test: ${TIMESTAMP}
 
-1. Điều kiện xét tốt nghiệp
+#1. Điều kiện xét tốt nghiệp
 Sinh viên được xét tốt nghiệp khi tích lũy đủ số tín chỉ theo chương trình đào tạo,
 hoàn thành các học phần bắt buộc, không còn nợ học phí, và đạt điểm trung bình tích lũy
 theo quy định của nhà trường.
 
-2. Giấy chứng nhận sinh viên
-Sinh viên có thể đăng ký giấy chứng nhận sinh viên tại Phòng Giáo vụ hoặc qua cổng
-thông tin sinh viên. Hồ sơ thường cần mã số sinh viên, họ tên, khóa tuyển sinh và mục
-đích sử dụng giấy chứng nhận.
+#2. Chuẩn đầu ra
+Sinh viên phải hoàn thành chuẩn đầu ra ngoại ngữ, tin học và các yêu cầu bắt buộc khác
+trước thời điểm Hội đồng xét tốt nghiệp kiểm tra hồ sơ.
 
-3. Học phí và năm học
-Các thông báo liên quan đến học phí, công nợ và thời hạn đóng học phí được áp dụng theo
-từng năm học. Sinh viên cần kiểm tra thông báo chính thức của Phòng Giáo vụ trước khi
-nộp hồ sơ tốt nghiệp.
+#3. Hồ sơ xét tốt nghiệp
+Sinh viên kiểm tra kết quả học tập và nộp hồ sơ xét tốt nghiệp theo thông báo chính thức
+của Phòng Giáo vụ.
 EOF
 
 log_info "POST /api/files — admin upload"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_URL}/files" \
     -H "${AUTH_HEADER}" \
     -F "file=@${TEST_FILE}" \
-    -F "displayName=Test Doc ${TIMESTAMP}" \
+    -F "displayName=Test Doc Điều kiện xét tốt nghiệp ${TIMESTAMP}" \
     -F 'customMetadata={"type":"cong_van","academicYear":{"fromYear":2025,"toYear":2026}}' \
     2>/dev/null || echo -e "\n000")
 

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class DocumentParser:
     def __init__(self):
+        # PageIndexClient imports the files ingestion stack, which imports this module.
         from app.integrations.pageindex.client import get_page_index_client
 
         self._parser = get_llamaparse_client()

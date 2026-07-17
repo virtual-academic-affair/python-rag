@@ -1,5 +1,4 @@
 """Chat Service - Handles non-streaming Agentic RAG chat operations."""
-import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -7,7 +6,6 @@ from typing import Any, Optional
 from app.modules.chat.dtos import ChatHistoryItem, FaqRecommendation, UserContext, TokenUsage
 from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP_TYPES
 from app.modules.chat.utils import simplify_step
-from app.modules.faq.services.faq_service import get_faq_service
 from app.modules.metadata.dtos import FaqMetadataResponse
 from app.modules.metadata.models.value_objects import FaqMetadata, YearRange
 from app.modules.rag.query import RagQueryInput, get_rag_query_pipeline
@@ -16,29 +14,16 @@ from app.utils.format_utils import markdown_to_rich_text
 logger = logging.getLogger(__name__)
 
 
-def fire_and_forget(coro):
-    task = asyncio.create_task(coro)
-    task.add_done_callback(
-        lambda t: logger.error("Background task failed: %s", t.exception()) if t.exception() else None
-    )
-
-
 class ChatService:
     """Service for non-streaming Agentic RAG chat operations."""
 
     def __init__(self):
         self._rag_query = get_rag_query_pipeline()
-        self._faq_svc = None
 
     def _get_rag_query(self):
         if not hasattr(self, "_rag_query") or self._rag_query is None:
             self._rag_query = get_rag_query_pipeline()
         return self._rag_query
-
-    async def _get_faq_svc(self):
-        if self._faq_svc is None:
-            self._faq_svc = await get_faq_service()
-        return self._faq_svc
 
     async def generate_chat_response(
         self,
@@ -92,19 +77,6 @@ class ChatService:
             }
 
         logger.info(f"[Chat] Final answer for user {user_context.name}: '{answer_markdown[:200]}...' (Completed in {processing_time_ms}ms)")
-
-        # Log async interaction if final answer was generated successfully
-        if rag_result.source != "bypass" and not rag_result.max_turns_reached:
-            faq_svc = await self._get_faq_svc()
-            fire_and_forget(faq_svc.log_interaction(
-                question=rag_result.analysis.effective_question if rag_result.analysis else question,
-                answer_markdown=answer_markdown,
-                metadata_filter=rag_result.analysis.metadata_filter if rag_result.analysis else {},
-                source_type="chat",
-                processing_time_ms=processing_time_ms,
-            ))
-        else:
-            logger.warning(f"[Chat] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
 
         return {
             "answer": final_answer,

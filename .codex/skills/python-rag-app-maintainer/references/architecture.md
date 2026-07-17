@@ -4,11 +4,12 @@ Use this when changes touch module boundaries, startup behavior, public APIs, in
 
 ## Runtime Shape
 
-- `app/main.py` creates the FastAPI app, registers Beanie documents, initializes MongoDB, checks R2, starts RabbitMQ email ingestion when enabled, creates the email workflow orchestrator, warms optional Redis, and starts PageIndex artifact cleanup.
-- `app/api/router.py` aggregates module routers under `/api`; the root health route is not module-owned.
+- `app/main.py` creates the FastAPI app, registers Beanie documents, initializes MongoDB, checks R2, starts RabbitMQ email ingestion when enabled, creates the email workflow orchestrator, connects optional Redis, starts PageIndex artifact cleanup, and closes background/LLM resources during shutdown.
+- `app/api/router.py` aggregates module routers under `/api` and owns `GET /`; `GET /health` remains in `app/main.py`.
 - `app/core` contains settings, auth dependencies, MongoDB connection, base Beanie repository/document, `BaseSchema`, pagination, app exceptions, and shared HTTP/WebSocket helpers such as first-message WebSocket authentication.
-- `app/integrations` contains thin external clients for R2/storage, RabbitMQ, Redis, gRPC, Gemini, LlamaParse, PageIndex, Cohere, and Excel helpers. Keep business rules in modules.
-- `app/proto` contains protobuf definitions and generated gRPC stubs for auth, message, inquiry, class registration, and common messages.
+- `app/integrations` contains thin external clients for R2/storage, RabbitMQ, Redis, gRPC, the shared LiteLLM gateway, LlamaParse, PageIndex, Cohere, and Excel helpers. Keep business rules in modules.
+- `app/proto` contains protobuf definitions and generated gRPC stubs for auth, message, inquiry, class registration, and common messages. The generated auth stub is not the HTTP/WebSocket authentication path.
+- `app/core/auth.py` verifies REST JWTs locally with HS256; `app/core/websocket_auth.py` applies the same verifier to the first WebSocket message.
 
 ## App Modules
 
@@ -17,7 +18,7 @@ Use this when changes touch module boundaries, startup behavior, public APIs, in
 - `app/modules/metadata`: metadata value objects, schema endpoint, extraction helpers, validation, parsers, and overlap/range filter construction.
 - `app/modules/corpus`: Corpus Topic Tree admin/debug APIs, topic service/repository, typed DTOs, topic merge/backfill. Backfill job orchestration and debug preview mapping belong in corpus services; traversal behavior used by RAG belongs to the knowledge skill.
 - `app/modules/chat`: chat routes, sessions/messages persistence, response DTOs, and step formatting. Conversation/session orchestration belongs in chat services; RAG pipeline behavior belongs to the knowledge skill.
-- `app/modules/faq`: FAQ CRUD/search/import, catalog management, candidate synthesis, and interaction logs. Import parsing/validation belongs in FAQ import services; FAQ answering in the RAG pipeline belongs to the knowledge skill.
+- `app/modules/faq`: FAQ CRUD/search/import and catalog management. Auto-synthesis, candidate review, and interaction logging are retired; import parsing/validation belongs in FAQ import services, while FAQ answering in the RAG pipeline belongs to the knowledge skill.
 - `app/modules/forms`: form CRUD/list/import and rich text content/link handling. Import parser selection, row validation, and bulk upsert orchestration belong in form import services.
 
 ## Boundaries
@@ -27,3 +28,4 @@ Use this when changes touch module boundaries, startup behavior, public APIs, in
 - Repositories own persistence queries and document mutations.
 - DTOs own public request/response shape and API naming.
 - Background work and WebSocket progress are observable behavior; preserve them when refactoring workflow paths. Shared WebSocket authentication belongs in `app/core/websocket_auth.py`; module routers still own the WebSocket protocol shape and notifier connect/disconnect.
+- Cache invalidation triggered by successful mutations is best-effort. Redis failures should produce structured warnings without rolling back an otherwise successful business mutation.

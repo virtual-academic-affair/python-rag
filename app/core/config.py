@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # API Configuration
     # ====================================
     APP_NAME: str = "AI Service"
-    APP_VERSION: str = "5.5.0"
+    APP_VERSION: str = "5.0.0"
     DEBUG: bool = False
 
     # Server Configuration
@@ -63,11 +63,8 @@ class Settings(BaseSettings):
     PAGEINDEX_IF_ADD_NODE_SUMMARY: str = "yes"
     PAGEINDEX_IF_ADD_DOC_DESCRIPTION: str = "no"
     PAGEINDEX_IF_ADD_NODE_TEXT: str = "no"
-
-    # ====================================
-    # FAQ Configuration
-    # ====================================
-    FAQ_MATCHER_MAX_CATALOG: int = 200
+    PAGEINDEX_DOC_CACHE_TTL_SECONDS: int = 3600
+    PAGEINDEX_MARKDOWN_CACHE_TTL_SECONDS: int = 3600
 
     # Cohere Rerank v2 for file candidates and FAQ context ranking.
     COHERE_API_KEY: Optional[str] = None
@@ -87,13 +84,6 @@ class Settings(BaseSettings):
     CORPUS_TRAVERSAL_SOFT_FILE_LIMIT: int = 100
     CORPUS_TRAVERSAL_SOFT_FAQ_LIMIT: int = 50
     CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT: int = 5
-
-    FAQ_SYNTHESIS_CLUSTERING_THRESHOLD: float = 0.85
-    FAQ_SYNTHESIS_MIN_CLUSTER_SIZE: int = 10
-    FAQ_SYNTHESIS_LOOKBACK_DAYS: int = 30
-    FAQ_LOG_RETENTION_DAYS: int = 90
-    FAQ_LOG_MIN_QUESTION_LENGTH: int = 15
-
 
     # ====================================
     # MongoDB Configuration
@@ -157,6 +147,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_ENABLED: bool = True
     REDIS_TIMEOUT: int = 5
+    RAG_CORPUS_CACHE_TTL_SECONDS: int = 300
+    RAG_ALLOWED_IDS_CACHE_TTL_SECONDS: int = 120
+    RAG_ENTITY_CACHE_TTL_SECONDS: int = 600
 
     # ====================================
     # Pydantic Config

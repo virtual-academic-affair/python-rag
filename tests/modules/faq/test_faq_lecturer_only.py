@@ -68,7 +68,7 @@ async def test_update_faq_ignores_absent_lecturer_only():
     assert saved.lecturer_only is True  # không truyền → giữ nguyên
 
 
-@patch("app.modules.corpus.services.corpus_service.get_corpus_service")
+@patch("app.modules.faq.services.faq_service.get_corpus_service")
 @patch("app.modules.faq.services.faq_service.get_corpus_linker")
 @patch("app.modules.faq.services.faq_service.get_metadata_service")
 @patch("app.modules.faq.services.faq_service.FaqDocument")
@@ -229,6 +229,7 @@ async def test_answer_from_faq_catalog_always_filters_lecturer_only():
 
     async def mock_list(metadata_filter=None, search_text=None, skip=0, limit=20):
         captured["metadata_filter"] = metadata_filter
+        captured["limit"] = limit
         return [], 0
 
     repo = MagicMock()
@@ -238,3 +239,4 @@ async def test_answer_from_faq_catalog_always_filters_lecturer_only():
     result = await svc.answer_from_faq_catalog("Học phí?", {})
     assert result is None
     assert captured["metadata_filter"]["lecturer_only"] == {"$ne": True}
+    assert captured["limit"] == 200

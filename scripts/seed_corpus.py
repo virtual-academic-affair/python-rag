@@ -8,13 +8,15 @@ import logging
 import sys
 import os
 
+from beanie import init_beanie
+
 # Add the project root to the python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.core.database import Database
-from beanie import init_beanie
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from app.modules.rag.cache import get_rag_cache_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -67,6 +69,8 @@ async def seed_corpus(repo: CorpusNodeRepository) -> int:
         created += 1
 
     logger.info(f"[Corpus] seed_corpus: tạo {created} topic node")
+    if created:
+        await get_rag_cache_service().bump_corpus_revision()
     return created
 
 
