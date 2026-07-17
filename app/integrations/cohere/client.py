@@ -24,17 +24,17 @@ class CohereRerankClient:
             return None
 
         try:
-            client = cohere.AsyncClientV2(
+            async with cohere.AsyncClientV2(
                 api_key=settings.COHERE_API_KEY,
                 timeout=settings.COHERE_RERANK_TIMEOUT_SECONDS,
-            )
-            response = await client.rerank(
-                model=settings.COHERE_RERANK_MODEL,
-                query=query,
-                documents=documents,
-                top_n=top_n,
-                max_tokens_per_doc=settings.COHERE_RERANK_MAX_TOKENS_PER_DOC,
-            )
+            ) as client:
+                response = await client.rerank(
+                    model=settings.COHERE_RERANK_MODEL,
+                    query=query,
+                    documents=documents,
+                    top_n=top_n,
+                    max_tokens_per_doc=settings.COHERE_RERANK_MAX_TOKENS_PER_DOC,
+                )
         except Exception as exc:
             logger.warning("[CohereRerank] request failed, keeping original order: %s", exc)
             return None

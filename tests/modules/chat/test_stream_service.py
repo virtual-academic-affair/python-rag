@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,7 +21,6 @@ async def _collect(generator):
 @pytest.mark.asyncio
 async def test_chat_non_stream_returns_corpus_reasoning_without_persisting_it():
     svc = ChatService.__new__(ChatService)
-    svc._faq_svc = None
     svc._rag_query = SimpleNamespace(answer_chat=AsyncMock(return_value=SimpleNamespace(
         answer_markdown="Không tìm thấy tài liệu.",
         candidate_files=[],
@@ -126,7 +125,6 @@ def test_faq_recommendation_is_none_for_direct_answer():
 @pytest.mark.asyncio
 async def test_chat_stream_service_formats_agent_events_and_final_payload():
     svc = ChatStreamService.__new__(ChatStreamService)
-    svc._get_faq_svc = AsyncMock(return_value=MagicMock(log_interaction=AsyncMock()))
 
     class FakePipeline:
         requests = []
@@ -201,23 +199,24 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
     fake_pipeline = FakePipeline()
     svc._rag_query = fake_pipeline
 
-    def close_background_coro(coro):
-        coro.close()
-
-    with patch("app.modules.chat.services.chat_stream_service.fire_and_forget", side_effect=close_background_coro):
-        rows = await _collect(svc.stream_chat_response(
-            "q",
-            UserContext(user_id="u1", name="User", role="student"),
-            [ChatHistoryItem(role="user", content="q")],
-        ))
+    rows = await _collect(svc.stream_chat_response(
+        "q",
+        UserContext(user_id="u1", name="User", role="student"),
+        [ChatHistoryItem(role="user", content="q")],
+    ))
 
     assert any(row.get("content") == "Đang tra cứu cấu trúc mục lục của 'Quy chế'." for row in rows)
     tree = next(row for row in rows if row.get("type") == "corpus_tree")
     assert tree["tree"][0]["nodeKey"] == "root"
     assert tree["content"] == "Tải cây chủ đề phù hợp."
-    query_analysis = next(row for row in rows if row.get("type") == "query_analysis" and row.get("content"))
-    assert query_analysis["content"] == "câu hỏi tra cứu đã chuẩn hóa"
-    assert "câu hỏi gốc" not in query_analysis["content"]
+    query_analysis_rows = [
+        row
+        for row in rows
+        if row.get("type") == "query_analysis" and row.get("content")
+    ]
+    assert query_analysis_rows[0]["content"] == "Phân tích câu hỏi của người dùng..."
+    assert query_analysis_rows[-1]["content"] == "câu hỏi tra cứu đã chuẩn hóa"
+    assert all("câu hỏi gốc" not in row["content"] for row in query_analysis_rows)
     assert any(row.get("type") == "corpus_traversal" for row in rows)
     traversal = next(row for row in rows if row.get("type") == "corpus_traversal")
     assert traversal == {

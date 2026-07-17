@@ -23,6 +23,7 @@ from app.modules.corpus.dtos.topic_out import (
 from app.modules.metadata.dtos import FaqMetadataResponse, FileMetadataResponse
 from app.modules.corpus.dtos.update_topic import TopicUpdateRequest
 from app.modules.corpus.utils.node_keys import slugify_topic
+from app.modules.rag.cache import get_rag_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,8 @@ class CorpusService:
     def __init__(self):
         self._repo: Optional[CorpusNodeRepository] = None
 
-    def clear_cache(self) -> None:
-        return None
+    async def clear_cache(self) -> None:
+        await get_rag_cache_service().bump_corpus_revision()
 
     @property
     def repo(self) -> CorpusNodeRepository:
@@ -104,6 +105,7 @@ class CorpusService:
         allowed_faq_ids: set[str] | None = None,
     ) -> tuple[dict[str, CorpusFileRefResponse], dict[str, CorpusFaqRefResponse]]:
         """Hydrate direct payload details in two batch queries for FE tree rendering."""
+        # Intentional lazy imports: both services reach CorpusService through CorpusLinker.
         from app.modules.files.services.file_service import get_file_service
         from app.modules.faq.services.faq_service import get_faq_service
 
@@ -249,6 +251,7 @@ class CorpusService:
             summary=request.summary,
             parent_key=request.parent_key,
         )
+        await self.clear_cache()
         return self.topic_detail_response(node)
 
     async def update_topic(self, node_key: str, request: TopicUpdateRequest) -> CorpusTopicDetailResponse:
@@ -276,12 +279,15 @@ class CorpusService:
             await self.repo.rebuild_node_and_ancestors(old_parent)
         if old_parent != node.parent_key:
             await self.repo.assert_integrity()
-        return await self.get_topic(node_key)
+        response = await self.get_topic(node_key)
+        await self.clear_cache()
+        return response
 
     async def delete_topic(self, node_key: str) -> TopicDeleteResponse:
         deleted = await self.repo.delete_by_key(node_key)
         if not deleted:
             raise ValueError(f"Node '{node_key}' not found")
+        await self.clear_cache()
         return TopicDeleteResponse(node_key=node_key, deleted=True)
 
     async def fetch_allowed_ids(
@@ -291,19 +297,39 @@ class CorpusService:
         lecturer_only: Optional[bool] = None,
     ) -> tuple[set[str], set[str]]:
         """Fetch allowed file/FAQ payload IDs through domain services."""
+        file_ids, faq_ids = await asyncio.gather(
+            self.fetch_allowed_file_ids(metadata_filter, user_role, lecturer_only),
+            self.fetch_allowed_faq_ids(metadata_filter, user_role, lecturer_only),
+        )
+        return file_ids, faq_ids
+
+    async def fetch_allowed_file_ids(
+        self,
+        metadata_filter: Optional[dict],
+        user_role: Optional[str],
+        lecturer_only: Optional[bool] = None,
+    ) -> set[str]:
+        # See _load_payload_name_maps: hoisting this recreates the service cycle.
         from app.modules.files.services.file_service import get_file_service
-        from app.modules.faq.services.faq_service import get_faq_service
 
         file_svc = get_file_service()
+        if lecturer_only is None:
+            return await file_svc.find_ids_for_corpus(metadata_filter, user_role)
+        return await file_svc.find_ids_for_corpus(metadata_filter, user_role, lecturer_only)
+
+    async def fetch_allowed_faq_ids(
+        self,
+        metadata_filter: Optional[dict],
+        user_role: Optional[str],
+        lecturer_only: Optional[bool] = None,
+    ) -> set[str]:
+        # See _load_payload_name_maps: hoisting this recreates the service cycle.
+        from app.modules.faq.services.faq_service import get_faq_service
+
         faq_svc = await get_faq_service()
         if lecturer_only is None:
-            file_call = file_svc.find_ids_for_corpus(metadata_filter, user_role)
-            faq_call = faq_svc.find_ids_for_corpus(metadata_filter, user_role)
-        else:
-            file_call = file_svc.find_ids_for_corpus(metadata_filter, user_role, lecturer_only)
-            faq_call = faq_svc.find_ids_for_corpus(metadata_filter, user_role, lecturer_only)
-        file_ids, faq_ids = await asyncio.gather(file_call, faq_call)
-        return file_ids, faq_ids
+            return await faq_svc.find_ids_for_corpus(metadata_filter, user_role)
+        return await faq_svc.find_ids_for_corpus(metadata_filter, user_role, lecturer_only)
 
     async def reindex_payload(self, payload_type: str, payload_id: str, node_keys: list[str]) -> list[str]:
         """Sync file/FAQ payload membership on corpus nodes."""
@@ -323,6 +349,7 @@ class CorpusService:
         for node_key in remove:
             await self.repo.remove_payload_link(node_key, payload_type, payload_id)
         logger.info(f"[Corpus] index {payload_type}:{payload_id}: +{add} -{remove}")
+        await self.clear_cache()
         return node_keys
 
     async def get_payload_node_keys(self, payload_type: str, payload_id: str) -> list[str]:
@@ -341,6 +368,7 @@ class CorpusService:
 
     async def _get_payload_name(self, payload_type: str, payload_id: str) -> str:
         if payload_type == "file":
+            # FileService reaches this module through CorpusLinker.
             from app.modules.files.services.file_service import get_file_service
 
             payload = await get_file_service().get_file_by_id(payload_id)
@@ -348,6 +376,7 @@ class CorpusService:
                 raise ValueError(f"File '{payload_id}' not found")
             return payload.display_name or payload.original_filename or ""
 
+        # FaqService reaches this module through CorpusLinker.
         from app.modules.faq.services.faq_service import get_faq_service
 
         payload = await (await get_faq_service()).get_faq(payload_id)
@@ -413,6 +442,7 @@ class CorpusService:
             await self.repo.rebuild_node_and_ancestors(old_parent)
         await self.repo.delete_by_key(source_node_key)
         await self.repo.assert_integrity()
+        await self.clear_cache()
         return TopicMergeResponse(
             merged_from=source_node_key,
             merged_into=target_node_key,
@@ -423,6 +453,8 @@ class CorpusService:
         )
 
     async def backfill_corpus(self) -> None:
+        # Importing file/FAQ packages here avoids their eager package exports cycling
+        # through FileService/FaqService -> CorpusLinker -> CorpusService.
         from app.modules.faq.models.faq import FaqDocument
         from app.modules.files.models.file import FileDocument, FileStatus
         from app.modules.files.toc_tree.models.toc_tree import FileTocTree
@@ -488,12 +520,14 @@ class CorpusService:
             faqs_ok + faqs_err,
         )
         await repo.assert_integrity()
+        await self.clear_cache()
 
     async def _unindex(self, payload_type: str, payload_id: str) -> None:
         nodes = await self.repo.get_nodes_containing_payload(payload_type, payload_id)
         for node in nodes:
             await self.repo.remove_payload_link(node.node_key, payload_type, payload_id)
         logger.info(f"[Corpus] unindex {payload_type}:{payload_id} (removed from {len(nodes)} nodes)")
+        await self.clear_cache()
 
     async def unindex_file(self, file_id: str) -> None:
         await self._unindex("file", file_id)

@@ -12,7 +12,7 @@ Use this skill for application-module maintenance in `python-rag`.
 1. Orient with the narrowest useful files: router, service, DTO, repository/model, and tests for the touched module.
 2. Preserve boundaries: routers handle HTTP/auth/error mapping; services handle workflows; repositories handle DB access; DTOs own public schema.
 3. Validate API shape: public JSON is `camelCase`, Python internals are `snake_case`, DTOs inherit `BaseSchema`, and converters are preferred over ad hoc dict shaping.
-4. Update `docs/api.txt`, `docs/project-overview.txt`, and `docs/AI_Service.postman_collection.json` when API, DTO, or workflow contracts change.
+4. Update `docs/api.txt`, `docs/project-overview.txt`, and `docs/AI_Service.postman_collection.json` when API, DTO, or workflow contracts change. Update `README.md` when setup, configuration, architecture, or operator commands change.
 5. Verify with focused compile/tests or HTTP scripts.
 
 ## Read References As Needed
@@ -29,5 +29,8 @@ Use this skill for application-module maintenance in `python-rag`.
 ## Guardrails
 
 - Keep role values as `student | lecture | admin`.
+- Preserve existing documentation structure and useful detail; make focused section edits unless a full rewrite is explicitly requested or the file is corrupted.
+- HTTP and first-message WebSocket JWT authentication are local HS256; do not reintroduce gRPC auth into request dependencies.
+- Keep debug-only tuning/catalog limits out of `.env`, `.env.example`, and `Settings`.
 - Do not hardcode secrets or API keys.
 - Repo-local Codex instructions live under `.codex` only.

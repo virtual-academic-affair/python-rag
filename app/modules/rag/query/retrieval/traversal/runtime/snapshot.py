@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
-from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
+from app.modules.rag.cache import CorpusNodeCacheEntry, get_rag_cache_service
 from app.modules.rag.query.retrieval.traversal.contracts import (
     EligibleNodeCounts,
     FilteredCorpusSnapshot,
@@ -21,7 +22,7 @@ def _count_allowed(ids: list[str], allowed_ids: set[str]) -> int:
 
 
 def _build_topic_tree(
-    node_map: dict[str, CorpusNodeDocument],
+    node_map: dict[str, CorpusNodeCacheEntry],
     visible_child_keys_by_parent: dict[str, list[str]],
     root_keys: list[str],
 ) -> list[TopicTreeNode]:
@@ -51,7 +52,7 @@ def _build_topic_tree(
 
 
 def build_filtered_snapshot_from_nodes(
-    nodes: list[CorpusNodeDocument],
+    nodes: list[CorpusNodeCacheEntry],
     allowed_file_ids: set[str],
     allowed_faq_ids: set[str],
     *,
@@ -119,11 +120,22 @@ async def build_filtered_snapshot(
         user_role,
         metadata_filter or {},
     )
-    allowed_file_ids, allowed_faq_ids = await corpus_service.fetch_allowed_ids(
-        metadata_filter,
-        user_role,
+    cache = get_rag_cache_service()
+    allowed_file_ids, allowed_faq_ids, nodes = await asyncio.gather(
+        cache.get_allowed_ids(
+            "file",
+            metadata_filter,
+            user_role,
+            lambda: corpus_service.fetch_allowed_file_ids(metadata_filter, user_role),
+        ),
+        cache.get_allowed_ids(
+            "faq",
+            metadata_filter,
+            user_role,
+            lambda: corpus_service.fetch_allowed_faq_ids(metadata_filter, user_role),
+        ),
+        cache.get_corpus_nodes(repo.get_all),
     )
-    nodes = await repo.get_all()
     snapshot = build_filtered_snapshot_from_nodes(
         nodes,
         allowed_file_ids,

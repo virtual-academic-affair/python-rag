@@ -9,7 +9,7 @@ from app.modules.chat.repositories.chat_history_repository import PERSISTED_STEP
 from app.modules.chat.utils import simplify_step
 from app.modules.rag.query.dtos import SourceCitation
 from app.modules.rag.query import RagQueryInput
-from app.modules.chat.services.chat_service import ChatService, fire_and_forget
+from app.modules.chat.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -85,15 +85,6 @@ class ChatStreamService(ChatService):
                 yield json.dumps({"type": "text", "content": answer_text, "done": False})
                 token_usage_obj = self._token_usage_obj(event.get("token_usage"))
                 processing_time_ms = int((time.time() - start_time) * 1000)
-                if event.get("source") == "faq":
-                    faq_svc = await self._get_faq_svc()
-                    fire_and_forget(faq_svc.log_interaction(
-                        question=self._effective_question_from_steps(event.get("steps") or pipeline_steps, question),
-                        answer_markdown=answer_text,
-                        metadata_filter=self._metadata_filter_from_steps(event.get("steps") or pipeline_steps),
-                        source_type="chat",
-                        processing_time_ms=processing_time_ms,
-                    ))
                 faq_recommendation = self._build_faq_recommendation(
                     analysis=event.get("analysis") or analysis,
                     sources=event.get("sources") or [],
@@ -128,21 +119,8 @@ class ChatStreamService(ChatService):
             }
 
         final_answer_accumulated = agent_result["final_answer"]
-        max_turns_reached = agent_result["max_turns_reached"]
         processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        if not max_turns_reached:
-            faq_svc = await self._get_faq_svc()
-            fire_and_forget(faq_svc.log_interaction(
-                question=self._effective_question_from_steps(pipeline_steps, question),
-                answer_markdown=final_answer_accumulated,
-                metadata_filter=self._metadata_filter_from_steps(pipeline_steps),
-                source_type="chat",
-                processing_time_ms=processing_time_ms,
-            ))
-        else:
-            logger.warning(f"[Chat-Stream] Agent reached max turns for user {user_context.name}. Skipping FAQ logging.")
-            
+
         stream_steps = agent_result["steps"]
         simplified_stream_steps = [simplify_step(step, candidate_files) for step in stream_steps]
         filtered_stream_steps = [
@@ -171,21 +149,6 @@ class ChatStreamService(ChatService):
             "processingTimeMs": processing_time_ms,
             "faqRecommendation": faq_recommendation.model_dump(by_alias=True) if faq_recommendation else None,
         })
-
-    @staticmethod
-    def _effective_question_from_steps(steps: list[dict], fallback: str) -> str:
-        for step in steps:
-            if step.get("type") == "query_analysis":
-                return step.get("effective_question") or fallback
-        return fallback
-
-    @staticmethod
-    def _metadata_filter_from_steps(steps: list[dict]) -> dict:
-        for step in steps:
-            if step.get("type") == "query_analysis":
-                return step.get("metadata_filter") or {}
-        return {}
-
 
 _chat_stream_service_instance: Optional[ChatStreamService] = None
 

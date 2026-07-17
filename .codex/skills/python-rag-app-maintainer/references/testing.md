@@ -14,7 +14,6 @@ Use focused checks first, then broader regression for shared contracts.
   ```bash
   .venv/bin/python -m pytest tests/modules/chat
   bash scripts/test/test_chat.sh
-  bash scripts/test/test_chat_sessions.sh
   ```
 - Email workflows/classification:
   ```bash
@@ -43,11 +42,11 @@ Use focused checks first, then broader regression for shared contracts.
   ```
 - Shared WebSocket/auth helpers:
   ```bash
-  .venv/bin/python -m pytest tests/core/test_websocket_auth.py
+  .venv/bin/python -m pytest tests/core/test_websocket_auth.py tests/core/test_env_config_contract.py
   ```
 
 ## Broad Regression
 
 ```bash
-.venv/bin/python -m pytest tests/modules/chat tests/modules/email tests/modules/faq tests/modules/files tests/modules/forms tests/modules/corpus tests/core/test_websocket_auth.py
+.venv/bin/python -m pytest tests/modules/chat tests/modules/email tests/modules/faq tests/modules/files tests/modules/forms tests/modules/corpus tests/core/test_websocket_auth.py tests/core/test_env_config_contract.py
 ```

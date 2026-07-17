@@ -16,6 +16,7 @@ from app.modules.rag.query.answering.pageindex_agent.prompt_builder import (
     build_chat_prompt_contents,
     build_email_prompt_text,
 )
+from app.modules.rag.query.answering.faq_answering import get_faq_answer_service
 from app.modules.rag.query.behaviors import CHAT_BEHAVIOR, CHAT_STREAM_BEHAVIOR, EMAIL_BEHAVIOR
 from app.modules.rag.query.contracts import (
     RagQueryAnalysis,
@@ -47,6 +48,7 @@ class RagQueryPipeline:
     @property
     def analyzer(self):
         if self._analyzer is None:
+            # Chat analyzer imports chat DTOs, whose package imports this pipeline.
             from app.modules.rag.query.analyzer import get_chat_query_analyzer
 
             self._analyzer = get_chat_query_analyzer()
@@ -55,6 +57,7 @@ class RagQueryPipeline:
     @property
     def email_analyzer(self):
         if self._email_analyzer is None:
+            # Keep analyzer package loading consistent with the chat analyzer cycle above.
             from app.modules.rag.query.analyzer import get_email_query_analyzer
 
             self._email_analyzer = get_email_query_analyzer()
@@ -62,8 +65,6 @@ class RagQueryPipeline:
 
     def _get_faq_answer_service(self):
         if self._faq_answer_service is None:
-            from app.modules.rag.query.answering.faq_answering import get_faq_answer_service
-
             self._faq_answer_service = get_faq_answer_service()
         return self._faq_answer_service
 
@@ -254,11 +255,16 @@ class RagQueryPipeline:
                 trace_id=trace_id,
                 on_traversal_step=emit_traversal_step,
                 include_reasoning=behavior.include_reasoning,
-            )
+            ),
+            name=f"rag-traversal:{trace_id}",
         )
+        next_step_task: asyncio.Task[dict[str, Any]] | None = None
         try:
             while not traversal_task.done():
-                next_step_task = asyncio.create_task(traversal_steps.get())
+                next_step_task = asyncio.create_task(
+                    traversal_steps.get(),
+                    name=f"rag-traversal-step:{trace_id}",
+                )
                 done, _ = await asyncio.wait(
                     {traversal_task, next_step_task},
                     return_when=asyncio.FIRST_COMPLETED,
@@ -279,6 +285,7 @@ class RagQueryPipeline:
                     next_step_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await next_step_task
+                    next_step_task = None
             while not traversal_steps.empty():
                 step = traversal_steps.get_nowait()
                 if step.get("type") == "corpus_tree":
@@ -292,12 +299,17 @@ class RagQueryPipeline:
                     steps.append(step)
                     yield {"type": "_corpus_traversal", "step": step}
             seeds = await traversal_task
-        except BaseException:
-            if not traversal_task.done():
-                traversal_task.cancel()
+        finally:
+            pending_tasks = [
+                task
+                for task in (next_step_task, traversal_task)
+                if task is not None and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            for task in pending_tasks:
                 with suppress(asyncio.CancelledError):
-                    await traversal_task
-            raise
+                    await task
 
         yield {"type": "_corpus_traversal_end", "traversal_complete": True}
 

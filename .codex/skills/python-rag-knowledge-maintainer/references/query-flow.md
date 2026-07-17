@@ -22,6 +22,8 @@ Service layers remain adapters for API formatting, rich text conversion, SSE JSO
 6. Otherwise hydrate and Cohere-rerank file candidates.
 7. Run PageIndex answering if files exist; otherwise return no-candidate fallback.
 
+Retrieval may reuse cached Corpus payloads, allowed IDs, and file/FAQ entity hydration. It must not cache the analyzer result, traversal LLM output, Cohere rerank output, FAQ answer, PageIndex/final answer, or a whole filtered snapshot.
+
 ## Chat And Email Differences
 
 - Non-stream chat returns final Markdown and may be converted to HTML by chat service when `toRichText=True`.

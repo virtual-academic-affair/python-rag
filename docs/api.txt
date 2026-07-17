@@ -11,7 +11,8 @@ XÁC THỰC (AUTHENTICATION)
 ════════════════════════════════════════════════════════════════════════════════
 
 Hệ thống bảo vệ API bằng JWT Token và phân quyền vai trò (RBAC).
-Việc xác thực được thực hiện thông qua gRPC call tới NestJS Backend.
+JWT được xác thực cục bộ bằng HS256 với `JWT_SECRET`, `JWT_TOKEN_AUDIENCE`
+và `JWT_TOKEN_ISSUER`; gRPC không tham gia xác thực HTTP.
 
 ROLE LEVELS:
   - 🔒 admin   : Toàn quyền truy cập, quản lý Metadata, Tệp tin và FAQ.
@@ -24,9 +25,9 @@ ROLE LEVELS:
                  Nếu JWT có enrollmentYear: chỉ thấy file không có metadata
                  năm học HOẶC file có enrollmentYearFrom ≤ year ≤ enrollmentYearTo.
 
-GHI CHÚ: `lecturerOnly` là 1 trong 3 key metadata chuẩn áp dụng đồng nhất cho cả
-tệp tin lẫn FAQ (cùng với enrollmentYear, academicYear) — dùng để pre-filter
-tài liệu/FAQ trước khi đưa vào RAG traversal (xem Mục 5).
+GHI CHÚ: `lecturerOnly` là field visibility riêng của file/FAQ, không nằm trong
+object metadata. `enrollmentYear` và `academicYear` là các metadata year range
+dùng để pre-filter tài liệu/FAQ trước khi đưa vào RAG traversal (xem Mục 5).
 
 HEADER BẮT BUỘC:
   Authorization: Bearer <jwt_token>
@@ -46,13 +47,13 @@ MỤC LỤC
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
  4. File Management APIs       (11 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
- 6. FAQ MODULE APIs            (16 endpoints) [🔒 admin / 🔒 auth]
+ 6. FAQ MODULE APIs            (12 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
- 8. Debug & Preview APIs       (12 endpoints)  [🔒 admin]
- 9. Real-time Notifications    (1 websocket) [🔒 auth]
+ 8. Corpus & Debug APIs        (16 endpoints)  [🔒 admin]
+ 9. Real-time Notifications    (2 websockets) [🔒 auth / 🔒 admin]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 59 REST ENDPOINTS + 1 WEBSOCKET
+ TỔNG: 59 REST ENDPOINTS + 2 WEBSOCKETS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -69,17 +70,20 @@ MỤC LỤC
 │   {                                                                          │
 │     "status": "healthy",                                                     │
 │     "service": "AI Service",                                                 │
-│     "version": "3.0.0",                                                      │
+│     "version": "5.0.0",                                                      │
 │     "geminiApiConnected": true,                                              │
 │     "mongodbConnected": true,                                                │
-│     "redisConnected": true                                                   │
+│     "redisConnected": true,                                                  │
+│     "emailConsumerRunning": true                                             │
 │   }                                                                          │
 │                                                                              │
 │ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
 │   1. Thử gọi lệnh ping tới MongoDB.                                          │
-│   2. Thử khởi tạo Gemini client để kiểm tra API Key.                         │
+│   2. Kiểm tra LLM gateway đã được khởi tạo.                                  │
 │   3. Kiểm tra kết nối Redis.                                                 │
-│   4. Trả về trạng thái "healthy" nếu tất cả kết nối OK.                      │
+│   4. Nếu RabbitMQ bật, kiểm tra consumer thread còn chạy.                    │
+│   5. Trả `healthy` khi các dependency cần thiết sẵn sàng, ngược lại          │
+│      trả `degraded`.                                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -97,7 +101,7 @@ MỤC LỤC
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/email/process                                                      │
+│ POST /api/email/process          [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Phân loại và trích xuất thông tin từ tiêu đề và nội dung email.       │
 │                                                                              │
@@ -135,7 +139,7 @@ MỤC LỤC
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/email/test/ingested                                                │
+│ POST /api/email/test/ingested    [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Debug xử lý RabbitMQ payload trực tiếp qua HTTP.                      │
 │                                                                              │
@@ -164,8 +168,8 @@ MỤC LỤC
 │     "yearMax": 9999                                                          │
 │   }                                                                          │
 │                                                                              │
-│ GHI CHÚ: Toàn bộ các API nhận `multipart/form-data` (Upload/Import) đều hỗ trợ │
-│ song song cả `snake_case` và `camelCase` cho các tham số Form.               │
+│ GHI CHÚ: JSON response dùng camelCase. Tên multipart field phụ thuộc từng    │
+│ endpoint; FAQ import chấp nhận alias DTO, còn Forms import dùng snake_case.  │
 │                                                                              │
 │ LUỒNG XỬ LÝ: Trả về các hằng số cấu hình của hệ thống metadata.              │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -398,7 +402,9 @@ FILE LIST ITEM RESPONSE:
 │     "answer": "Theo quyết định số...",                                       │
 │     "sessionId": "9d9f8a3f-73c0-4da8-b1d3-20ca09d2927f",                     │
 │     "source": "llm",      ← "llm" | "faq" | "bypass"                        │
-│     "sources": [{"citationId": 1, "title": "HD01", "url": "..."}],           │
+│     "sources": [{"citationId":1,"fileName":"HD01","titles":["Mục 1"],     │
+│                  "fileId":"...","pages":["10-50"],                        │
+│                  "originalUrl":"...","markdownUrl":"..."}],             │
 │     "steps": [ ... ],     ← Xem bảng PIPELINE STEPS bên dưới                │
 │     "faqRecommendation": {                                                  │
 │       "effectiveQuestion": "Quy trình xin thôi học?",                      │
@@ -615,7 +621,9 @@ FILE LIST ITEM RESPONSE:
 │           "completionTokens": 300,                                            │
 │           "totalTokens": 1500                                                 │
 │         },                                                                    │
-│         "sources": [{"citationId": 1, "title": "Quy chế ĐT", "url": "..."}],│
+│         "sources": [{"citationId":1,"fileName":"Quy chế ĐT",             │
+│                      "titles":["Mục 1"],"fileId":"...","pages":["10-50"],│
+│                      "originalUrl":"...","markdownUrl":"..."}],          │
 │         "steps": [                                                            │
 │           {"type": "query_analysis", "content": "Phân tích câu hỏi..."},      │
 │           {"type": "corpus_traversal", "action": "select",              │
@@ -712,7 +720,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
     "lecturerOnly": false,       ← true: chỉ admin/lecture được thấy (như file)
     "metadataFilter": { "enrollmentYear": {...}, "academicYear": {...} },
     "viewCount": 12,
-    "source": "manual",          ← "manual" | "bulk_import" | "synthesized" | "seed"
+    "source": "manual",          ← "manual" | "bulk_import" | "seed"; "synthesized" chỉ cho dữ liệu lịch sử
     "createdAt": "ISO Date",
     "updatedAt": "ISO Date",
     "deletedAt": "ISO Date",     ← chỉ có giá trị trong trash
@@ -818,7 +826,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/{faq_id}/restore  [🔒 ADMIN]                                  │
 │ MÔ TẢ: Khôi phục FAQ và Corpus assignments; fallback LLM nếu topic cũ mất. │
-│ RESPONSE 200: FaqResponse; 409 nếu câu hỏi/candidate bị trùng.              │
+│ RESPONSE 200: FaqResponse; 409 nếu câu hỏi bị trùng.                        │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -839,69 +847,6 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/faqs/synthesis         [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Endpoint synthesis hiện tạm disabled trong API production.            │
-│ REQUEST BODY:                                                                │
-│   {                                                                          │
-│     "dateFrom": "ISO Date",                                                  │
-│     "dateTo": "ISO Date",                                                    │
-│     "sources": ["chat", "inquiry_email"]                                     │
-│   }                                                                          │
-│ RESPONSE 501:                                                                │
-│   { "detail": "FAQ synthesis is temporarily disabled pending architecture migration" }│
-│ GHI CHÚ: Candidate APIs vẫn được giữ để quản lý dữ liệu/candidate hiện có.   │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/faqs/candidates/list    [🔒 ADMIN]                                  │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Lấy danh sách các Candidate chờ duyệt từ quá trình Synthesis.         │
-│        Hỗ trợ tìm kiếm Full-Text trên câu hỏi và bản thảo trả lời.           │
-│                                                                              │
-│ REQUEST QUERY: ?status=pending&search=...&page=1&limit=20                    │
-│   - status: string (pending|approved|rejected|null) - null trả về tất cả.    │
-│   - search: string (optional) - Tìm kiếm Full-Text trên Candidates.          │
-│   - page/limit: Phân trang (mặc định 1/20)                                   │
-│                                                                              │
-│ RESPONSE: { "items": [FaqCandidateResponse], "total": 5, "page": 1, "limit": 20 } │
-│   (Note: Candidate ID is returned as `candidateId`)                           │
-│                                                                              │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Truy vấn danh sách trong collection `faq_candidates`.                   │
-│   2. Nếu có `search`: Sử dụng MongoDB $text search và sắp xếp theo trọng số. │
-│   3. Trả về kết quả phân trang kèm metadata.                                 │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ GET /api/faqs/candidates/{candidate_id} [🔒 ADMIN]                           │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Lấy chi tiết một ứng viên FAQ.                                        │
-│ RESPONSE 200 OK: FaqCandidate object.                                        │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ POST /api/faqs/candidates/{candidate_id}/review [🔒 ADMIN]                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ MÔ TẢ: Phê duyệt (Approve) hoặc Từ chối (Reject) một FAQ Candidate. Nếu      │
-│        Approve, hệ thống sẽ tự động tạo thành FAQ chính thức.                │
-│        Hỗ trợ 'delete' để xóa ứng viên khỏi danh sách.                       │
-│ REQUEST BODY:                                                                │
-│   {                                                                          │
-│     "action": "approve | reject | delete",                                   │
-│     "questionOverride": "...",                                               │
-│     "answerRichTextOverride": "...",                                         │
-│     "metadataFilterOverride": {...},                                         │
-│     "note": "Review note"                                                    │
-│   }                                                                          │
-│ RESPONSE: FaqCandidateResponse (ID alias: candidateId)                       │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. Cập nhật trạng thái của Candidate trong MongoDB.                         │
-│   2. Nếu `action=approve`: Gọi logic tạo FAQ chính thức (Mongo).             │
-│   3. Trả về dữ liệu ứng viên sau khi xử lý.                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
 │ POST /api/faqs/import/preview    [🔒 ADMIN]                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: Tải lên tệp Excel hoặc CSV và xem trước các FAQ sẽ được trích xuất.   │
@@ -911,7 +856,7 @@ FAQ DETAIL RESPONSE — Cấu trúc object FAQ trả về (FaqResponse):
 │   - file: <binary .xlsx or .csv>                                             │
 │   - question_col: string (Tên hoặc chữ cái cột câu hỏi, vd: "Câu hỏi", "B")  │
 │   - answer_col: string (Tên hoặc chữ cái cột trả lời, vd: "Trả lời", "C")    │
-│   - metadataFilterJson: JSON string (VD: {"academicYear": "D", "type": "E"}) │
+│   - metadataFilterJson: JSON string (VD: {"academicYear": "D"})             │
 │   - sheet_name: string (Tùy chọn, tên sheet cần đọc)                         │
 │   - skip_rows: int (Số dòng bỏ qua ở đầu, mặc định: 1)                       │
 │   - lecturerOnly: bool (mặc định: false) — áp dụng cho TOÀN BỘ batch import  │
@@ -1271,18 +1216,27 @@ CORPUS SHAPES (tất cả endpoint Corpus yêu cầu role ADMIN):
 ════════════════════════════════════════════════════════════════════════════════
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ WS /api/files/progress/{clientId} [🔒 AUTH]                                  │
+│ WS /api/files/progress/{client_id} [🔒 AUTH]                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ MÔ TẢ: WebSocket theo dõi tiến trình upload và xử lý file thời gian thực.    │
 │                                                                              │
 │ LUỒNG XỬ LÝ:                                                                 │
-│   1. Client kết nối với clientId duy nhất (trùng clientId lúc gọi POST file).│
+│   1. Client kết nối với client_id duy nhất rồi gửi raw JWT làm message đầu. │
+│      Server xác thực và trả {"type":"auth_ok"}.                            │
 │   2. Hệ thống đẩy JSON status updates theo từng bước:                        │
 │      - {"step": "db_creating", "message": "...", "file_id": "..."}          │
 │      - {"step": "uploading_original", ...}                                   │
 │      - {"step": "completed", ...}                                            │
-│   3. Socket tự động đóng khi hoàn tất hoặc lỗi.                              │
-│   4. Link liên kết trong thông báo (nếu có) sẽ mở trong tab mới.             │
+│   3. Client giữ kết nối và chủ động đóng khi không cần nhận thêm sự kiện.    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ WS /api/email/progress/{client_id} [🔒 ADMIN]                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: WebSocket theo dõi trạng thái xử lý email ingest theo client_id.      │
+│ Sau khi kết nối, client phải gửi raw admin JWT làm message đầu tiên.         │
+│ Server trả {"type":"auth_ok"}, sau đó push các event started/done/         │
+│ skipped/failed.                                                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 
@@ -1291,19 +1245,21 @@ CORPUS SHAPES (tất cả endpoint Corpus yêu cầu role ADMIN):
 ════════════════════════════════════════════════════════════════════════════════
 
 - 400 Bad Request: Lỗi tham số (ValidationException).
-- 401 Unauthorized: JWT token không hợp lệ (gRPC Auth reject).
+- 401 Unauthorized: JWT thiếu, hết hạn, sai chữ ký hoặc sai issuer/audience.
 - 403 Forbidden: Sai Role người dùng (ForbiddenException).
 - 404 Not Found: Dữ liệu không tồn tại trong DB.
 - 409 Conflict: Dữ liệu đã tồn tại hoặc đang bị ràng buộc (Metadata in use).
 - 500 Internal Error: Lỗi hạ tầng (MongoDB, R2).
-- 429 Too Many Requests: Lỗi Rate Limit từ Gemini API (Tự động retry ở client).
+- 429 Too Many Requests: Provider LLM giới hạn request; gateway áp dụng retry theo cấu hình.
 
 --------------------------------------------------------------------------------
 LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
-- Tài liệu Markdown (.md) được cache tại local server (`PAGEINDEX_WORKSPACE/artifacts`).
+- Metadata/structure PageIndex được cache ở Redis bằng `pageindex:doc:{docId}` trong 3600 giây.
+- Tài liệu Markdown (.md) được cache tại local server (`PAGEINDEX_WORKSPACE/{docId}.md`).
 - Thời gian tồn tại (TTL): 60 phút kể từ lần truy cập cuối.
 - Background Task: Hệ thống tự động quét và dọn dẹp các tệp quá hạn mỗi 30 phút.
-- R2 Fallback: Nếu cache bị dọn dẹp, hệ thống sẽ tự động tải lại từ R2 khi có yêu cầu.
+- `get_document_structure` không truy cập filesystem/R2; chỉ `get_page_content` tải lại từ R2 khi local miss hoặc hết TTL.
+- Corpus nodes (300 giây), allowed IDs (120 giây) và file/FAQ entity hydration (600 giây) được cache bằng Redis revision/exact keys. Cache tách `student` và `privileged`; Redis lỗi sẽ fallback MongoDB.
 - Agent Control: Số vòng lặp tối đa của PageIndex answering agent được cấu hình qua `PAGEINDEX_AGENT_MAX_TURNS` (mặc định: 7).
 - Application LLM calls đi qua in-process `LLMGateway` dùng LiteLLM; PageIndex giữ integration riêng nhưng dùng cùng `LLM_MODEL` và `LLM_API_KEY`. Model có provider prefix, ví dụ `gemini/gemini-2.5-flash` hoặc `openrouter/<model-id>`.
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
@@ -1312,9 +1268,10 @@ LƯU Ý VỀ RETRIEVAL (CORPUS TREE ARCHITECTURE):
 - File retrieval dùng Corpus Traversal: Duyệt cây chủ đề từ gốc, gọi LLM phân tích và đi xuống các nhánh con cho đến khi tìm thấy tài liệu liên quan.
   Không dùng vector embedding hay Qdrant; file candidates được rerank bằng Cohere nếu bật config.
 - FAQ answering: LLM đọc nội dung FAQ liên quan và trả answer/null theo mức độ đủ bao phủ câu hỏi.
-  Không dùng vector embedding hay Qdrant; FAQ docs cũng được rerank riêng bằng Cohere. Tuning qua COHERE_RERANK_* và FAQ_MATCHER_MAX_CATALOG.
+  Không dùng vector embedding hay Qdrant; FAQ docs cũng được rerank riêng bằng Cohere. Luồng production tuning qua COHERE_RERANK_*;
+  debug endpoint `/api/faqs/match` dùng giới hạn catalog nội bộ, không đọc tham số từ environment.
 - Top-N sau rerank được cấu hình cố định bằng `COHERE_RERANK_FILE_TOP_N` và `COHERE_RERANK_FAQ_TOP_N`.
 - Sample của `inspect_topic` dùng `CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT`; agent không truyền được giới hạn này.
 
-Hoàn tất bản Đặc tả API chi tiết v3.0.0 (Vectorless Edition).
+Hoàn tất bản Đặc tả API chi tiết v5.0.0 (Vectorless Edition).
 --------------------------------------------------------------------------------

@@ -214,7 +214,7 @@ async def test_run_corpus_traversal_no_tool_call_raises_unavailable():
         assistant_message={"role": "assistant", "content": "done"},
     )
     with _gateway_patch(response):
-        with pytest.raises(CorpusTraversalError, match="without explicit selection") as exc:
+        with pytest.raises(CorpusTraversalError, match="tạm thời gặp sự cố") as exc:
             await run_corpus_traversal("Câu hỏi", snapshot)
     assert exc.value.status_code == 502
     assert "tạm thời gặp sự cố" in exc.value.message

@@ -1,14 +1,3 @@
-import asyncio
-import json
-import os
-import sys
-import logging
-import io
-import shutil
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Any
-
 """
 RAG Data Snapshot Utility
 ====================================
@@ -19,21 +8,40 @@ Tác vụ                | Câu lệnh
 Sao lưu dữ liệu      | python scripts/snapshot.py export scripts/uploads_result/rag_backup.json
 Khởi tạo & Khôi phục | python scripts/init_db.py --restore scripts/uploads_result/rag_backup.json
 """
+import asyncio
+import io
+import json
+import logging
+import os
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from bson import ObjectId
+from dotenv import load_dotenv
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.core.config import settings
-from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
 from app.integrations.storage.client import r2_storage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+RETIRED_COLLECTIONS = {"faq_candidates", "interaction_logs"}
+
+
+def sanitize_snapshot_documents(collection_name: str, documents: list[dict]) -> list[dict]:
+    """Remove retired FAQ-synthesis fields from data that remains supported."""
+    if collection_name == "faqs":
+        for document in documents:
+            document.pop("candidate_id", None)
+    return documents
 
 class SnapshotManager:
     def __init__(self):
@@ -62,11 +70,16 @@ class SnapshotManager:
         # Get all collections dynamically
         collections = await self.db.list_collection_names()
         # Filter out system collections just in case
-        collections = [c for c in collections if not c.startswith("system.")]
+        collections = [
+            collection
+            for collection in collections
+            if not collection.startswith("system.") and collection not in RETIRED_COLLECTIONS
+        ]
         
         for coll_name in collections:
             docs = await self.db[coll_name].find({}).to_list(None)
             docs = json_serializable(docs)
+            docs = sanitize_snapshot_documents(coll_name, docs)
             for doc in docs:
                 if "_id" in doc:
                     doc["_id"] = str(doc["_id"])
@@ -124,7 +137,11 @@ class SnapshotManager:
         # 1. Import MongoDB
         logger.info("  Restoring MongoDB collections...")
         for coll_name, docs in snapshot.get("mongodb", {}).items():
+            if coll_name in RETIRED_COLLECTIONS:
+                logger.info("    - Skipped retired collection %s", coll_name)
+                continue
             if docs:
+                docs = sanitize_snapshot_documents(coll_name, docs)
                 # Convert string IDs back to ObjectId
                 for d in docs:
                     if "_id" in d and isinstance(d["_id"], str):

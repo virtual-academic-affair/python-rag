@@ -20,7 +20,6 @@ from app.modules.files.toc_tree.models.toc_tree import serialize_toc_structure
 from app.modules.files.toc_tree.repositories.toc_tree_repository import FileTocTreeRepository
 
 logger = logging.getLogger(__name__)
-MD_CACHE_TTL_SECONDS = 3600  # 1 hour
 
 
 def _normalize_retrieve_model(model: str) -> str:
@@ -73,7 +72,11 @@ class PageIndexClient:
     async def _save_doc_to_cache(self, doc_id: str, data: dict):
         try:
             await self.redis.connect()
-            await self.redis.set_json(f"pageindex:doc:{doc_id}", data, ex=MD_CACHE_TTL_SECONDS)
+            await self.redis.set_json(
+                f"pageindex:doc:{doc_id}",
+                data,
+                ex=settings.PAGEINDEX_DOC_CACHE_TTL_SECONDS,
+            )
         except Exception as e:
             logger.warning(f"Failed to save doc {doc_id} to Redis cache: {e}")
 
@@ -192,8 +195,6 @@ class PageIndexClient:
             'line_count': result.get('line_count', 0),
             'structure': result['structure'],
         }
-        await self._save_doc_to_cache(doc_id, doc_data)
-        
         return {
             "doc_name": doc_data["doc_name"],
             "doc_description": doc_data["doc_description"],
@@ -217,10 +218,11 @@ class PageIndexClient:
                 except Exception as e:
                     logger.warning(f"Failed to evict markdown cache for {doc_id}: {e}")
 
-    async def cleanup_expired_artifacts(self, max_age_seconds: int = MD_CACHE_TTL_SECONDS) -> int:
+    async def cleanup_expired_artifacts(self, max_age_seconds: int | None = None) -> int:
         """Scan workspace/artifacts and delete files older than max_age_seconds."""
         if not self.workspace or not self.workspace.exists():
             return 0
+        max_age_seconds = max_age_seconds or settings.PAGEINDEX_MARKDOWN_CACHE_TTL_SECONDS
             
         def _cleanup():
             count = 0
@@ -239,119 +241,168 @@ class PageIndexClient:
 
         return await asyncio.to_thread(_cleanup)
 
-    async def _check_and_refresh_cache(self, doc_id: str, md_storage_path: str):
-        """Check if local markdown exists and is fresh. If not, download from R2."""
-        if not self.workspace or not md_storage_path:
+    def _local_markdown_path(self, doc_id: str) -> Path | None:
+        return self.workspace / f"{doc_id}.md" if self.workspace else None
+
+    @staticmethod
+    def _valid_document_metadata(doc: Any) -> bool:
+        required = {
+            "structure",
+            "doc_name",
+            "doc_description",
+            "line_count",
+            "markdown_storage_path",
+        }
+        return (
+            isinstance(doc, dict)
+            and required.issubset(doc)
+            and isinstance(doc.get("structure"), list)
+            and isinstance(doc.get("doc_name"), str)
+            and isinstance(doc.get("doc_description"), str)
+            and isinstance(doc.get("line_count"), int)
+            and isinstance(doc.get("markdown_storage_path"), str)
+            and bool(doc.get("markdown_storage_path"))
+        )
+
+    def _document_metadata(
+        self,
+        *,
+        doc_id: str,
+        doc_name: str,
+        doc_description: str,
+        line_count: int,
+        structure: list,
+        markdown_storage_path: str,
+    ) -> dict:
+        local_path = self._local_markdown_path(doc_id)
+        return {
+            "id": doc_id,
+            "type": "md",
+            "path": str(local_path) if local_path else "",
+            "doc_name": doc_name or "",
+            "doc_description": doc_description or "",
+            "line_count": line_count or 0,
+            "structure": structure,
+            "markdown_storage_path": markdown_storage_path,
+        }
+
+    async def warm_doc_cache(
+        self,
+        *,
+        doc_id: str,
+        doc_name: str,
+        doc_description: str,
+        line_count: int,
+        structure: list,
+        markdown_storage_path: str,
+    ) -> None:
+        """Warm complete retrieval metadata after R2 upload and TOC persistence."""
+        if not markdown_storage_path:
             return
+        await self._save_doc_to_cache(
+            doc_id,
+            self._document_metadata(
+                doc_id=doc_id,
+                doc_name=doc_name,
+                doc_description=doc_description,
+                line_count=line_count,
+                structure=structure,
+                markdown_storage_path=markdown_storage_path,
+            ),
+        )
 
-        lock = self._get_lock(doc_id)
-        async with lock:
-            local_path = self.workspace / f"{doc_id}.md"
-            now = time.time()
-            
-            needs_download = False
-            if not local_path.exists():
-                needs_download = True
-            else:
-                # Check TTL using modification time
-                mtime = local_path.stat().st_mtime
-                if (now - mtime) > MD_CACHE_TTL_SECONDS:
-                    needs_download = True
+    async def _load_document_metadata(self, doc_id: str) -> dict | None:
+        """Load PageIndex metadata without touching the filesystem or R2."""
+        cached = await self._get_doc_from_cache(doc_id)
+        if self._valid_document_metadata(cached):
+            return cached
 
-            if needs_download:
-                try:
-                    logger.info(f"Refreshing markdown cache for {doc_id} from R2 path: {md_storage_path}")
-                    file_obj = await r2_storage.download_file(md_storage_path)
-                    if file_obj:
-                        def _write():
-                            # Download to temporary file then atomically replace to avoid corrupt reads
-                            tmp_path = local_path.with_suffix('.md.tmp')
-                            with open(tmp_path, "wb") as f:
-                                f.write(file_obj.read())
-                            tmp_path.replace(local_path)
-                        await asyncio.to_thread(_write)
-                        logger.info(f"Successfully cached {doc_id}.md to {local_path}")
-                    else:
-                        logger.error(f"R2 download returned empty object for {doc_id} at {md_storage_path}")
-                except Exception as e:
-                    logger.error(f"Failed to refresh markdown cache for {doc_id}: {e}")
+        full = await self.toc_repo.find_by_file_id(doc_id)
+        if not full:
+            logger.warning("Metadata for document %s not found in MongoDB.", doc_id)
+            return None
+        if not full.markdown_storage_path:
+            logger.warning("Markdown storage path for document %s is missing.", doc_id)
+            return None
 
-    async def _ensure_doc_loaded(self, doc_id: str, background_download: bool = False):
-        """Load full document from Redis or MongoDB on demand."""
-        doc = await self._get_doc_from_cache(doc_id)
-        local_md_path_obj = self.workspace / f"{doc_id}.md" if self.workspace else None
-        
-        needs_db_reload = False
-        if not doc or doc.get('structure') is None:
-            needs_db_reload = True
-        elif local_md_path_obj and not local_md_path_obj.exists():
-            # If doc is in Redis but file is missing locally, we still need to refresh file
-            pass 
-
-        if needs_db_reload:
-            full = await self.toc_repo.find_by_file_id(doc_id)
-            if not full:
-                logger.warning(f"Metadata for document {doc_id} not found in MongoDB.")
-                return
-
-            md_storage_path = full.markdown_storage_path
-            if md_storage_path:
-                if background_download:
-                    asyncio.create_task(self._check_and_refresh_cache(doc_id, md_storage_path))
-                else:
-                    await self._check_and_refresh_cache(doc_id, md_storage_path)
-            
-            doc = {
-                'id': doc_id,
-                'type': 'md',
-                'path': str(local_md_path_obj) if local_md_path_obj else "",
-                'doc_name': full.doc_name or '',
-                'doc_description': full.doc_description or '',
-                'line_count': full.line_count or 0,
-                'structure': serialize_toc_structure(full.structure) if full.structure else [],
-                'markdown_storage_path': full.markdown_storage_path,
-            }
-            await self._save_doc_to_cache(doc_id, doc)
-        else:
-            # Document exists in Redis, ensure local file is also present if it was previously cached
-            # (In a true stateless environment, we'd always check/refresh cache)
-            # For brevity, let's assume if it's in Redis, we might still need the file for content retrieval.
-            if doc.get('type') == 'md':
-                md_storage_path = doc.get('markdown_storage_path')
-                if not md_storage_path:
-                    # Try to get from DB if not in cache
-                    full = await self.toc_repo.find_by_file_id(doc_id)
-                    md_storage_path = full.markdown_storage_path if full else None
-                
-                if md_storage_path:
-                    if background_download:
-                        asyncio.create_task(self._check_and_refresh_cache(doc_id, md_storage_path))
-                    else:
-                        await self._check_and_refresh_cache(doc_id, md_storage_path)
-
-        # Update local timestamp for file cleanup logic
-        if local_md_path_obj and local_md_path_obj.exists():
-            await asyncio.to_thread(local_md_path_obj.touch)
-
+        doc = self._document_metadata(
+            doc_id=doc_id,
+            doc_name=full.doc_name or "",
+            doc_description=full.doc_description or "",
+            line_count=full.line_count or 0,
+            structure=serialize_toc_structure(full.structure) if full.structure else [],
+            markdown_storage_path=full.markdown_storage_path,
+        )
+        await self._save_doc_to_cache(doc_id, doc)
         return doc
+
+    async def _ensure_markdown_ready(self, doc_id: str, doc_metadata: dict) -> Path:
+        """Ensure the canonical local Markdown exists and is fresh."""
+        local_path = self._local_markdown_path(doc_id)
+        if local_path is None:
+            raise RuntimeError(f"PageIndex workspace is not configured for document {doc_id}")
+        markdown_storage_path = doc_metadata.get("markdown_storage_path")
+        if not markdown_storage_path:
+            raise RuntimeError(f"Markdown storage path is missing for document {doc_id}")
+
+        async with self._get_lock(doc_id):
+            now = time.time()
+            if local_path.exists():
+                age = now - local_path.stat().st_mtime
+                if age <= settings.PAGEINDEX_MARKDOWN_CACHE_TTL_SECONDS:
+                    await asyncio.to_thread(local_path.touch)
+                    return local_path
+
+            logger.info(
+                "Refreshing markdown cache for %s from R2 path: %s",
+                doc_id,
+                markdown_storage_path,
+            )
+            try:
+                file_obj = await r2_storage.download_file(markdown_storage_path)
+                if not file_obj:
+                    raise RuntimeError("R2 returned no file object")
+                content = file_obj.read()
+                if not content:
+                    raise RuntimeError("R2 returned empty Markdown content")
+
+                tmp_path = local_path.with_name(f"{local_path.name}.{uuid.uuid4().hex}.tmp")
+
+                def _write_and_replace() -> None:
+                    try:
+                        with open(tmp_path, "wb") as file_handle:
+                            file_handle.write(content)
+                        tmp_path.replace(local_path)
+                    finally:
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+
+                await asyncio.to_thread(_write_and_replace)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to load Markdown for document {doc_id} from R2: {exc}"
+                ) from exc
+            return local_path
 
     async def get_document(self, doc_id: str) -> str:
         """Return document metadata JSON."""
-        doc = await self._ensure_doc_loaded(doc_id)
+        doc = await self._load_document_metadata(doc_id)
         if not doc: return "{}"
         # get_document expects dict of documents
         return get_document({doc_id: doc}, doc_id)
 
     async def get_document_structure(self, doc_id: str) -> str:
         """Return document tree structure JSON."""
-        doc = await self._ensure_doc_loaded(doc_id, background_download=True)
+        doc = await self._load_document_metadata(doc_id)
         if not doc: return "{}"
         return get_document_structure({doc_id: doc}, doc_id)
 
     async def get_page_content(self, doc_id: str, pages: str) -> str:
         """Return page content for the given pages string."""
-        doc = await self._ensure_doc_loaded(doc_id)
+        doc = await self._load_document_metadata(doc_id)
         if not doc: return ""
+        local_path = await self._ensure_markdown_ready(doc_id, doc)
+        doc = {**doc, "path": str(local_path)}
         return get_page_content({doc_id: doc}, doc_id, pages)
 
 _page_index_client_instance = None

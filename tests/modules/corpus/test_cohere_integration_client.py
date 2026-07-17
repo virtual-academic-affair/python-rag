@@ -11,6 +11,7 @@ class _FakeCohereSdkClient:
     response_data = None
     side_effect = None
     called = False
+    closed = False
 
     def __init__(self, **kwargs):
         self.__class__.last_kwargs = kwargs
@@ -22,6 +23,12 @@ class _FakeCohereSdkClient:
             raise self.__class__.side_effect
         return self.__class__.response_data
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        self.__class__.closed = True
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake_client(monkeypatch):
@@ -30,6 +37,7 @@ def _reset_fake_client(monkeypatch):
     _FakeCohereSdkClient.response_data = None
     _FakeCohereSdkClient.side_effect = None
     _FakeCohereSdkClient.called = False
+    _FakeCohereSdkClient.closed = False
     monkeypatch.setattr(
         "app.integrations.cohere.client.cohere.AsyncClientV2",
         _FakeCohereSdkClient,
@@ -70,6 +78,7 @@ async def test_cohere_client_returns_indexes_and_sends_configured_payload():
         "top_n": 2,
         "max_tokens_per_doc": 1024,
     }
+    assert _FakeCohereSdkClient.closed is True
 
 
 @pytest.mark.asyncio
@@ -109,6 +118,7 @@ async def test_cohere_client_returns_none_on_error_or_malformed_response():
     )
 
     assert indexes is None
+    assert _FakeCohereSdkClient.closed is True
 
     _FakeCohereSdkClient.side_effect = None
     _FakeCohereSdkClient.response_data = SimpleNamespace(results=[SimpleNamespace(index=99)])

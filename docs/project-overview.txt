@@ -1,859 +1,504 @@
 ================================================================================
-AI SERVICE — PROJECT OVERVIEW (EXTREME DETAIL)
-Version 5.5.0 | May 2026
+AI SERVICE — PROJECT OVERVIEW
+Version 5.0.0 | Cập nhật: 18/07/2026
 ================================================================================
 
-MUC LUC (DETAILED INDEX)
-──────────────────────────────────────────────────────────────────────────────
- 1.  Tổng quan & Mục đích (Mission Statement)
- 2.  Kiến trúc hệ thống Modular RAG (High-level & Component Interaction)
- 3.  Cấu trúc thư mục chi tiết (File-by-file Responsibility)
- 4.  Lifespan & Startup Logic (Bản đồ khởi động hệ thống)
- 5.  Luồng xử lý Email (RabbitMQ Consumer & Ingest Engine)
- 6.  LabelClassifierService (AI Triage & Keywords Pre-check)
-     - 6.1. Chi tiết Prompt phân loại (Labeling Prompt)
-     - 6.2. Thuật toán Normalize Label & Overrides
- 7.  LLM Factory (Gemini Integration & Settings)
-     - 7.1. Thinking Levels (None, Low, Medium, High)
-     - 7.2. Model Configuration (Temperature, Max Tokens, TopP/K)
- 8.  Hệ thống Workflows & gRPC Service Integration
-     - 8.1. ClassRegistrationService (Extraction & Ticket creation)
-     - 8.2. InquiryService (Intent, RAG Reply, Gmail Draft)
-     - 8.3. TaskService (User Lookup & Task dispatching)
-     - 8.4. OtherService (Log & Sink)
- 9.  Forms Management Module (Unified Links & Excel Processing)
- 10. Email Draft Service (RAG-based Reply Generation)
- 11. Modular RAG Ingestion Pipeline (Phase-by-Phase)
-     - 11.1. R2 Storage (Original Document Storage)
-     - 11.2. LlamaParse (PDF-to-Markdown High-Quality Conversion)
-     - 11.3. PageIndex Indexing (Structural Tree & Description)
-     - 11.4. Corpus Indexer (Tree Linking)
- 12. FAQ Module v2 (Semantic FAQ & Auto-Synthesis)
- 13. Hệ thống Metadata Types (Definitions & Rules)
-     - 13.1. System Metadata (academicYear, cohort)
-     - 13.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY)
- 14. Filter Builder & Pre-Filter Logic (Metadata Pre-filtering)
-     - 14.1. Metadata Filter Construction Logic
- 15. RAG Service (Strategy & Corpus Tree Traversal Flow)
- 16. PageIndex Integration — Agentic Tools (get_document, tree, content)
- 17. Chat Service & Agentic RAG logic
-     - 17.1. SSE (Server-Sent Events) Streaming Protocol details
- 18. Auth Service & Security Layer
-     - 18.1. gRPC VerifyToken Request & Response payload mapping
- 19. Cấu trúc MongoDB Schema (Detailed Field-by-field)
-     - 19.1. Collection: files
-     - 19.2. Collection: file_toc_trees
-     - 19.3. Collection: metadata_types
-     - 19.4. Collection: faqs
-     - 19.5. Collection: faq_candidates
- 20. Repository Layer & BaseRepository CRUD pattern
- 21. Storage Management (Cloudflare R2 Service details)
- 22. RabbitMQ Ingest Consumer (Consumer Resilience & Retry Logic)
- 23. Hệ thống Exception Hierarchy & HTTP Status Mapping
- 24. Danh lục REST API Endpoints đầy đủ
- 25. Real-time Notifications (WebSocket Progress channel)
- 26. Cấu hình hệ thống (Settings Table & .env impacts)
- 27. Scripts hỗ trợ bảo trì (Maintenance & Debug Tools)
- 28. Phụ lục: Quy chuẩn xử lý Excel & Rich Text (Integration/Excel)
+Tài liệu này mô tả code đang chạy trong repository. Contract HTTP chi tiết nằm ở
+docs/api.txt; request mẫu nằm trong docs/AI_Service.postman_collection.json.
 
 
-================================================================================
-1. TONG QUAN & MUC DICH (MISSION STATEMENT)
+1. PHẠM VI HỆ THỐNG
 ================================================================================
 
-AI Service là một FastAPI microservice hiệu năng cao, đóng vai trò là \"Hệ điều hành AI\" trung tâm cho các nghiệp vụ giáo vụ. Dự án được thiết kế để xử lý các tài liệu học vụ phức tạp và tự động hóa quy trình phản hồi email từ sinh viên/giảng viên.
+AI Service là FastAPI service cho bốn nhóm nghiệp vụ:
 
-HỆ THỐNG GIẢI QUYẾT 2 BÀI TOÁN LỚN:
-1.  EMAIL TRIAGE & AUTOMATION: Tự động phân loại hàng nghìn email đổ về từ NestJS, trích xuất dữ liệu đăng ký môn học hoặc tự động soạn thảo bản thảo phản hồi (Email Draft) dựa trên kho tài liệu thực tế của nhà trường.
-2.  MODULAR RAG DOCUMENT BRAIN: Xây dựng một \"bộ não\" kiến thức từ hàng nghìn văn bản quy định (.pdf, .md, .docx). Hệ thống không chỉ tìm kiếm từ khóa mà hiểu được \"Mục lục\" và \"Cấu trúc\" tài liệu để trả lời chính xác từng trang, từng dòng.
+1. Email automation
+   - Nhận email ingest từ RabbitMQ.
+   - Kiểm tra state của message qua gRPC khi GRPC_ENABLED=true.
+   - Phân loại và chạy class-registration hoặc inquiry workflow.
+   - Gửi trạng thái xử lý qua WebSocket.
+
+2. Knowledge ingestion
+   - Quản lý FileDocument và file gốc trên R2.
+   - LlamaParse chuyển tài liệu sang Markdown.
+   - PageIndex tạo TOC, description và line count.
+   - CorpusLinker gán file/FAQ vào Corpus Topic Tree.
+
+3. Shared RAG query
+   - Dùng chung cho chat non-stream, chat stream và email inquiry.
+   - FAQ-first; chỉ đọc file bằng PageIndex khi FAQ chưa đủ trả lời.
+   - Không dùng vector database hoặc embedding search.
+
+4. Catalog/admin
+   - File, FAQ, Forms, Metadata schema và Corpus Topic Tree APIs.
+   - Soft-delete/restore/purge cho File và FAQ.
+
+FAQ auto-synthesis, FAQ review candidate và interaction logging đã bị loại khỏi
+runtime/API. Corpus contract `FaqCandidate` vẫn tồn tại vì đây là retrieval seed,
+không phải synthesis candidate.
 
 
+2. CẤU TRÚC SOURCE CODE
 ================================================================================
-2. KIEN TRUC HE THONG MODULAR RAG
-================================================================================
-
-Dự án sử dụng kiến trúc RAG Modular (phi tập trung), kiểm soát hoàn toàn dữ liệu với luồng pipeline mới (State-free):
-
-SƠ ĐỒ LUỒNG PHỐI HỢP COMPONENT (Upload -> R2 -> LlamaParse -> PageIndex (TOC) -> Corpus Tree):
-1.  UPLOAD LAYER: Nhận file -> Validate Metadata (Required fields) -> R2 (Lưu file gốc) -> MongoDB (Status: uploading).
-    - [NEW]: Hỗ trợ clientId để đẩy thông báo tiến trình real-time qua WebSocket.
-    - [NEW]: Mọi API Multipart/Form-data đều hỗ trợ song song `snake_case` và `camelCase` cho các trường dữ liệu đầu vào.
-2.  INDEXING LAYER (ASYNC):
-    - LlamaParse: Trình phân tích PDF tốt nhất hiện nay, xử lý được bảng biểu (tables) trong quy chế.
-    - PageIndex: Đóng vai trò kiến trúc sư mục lục. Nó không lấy text thô mà xây dựng một cây Phân cấp (Building an Hierarchical Tree).
-    - Corpus Indexer: Chịu trách nhiệm phân loại tài liệu vào Corpus Topic Tree và lưu trữ vào MongoDB.
-3.  RAG LAYER:
-    - Khi có Query: Hệ thống duyệt cây Corpus Topic Tree để lọc ra các tài liệu và FAQ liên quan nhất.
-    - Corpus Traversal: Trả về danh sách File Candidates và Supporting FAQs.
-    - MongoDB: Trả về "doc_description" (1 câu tóm tắt file) để AI định hướng context.
-4.  AGENTIC CHAT LAYER:
-    - [NEW] RAG Gate: Hệ thống sử dụng AI để đánh giá câu hỏi. Nếu là câu hỏi xã giao (Small Talk), AI sẽ trả lời trực tiếp mà không cần gọi RAG, giúp tiết kiệm tài nguyên.
-    - AI Agent (Gemini) không nhận hàng tấn text. Nó nhận danh sách File IDs.
-    - Agent sử dụng bộ công cụ (Tools) để gọi lại PageIndex: \"Hãy cho tôi xem mục lục File ID 1\" -> \"Tôi muốn đọc trang 5 của File ID 1\".
-
-
-================================================================================
-3. CAU TRUC THU MUC CHI TIET (FILE-BY-FILE RESPONSIBILITY)
-================================================================================
-
-Dự án được tổ chức theo module chức năng (Domain-Driven style):
 
 app/
+├── main.py                         FastAPI app, lifespan, middleware, health
+├── api/router.py                   Tổng hợp REST và WebSocket routers
 ├── core/
-│   ├── config.py             : Quản lý biến môi trường (.env) qua Pydantic Settings.
-│   ├── database.py           : Cấu hình Motor (Async MongoDB), khởi tạo indexes.
-│   ├── exceptions.py         : Hệ thống Exception tập trung.
-│   └── converters.py         : Logic chuyển đổi kiểu dữ liệu (vd: camelCase converters cho API).
-├── integrations/ (External Gateways - Pure Clients)
-│   ├── llamaparse/           : Client gọi Cloud LlamaParse API.
-│   ├── pageindex/            : Kết nối PageIndex engine (TOC Tree, Agent Tools).
-│   ├── storage/              : Client Cloudflare R2 (aioboto3).
-│   ├── cohere/               : Client Cohere Rerank v2.
-│   ├── grpc/                 : Client gRPC giao tiếp Nest-api.
-│   ├── rabbitmq/             : Logic kết nối và consume RabbitMQ.
-│   ├── llm/                  : Factory khởi tạo Gemini/GenAI SDK.
-│   └── excel/                : Tiện ích xử lý Excel (Rich Text, Numeric Formatting).
-├── modules/ (Business Domain Logic)
-│   ├── files/                : Quản lý tệp tin, upload, delete, metadata sync.
-│   │   └── toc_tree/         : Repo & Model chuyên biệt cho cấu trúc tài liệu.
-│   ├── chat/                 : Controller của Agentic Chat & SSE Streaming.
-│   ├── corpus/               : Corpus Topic Tree, admin APIs, traversal orchestration, debug preview APIs.
-│   ├── rag/                  : Ingestion và shared query pipeline.
-│   ├── email/                : Hệ thống phân loại & Workflows xử lý (Inquiry, etc.).
-│   ├── metadata/             : Quản lý Metadata Types & Validation.
-│   ├── faq/                  : Quản lý FAQ, import, interaction logs, candidates.
-│   └── forms/                : Quản lý biểu mẫu học thuật & Links.
-├── utils/                    : Các tiện ích dùng chung.
-├── proto/                    : Protobuf source và generated code.
+│   ├── auth.py                     Local JWT HS256 verification
+│   ├── dependencies.py             require_auth, require_admin, form DTO binding
+│   ├── config.py                   Pydantic Settings
+│   ├── database.py                 Motor connection manager
+│   ├── base_document.py            Shared Beanie timestamps
+│   ├── base_beanie_repository.py   Minimal Beanie persistence primitives
+│   └── base_schema.py              camelCase API DTO base
+├── integrations/
+│   ├── llm/                        LiteLLM gateway và contracts
+│   ├── cohere/                     Cohere rerank client
+│   ├── llamaparse/                 PDF/document-to-Markdown parser client
+│   ├── pageindex/                  Indexing, metadata loader, Markdown loader
+│   ├── redis/                      JSON/int/MGET/delete primitives
+│   ├── storage/                    S3-compatible R2 client
+│   ├── rabbitmq/                   Queue/exchange/DLX/DLQ client
+│   ├── grpc/                       Nest API gRPC wrapper
+│   └── excel/                      Rich-text spreadsheet helpers
+├── modules/
+│   ├── chat/                       Chat adapters, sessions/messages, SSE
+│   ├── corpus/                     Topic CRUD, tree, backfill, traversal contracts
+│   ├── email/                      Consumer, classifier và workflows
+│   ├── faq/                        FAQ CRUD/import/catalog debug match
+│   ├── files/                      File APIs, upload workflow, TOC, WebSocket
+│   ├── forms/                      Forms CRUD/import
+│   ├── metadata/                   Typed metadata/filter builder
+│   └── rag/
+│       ├── cache.py                RAG cache facade
+│       ├── ingestion/              Parser, ingestion service, CorpusLinker
+│       └── query/                  Shared query pipeline
+└── proto/                          Protobuf source/generated stubs
 
 scripts/
-├── init_db.py                : Script khởi tạo hệ thống (Xóa DB cũ, Index mới, Clear R2, Backfill).
-├── seed_corpus.py            : Seed cây chủ đề Corpus Topic Tree.
-├── seed_faqs.py              : Seed FAQ từ JSON.
-├── test/run_all.sh           : Suite kiểm thử integration scripts.
+├── init_db.py                      Reset/restore database và storage
+├── seed_corpus.py                  Seed Corpus topics
+├── seed_faqs.py                    Seed FAQ JSON
+├── snapshot.py                     Export Mongo snapshot
+└── test/                           HTTP smoke scripts
+
+Không có lớp pipeline/repository dùng chung nằm ngoài các module nghiệp vụ, và không
+có scheduler auto-synthesis FAQ.
 
 
-================================================================================
-4. LIFESPAN & STARTUP LOGIC
-================================================================================
-
-Hệ thống sử dụng FastAPI Lifespan (app/main.py) để quản lý khởi động an toàn:
-
-BẢN ĐỒ KHỞI ĐỘNG (BƯỚC-BẰNG-BƯỚC):
-1.  DATABASE CONNECT: Khởi tạo pool kết nối MongoDB (Motor). Test kết nối bằng lệnh 'ping'.
-2.  ENSURE INDEXES: 
-    - FILES collection: `idx_file_display_name_regex`.
-    - FILE_TOC_TREES collection: `idx_file_toc_trees_fileId` (Unique=True).
-    - METADATA_TYPES collection: `idx_metadata_types_key` (Unique=True).
-3.  STORAGE WARMUP: Khởi tạo R2 client. Nếu lỗi chỉ log warning (Safe bypass) để cho phép app khởi động ngay cả khi storage tạm lỗi.
-4.  RABBITMQ BINDING: Declare queue `email_ingest_queue` và bind exchange nếu cần.
-5.  GRPC CLIENT: Khởi tạo persistent channel tới Nest-api.
-6.  START BACKGROUND CONSUMER: Chạy `EmailIngestConsumer` trên daemon thread. Thử lại tối đa 10 lần nếu rabbitmq connection bị die lúc startup.
-
-
-================================================================================
-5. LUONG XU LY EMAIL (RABBITMQ INGEST ENGINE)
+3. STARTUP VÀ SHUTDOWN
 ================================================================================
 
-Đầu vào từ RabbitMQ (Payload IngestMessage):
-  - field: data.messageId (int)
-  - field: data.subject (str)
-  - field: data.content (str)
-  - field: data.senderEmail/senderName (str)
+FastAPI lifespan trong app/main.py thực hiện:
 
-LUỒNG XỬ LÝ NỘI BỘ (EmailIngestConsumer.py):
-1.  Nhận message từ queue -> Ack ngay lập tức nếu JSON lỗi (Anti-Poison).
-2.  Validate mảng `data` qua Pydantic.
-3.  Dispatcher: Gọi `EmailWorkflowOrchestrator.process_request`.
-4.  Async Execution: Sử dụng `asyncio.run_coroutine_threadsafe` gửi coroutine vào loop chính của FastAPI.
-5.  Timeout Control: Mỗi email có tối đa 120 giây xử lý trước khi bị ngắt.
-6.  Final ACK/NACK:
-    - OK -> Xóa khỏi queue.
-    - Error (Database/LLM sập) -> Requeue=True để chờ hệ thống hồi phục.
+Startup:
+1. Kết nối MongoDB và init Beanie cho:
+   - FileDocument, FileTocTree, FaqDocument;
+   - ChatSessionDocument, ChatMessageDocument;
+   - FormDocument, CorpusNodeDocument.
+2. Probe R2 bằng list_buckets; lỗi chỉ warning.
+3. Khởi tạo RabbitMQ wrapper nếu RABBITMQ_ENABLED=true.
+4. Tạo EmailWorkflowOrchestrator và lưu vào app.state.
+5. Khởi động email consumer trong daemon thread nếu RabbitMQ sẵn sàng.
+6. Khởi động asyncio task dọn PageIndex Markdown local mỗi 30 phút.
+7. Kết nối Redis nếu REDIS_ENABLED=true; lỗi chỉ warning.
 
+Shutdown:
+1. Đóng RabbitMQ connection.
+2. Ngắt MongoDB.
+3. Cancel và await artifact-cleanup task.
+4. Đóng HTTP clients do LiteLLM tạo khi event loop còn sống.
+5. Ngắt Redis.
 
-================================================================================
-6. LABELCLASSIFIERSERVICE (AI TRIAGE)
-================================================================================
-
-6.1. CHI TIẾT PROMPT PHÂN LOẠI (SYSTEM PROMPT):
-AI nhận vai trò \"Senior Triage Assistant\" với các chỉ dẫn nghiêm ngặt:
-- classRegistration: Yêu cầu hành động về học phần (đăng ký, hủy, xin mở lớp). Keyword: \"mã học phần\", \"học phần\", \"mở lớp\".
-- task: Yêu cầu từ đơn vị nội bộ (hành chính, khoa) giao việc cho phòng giáo vụ.
-- inquiry: SV hỏi đáp về quy định (QA). Không yêu cầu hành động đăng ký trực tiếp.
-- other: Spam, lời chào, nội dung không liên quan.
-
-RÀNG BUỘC CỦA PROMPT:
-- Trả về DUY NHẤT một token nhãn chuẩn.
-- Không giải thích, không markdown.
-- Ưu tiên: Registration > Task > Inquiry > Other.
-
-6.2. THUẬT TOÁN NORMALIZE & OVERRIDES:
-- AI thường trả về \"classRegistration.\" (có chấm) hoặc \"Label: task\".
-- Logic Normalize (Python regex) sẽ bóc tách chỉ giữ lại Alphabet, chuyển về lowercase và map vào bộ alias chuẩn.
-- Override Heuristic: Nếu AI trả về 'other' nhưng trong email chứa từ khóa \"đăng ký học phần\", hệ thống sẽ ép kiểu về `classRegistration` để đảm bảo không bỏ sót yêu cầu của SV.
+Các bước close/await cuối cùng ngăn aiohttp session và Queue.get task bị bỏ dở khi
+process tắt.
 
 
-================================================================================
-7. LLM GATEWAY (LITELLM)
+4. AUTH VÀ ROLE
 ================================================================================
 
-Dự án dùng `LLMGateway` in-process trên LiteLLM Python SDK cho toàn bộ LLM call application-owned:
-- Chat/email query analysis và direct reply.
-- Corpus topic assignment và Corpus traversal.
-- FAQ answering.
-- PageIndex answering agent (non-stream và stream).
-- Email classification, mixed-intent split và payload extraction.
-- FAQ candidate synthesis.
+REST authentication không gọi gRPC. app/core/auth.py verify JWT cục bộ:
 
-Contract nội bộ dùng message/tool-call format trung lập provider; LiteLLM model phải có prefix,
-ví dụ `gemini/gemini-2.5-flash`. Credential của provider active được cấu hình một lần qua `LLM_API_KEY`.
-`app/integrations/pageindex/**` là integration bên ngoài và không đi qua gateway này, nhưng dùng chung
-`LLM_MODEL` để tránh một alias model riêng cho PageIndex. Project chỉ dùng gateway chung cho
-application-owned LLM calls, không còn prompt framework hoặc direct Gemini wrapper.
+- Algorithm: HS256.
+- Secret/audience/issuer: JWT_SECRET, JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER.
+- Header: Authorization: Bearer <token>.
+- sub được chuẩn hoá thành string.
 
-7.1. RETRY, TIMEOUT VÀ USAGE:
-- Gateway là nơi duy nhất retry application LLM calls; LiteLLM internal retry bị tắt để tránh retry nhân đôi.
-- Timeout dùng chung qua `LLM_TIMEOUT_SECONDS`.
-- Usage được chuẩn hóa thành `prompt_tokens`, `completion_tokens`, `total_tokens`.
-- Streaming ghép các tool-call argument delta hoàn chỉnh trước khi validate và chạy tool.
+Role contract: student | lecture | admin.
 
-7.2. MODEL SETTINGS:
-- `LLM_MODEL`: model dùng chung cho application LLM calls và các LLM call nội bộ của PageIndex.
-- `LLM_DETERMINISTIC_TEMPERATURE=0.0`: structured output, classification/extraction, FAQ answer/synthesis và tool agents.
-- `LLM_DIRECT_REPLY_TEMPERATURE=0.5`: direct conversational reply khi không cần RAG.
-- System prompt, response format, tools, reasoning và max turns là behavior từng use case, không phải model config chung.
-- Các ngưỡng xây cây như `PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE` và giới hạn vòng lặp như
-  `PAGEINDEX_AGENT_MAX_TURNS` vẫn là config riêng vì chúng điều khiển thuật toán, không phải sampling của model.
+- require_auth: bất kỳ JWT hợp lệ.
+- require_admin: role phải đúng bằng admin.
+- lecture là privileged cho visibility, nhưng không thay thế admin ở mutation API.
+- Student không thấy entity lecturerOnly=true; detail API trả 404 thay vì làm lộ
+  sự tồn tại của entity.
+
+WebSocket xác thực bằng message đầu tiên sau khi accept:
+
+- /api/files/progress/{clientId}: JWT hợp lệ.
+- /api/email/progress/{clientId}: JWT admin.
+- Server trả {"type":"auth_ok"} khi thành công.
 
 
-================================================================================
-8. HE THONG WORKFLOWS & GRPC INTEGRATION
+5. FILE INGESTION VÀ LIFECYCLE
 ================================================================================
 
-Dự án giao tiếp với Nest-api thông qua một `GrpcClient` singleton (app/integrations/grpc/client.py).
+Upload nhanh:
+1. POST /api/files hoặc /api/files/batch validate size/extension/metadata.
+2. Tạo FileDocument status=uploading.
+3. Upload file gốc lên R2.
+4. Trả response 201 và xếp background task xử lý tiếp.
 
-8.1. CLASSREGISTRATION SERVICE:
-- Logic: AI nhận email -> Trích xuất mảng JSON items (action, subjectCode, className...).
-- Mapping: Tự động chuẩn hóa `messageId` từ email ban đầu.
-- gRPC Call: Gọi `rpc Create` của `ClassRegistrationServiceStub`.
-- Payload: Chứa đầy đủ các trường Pydantic của NestJS để tạo Entry hỗ trợ SV.
+Background ingestion:
+1. Chuyển status sang processing và phát progress events.
+2. LlamaParse tạo Markdown.
+3. Upload Markdown lên R2.
+4. PageIndex tạo structure, description, lineCount.
+5. Upsert FileTocTree với markdownStoragePath canonical trên R2.
+6. Warm pageindex:doc:{fileId} sau khi R2 upload và TOC upsert thành công.
+7. CorpusLinker dùng tên/description/TOC để gán topic.
+8. Cập nhật FileDocument status=ready và metadata retrieval cần thiết.
 
-8.2. INQUIRY SERVICE:
-- B1: `EmailQueryAnalyzerService` trích xuất câu hỏi chuẩn, inquiry types và metadata filter từ subject/body email.
-- B2: `InquiryService` gọi shared `RagQueryPipeline.answer_email(...)` với behavior email: không dùng chat analyzer và không direct reply.
-- B3: Pipeline chạy Corpus Tree traversal, hydrate/rerank FAQ trước rồi cho LLM đọc FAQ. Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả lời source=`faq`; nếu không đủ mới hydrate/rerank file và chạy PageIndex agent.
-- B4: Gemini/PageIndex soạn câu trả lời email Markdown. Trích dẫn `(^...)` luôn được resolve sang document viewer bằng `DOCUMENT_VIEW_URL_PREFIX + fileId`. Nếu `to_rich_text=True`, email layer convert Markdown sang HTML.
-- gRPC Call: Gọi `rpc Create` của `InquiryServiceStub` để ghi nhận thắc mắc và lưu bản thảo email.
+Nếu background ingestion lỗi, file chuyển failed và cleanup các artifact đã tạo
+theo best-effort.
 
-8.3. TASK SERVICE:
-- Logic: AI trích xuất `name`, `description`, `due` (deadline) và `assignee_keywords` (ví dụ: "cô Lan").
-- Resolver: Chạy song song (`asyncio.gather`) các cuộc gọi gRPC `FindOneByKeyword` tới `AuthServiceStub` để lấy User ID thực tế.
-- gRPC Call: Gọi `rpc Create` của `TaskServiceStub` để tạo task và gán người thực hiện.
+Soft delete:
+- Lưu deletedAt/deletedBy và topic assignments cũ.
+- Gỡ Corpus links, evict PageIndex/local Markdown và RAG entity cache.
+- Giữ R2/TOC để có thể restore.
 
+Restore:
+- Kiểm tra file gốc; READY file còn cần Markdown và TOC.
+- Ưu tiên topic assignments cũ còn tồn tại; nếu không còn thì chạy CorpusLinker.
 
-================================================================================
-9. EMAIL DRAFT SERVICE (RAG-BASED REPLY)
-================================================================================
-
-Dịch vụ này không phải là API public, nó là trái tim của Inquiry Workflow.
-
-CẤU TRÚC PROMPT SOẠN EMAIL (EMAIL_SYSTEM_PROMPT):
-- Vị trí: `app/modules/rag/query/answering/pageindex_agent/prompts.py`.
-- Vai trò: Tư vấn viên chính thức của Phòng Giáo vụ trường đại học.
-- Quy tắc bắt buộc:
-  1. `BASE_PAGEINDEX_SYSTEM_PROMPT` giữ quy trình tool, nguyên tắc nguồn, định dạng answer và citation dùng chung; `CHAT_SYSTEM_PROMPT`/`EMAIL_SYSTEM_PROMPT` chỉ thêm persona, cách xưng hô và quy tắc trả lời.
-  2. Mọi tool reasoning công khai là một câu tiếng Việt ngắn; không yêu cầu raw chain-of-thought.
-  3. Luôn xem cấu trúc bằng `get_document_structure`, sau đó bắt buộc đọc nội dung thật bằng `get_page_content` trước khi kết luận.
-  4. FAQ context chỉ hỗ trợ hiểu ý định khi FAQ chưa đủ trả lời; không dùng FAQ làm nguồn quy định hoặc citation PageIndex.
-  5. Câu trả lời Markdown được bọc trong `<answer>...</answer>`; không chào hỏi, không lộ file ID/tool, và đặt citation một lần sau phần nội dung dùng xong một mục tài liệu.
-  6. Answering model vẫn nhận subject/body gốc làm ngữ cảnh cùng câu hỏi đã chuẩn hóa, metadata, FAQ hỗ trợ và tài liệu; instruction chỉ yêu cầu trả lời trực tiếp, không yêu cầu soạn thảo email.
-  7. Citation `(^Tên mục lục tương ứng)` được resolver chuyển thành link document viewer.
+Purge:
+- Chỉ cho file đã soft-delete.
+- Gỡ Corpus, evict PageIndex, xóa TOC, xóa original/Markdown R2 rồi xóa Mongo doc.
 
 
-================================================================================
-11. MODULAR RAG INGESTION PIPELINE (PIHASE-BY-PHASE)
+6. PAGEINDEX METADATA VÀ MARKDOWN CACHE
 ================================================================================
 
-[Chi tiết RAG ingestion không đổi, đã tóm tắt phía trên]
+Redis key: pageindex:doc:{docId}
+
+Payload hợp lệ cần có:
+- structure;
+- doc_name, doc_description, line_count;
+- markdown_storage_path.
+
+_load_document_metadata(docId):
+1. Thử Redis.
+2. Payload cũ/thiếu markdown_storage_path là miss.
+3. Miss thì đọc FileTocTree từ MongoDB.
+4. Gắn canonical local path PAGEINDEX_WORKSPACE/{docId}.md.
+5. Ghi metadata hoàn chỉnh về Redis.
+6. Không đọc filesystem và không tải R2.
+
+Caller:
+- get_document và get_document_structure chỉ tải metadata/structure.
+- get_page_content tải metadata rồi gọi Markdown loader.
+
+Markdown loader:
+- Lock theo docId trong process.
+- File local còn TTL được touch và tái sử dụng.
+- Missing/expired thì download markdown_storage_path từ R2, ghi temp và atomic replace.
+- R2 lỗi raise exception; không trả content rỗng.
+- Cleanup task xóa local artifact hết TTL.
 
 
-================================================================================
-12. FAQ MODULE V2 (SEMANTIC FAQ & AUTO-SYNTHESIS)
-================================================================================
-
-Module FAQ là kho tri thức hỏi đáp có quản trị CRUD/import và được dùng trong shared RAG pipeline như một nguồn context ưu tiên. Pipeline không trả nguyên văn FAQ answer; LLM phải đọc một hoặc nhiều FAQ liên quan và tự tổng hợp câu trả lời Markdown.
-
-11.1. MANUAL FAQ MANAGEMENT (Quản lý thủ công):
-- Hỗ trợ thao tác CRUD (Tạo, Sửa, Xóa) cho FAQ.
-- FAQ Answering: LLM đọc nội dung FAQ liên quan để trả lời trực tiếp khi FAQ đủ bao phủ toàn bộ câu hỏi.
-- Danh sách FAQ giờ đây được sắp xếp mặc định theo `createdAt` (giảm dần).
-- Metadata Filter: Hỗ trợ lọc theo `academicYear` và `cohort`. Nếu mảng rỗng (empty array), FAQ áp dụng cho toàn bộ sinh viên.
-- Bulk Management: 
-  - Hỗ trợ Import hàng loạt từ file Excel (.xlsx) với cơ chế map cột linh hoạt (theo tên hoặc ký tự).
-  - [FORMATTING]: Hệ thống tự động bảo toàn định dạng Rich Text (In đậm, In nghiêng, Gạch chân) và các Hyperlink từ Excel, chuyển đổi chúng sang định dạng Markdown chuẩn.
-  - Kỹ thuật: Sử dụng `openpyxl` với tham số `rich_text=True` để truy cập các fragments văn bản và thuộc tính font, kết hợp xử lý `cell.hyperlink`.
-  - Tự động bóc tách Metadata từ các cột Excel chỉ định.
-  - Tối ưu hiệu suất: Sử dụng xử lý hàng loạt và lưu trữ trực tiếp vào MongoDB.
-  - Cơ chế Skip & Continue: Tự động bỏ qua câu hỏi trùng lặp và ghi nhận chi tiết các dòng lỗi mà không làm gián đoạn tiến trình import chung.
-  - Hỗ trợ API Bulk Create qua JSON để tích hợp với các hệ thống bên ngoài.
-
-11.2. INTERACTION LOGGING (Theo dõi tương tác):
-- Hệ thống tự động ghi lại lịch sử Chat và Email Inquiry thành `InteractionLogs`.
-- Deduplication: Tự động lọc trùng lặp nếu câu hỏi (unaccented) xuất hiện trong vòng 24 giờ.
-- TTL Index: Lịch sử tự động xóa sau 90 ngày (cấu hình qua `FAQ_LOG_RETENTION_DAYS`) nhờ MongoDB TTL.
-
-11.3. AUTO FAQ SYNTHESIS (Tự động tổng hợp FAQ):
-- Model, repository và DTO cho FAQ Candidate vẫn còn trong codebase.
-- Endpoint `POST /api/faqs/synthesis` hiện trả `501` với thông báo synthesis tạm disabled pending architecture migration.
-- Admin review candidate vẫn được giữ cho dữ liệu/candidate hiện có, nhưng không nên coi synthesis background job là luồng production đang chạy.
-
-11.4. FORMS MANAGEMENT MODULE (Quản lý biểu mẫu):
-- Module này quản lý danh sách các liên kết biểu mẫu và quy trình học thuật, giúp sinh viên/giảng viên truy cập nhanh các mẫu đơn cần thiết.
-- **Unified Schema**: Gộp tên hiển thị và đường dẫn thành một trường Rich Text (HTML), cho phép AI và người dùng linh hoạt trong việc trình bày.
-- **Link Processing**: Mọi liên kết trong Rich Text được tự động xử lý bởi Frontend (hàm `fixRichTextLinks`) để mở trong tab mới, đảm bảo tính nhất quán với module FAQ.
-- **Bulk Import**: Nạp hàng loạt biểu mẫu từ Excel/CSV với cơ chế chuẩn hóa số liệu (ví dụ: `2020.0` -> `2020`) và bảo toàn định dạng Rich Text.
-- **Shared Excel Integration**: Sử dụng module `app/integrations/excel/utils.py` để dùng chung logic tìm kiếm cột cho cả Excel và CSV.
-
-11.4. FAQ SEARCH & ANSWERING STRATEGY (Tìm kiếm và trả lời từ FAQ):
-- Admin/list API vẫn hỗ trợ `search` text và metadata filter để quản lý FAQ.
-- Trong RAG query, FAQ docs được lấy từ Corpus Tree retrieval theo chủ đề và metadata/user role, sau đó rerank riêng bằng Cohere.
-- `FaqAnswerService` gọi LLM đọc danh sách FAQ đã chọn. Nếu FAQ đủ bao phủ toàn bộ câu hỏi, service trả `FaqAnswerResult(answer_markdown, matched_faqs, token_usage)`. Nếu không đủ, trả `None` để pipeline tiếp tục đọc tài liệu bằng PageIndex.
-- `/api/faqs/match` là debug endpoint cho FAQ answering, không tăng view count và trả `answer_markdown`, `faq_ids`, `questions`.
-
-11.5. PIPELINE TÍCH HỢP:
-- ChatService, ChatStreamService và InquiryService chỉ là adapter API/workflow. Shared core nằm tại `app/modules/rag/query/pipeline.py`.
-- Non-stream chat/email gọi `answer_chat` hoặc `answer_email`, nhận `answer_markdown`; rich text HTML conversion nằm ở service layer khi `to_rich_text=True`.
-- Stream chat gọi `stream_chat`, forward reasoning/tool/text/final events theo thời gian thực; stream không convert HTML.
-- Các source hiện tại: `llm` (PageIndex hoặc direct reply), `faq` (LLM tổng hợp từ FAQ), `bypass` (không có candidate file để đọc).
-
-Quy trình \"Nạp kiến thức\" cực kỳ chi tiết của hệ thống:
-
-BƯỚC 1: UPLOAD & QUICK ACK (`FileService.upload_file_quick`)
-- Nhận file qua FastAPI multipart.
-- Validate: Max 20MB, đuôi file (.pdf, .md, .docx, .html). Mime type check.
-- Metadata check: Bắt buộc có enrollmentYear, academicYear, và type. Các giá trị mặc định được sử dụng nếu thiếu.
-- R2 Storage: Đẩy file binary lên storage.
-- MongoDB: Tạo record ban đầu status=\"uploading\". Trả về Object thông tin file ngay lập tức.
-
-BƯỚC 2: BACKGROUND PROCESSING (`FileService.process_file_background`)
-- Download file từ R2 vào thư mục temp máy chủ.
-- LlamaParse: Bóc tách file (vd: PDF, TXT, DOCX) sang Markdown chất lượng cao, giữ được bảng biểu/thời khóa biểu.
-- PageIndex:
-  - Phân tích MD để tạo cấu trúc mục lục.
-  - Sinh ra 1 câu `doc_description` (Mô tả tài liệu).
-  - Lưu TOC Tree vào `file_toc_trees` Collection.
-- Corpus Indexer:
-  - Gắn tài liệu (File) vào các chủ đề tương ứng trên cây Corpus Topic Tree bằng LLM.
-  - Lưu liên kết và cập nhật doc_count trên các node chủ đề tương ứng trong MongoDB.
-- Artifact storage: Upload bản `.md` đã bóc tách lên R2 (sát cạnh file gốc) để AI tham chiếu nhanh.
-- Status Update: Chuyển file sang status="ready" (hoặc "failed" nếu lỗi).
-
-BƯỚC 3: METADATA SYNC (Atomic Counter & MongoDB Index Sync)
-- Khi file chuyển sang "ready", hệ thống gọi `$inc: { "total_files": 1 }` cho tất cả nhãn metadata tương ứng trong `metadata_types`.
-- Khi user cập nhật metadata qua API `PATCH /api/files/{id}`, hệ thống cập nhật MongoDB và tự động tính toán lại quyền hạn truy cập của các tài liệu trong cây chủ đề.
-
-QUY TẮC ĐỌC FILE:
-- Repository active luôn ghép điều kiện `deleted_at=null`; bản ghi đã xóa mềm chỉ xuất hiện qua API trash dành cho admin.
-- Admin đọc/list mọi trạng thái file chưa xóa.
-- Student và lecture chỉ được list, xem detail, download và đọc TOC của file `status=ready`.
-- Student bị ẩn file `lecturer_only=true`; lecture và admin được đọc loại file này.
-- List file/trash nhận query `lecturerOnly`; admin/lecture lọc chính xác, còn student không thể dùng `true` để vượt quyền.
-- Item của list file/trash là DTO rút gọn, không trả `tableOfContents`; TOC chỉ có trong File detail/TOC API.
-- File repository dùng Mongo projection cho list/trash nên không hydrate TOC và các trường ingestion không dùng.
-- FAQ list/detail, FAQ-domain retrieval filter và RAG hydration cũng chỉ dùng FAQ có `deleted_at=null`.
-- File/FAQ services tự dựng metadata/role filter của domain mình; Corpus chỉ điều phối hai tập payload ID.
-- PATCH FAQ chỉ tinh chỉnh document và giữ nguyên Corpus topic assignments; đổi topic qua Corpus API hoặc backfill.
-
-
-================================================================================
-13. HE THONG METADATA TYPES (DEFINITIONS & RULES)
+7. CORPUS TOPIC TREE
 ================================================================================
 
-Hệ thống Metadata giúp AI \"lọc\" tài liệu một cách chuẩn xác:
+CorpusNodeDocument lưu:
+- nodeKey, title, summary, parentKey, childKeys;
+- directFileIds/directFaqIds;
+- subtreeFileIds/subtreeFaqIds và counts suy ra.
 
-PHÂN LOẠI METADATA (Hardened Schema):
-- enrollmentYear: Kiểu YearRange (fromYear, toYear). Mặc định 0-9999. Hỗ trợ nhập một phía (vd: chỉ nhập fromYear thì toYear=9999).
-- academicYear: Kiểu YearRange (fromYear, toYear). Tương tự enrollmentYear.
-- type: Kiểu mảng (List[DocumentType]). Hỗ trợ lọc nhiều loại tài liệu cùng lúc bằng toán tử $in (Mongo).
+Admin APIs quản lý create/update/delete/merge và manual payload assignments.
+Repository rebuild node/ancestors sau mutation và kiểm tra cycle/integrity.
 
-QUY TẮC VALIDATION (MetadataService):
-- Hệ thống sử dụng một Schema cứng (Hardened Schema) định nghĩa sẵn các trường metadata.
-- Mọi API request/response dùng camelCase. DTO Python vẫn khai báo snake_case nội bộ qua `BaseSchema`, alias tự chuyển sang camelCase khi nhận/trả JSON.
-- Metadata object-based: Các trường năm học được bọc trong object YearRange để hỗ trợ tìm kiếm khoảng giao thoa.
-- Defaults: Nếu không cung cấp metadata khi upload, hệ thống tự động gán giá trị mặc định an toàn (0, 9999, cong_van).
-11.2. ATOMIC COUNTER LOGIC (IDEMPOTENCY):
-Hệ thống sử dụng cơ chế cập nhật bộ đếm nguyên tử để tránh sai lệch dữ liệu:
-- Tăng bộ đếm: Chỉ thực hiện khi lệnh `find_one_and_update` chuyển trạng thái file thành công từ `PROCESSING` -> `READY`.
-- Giảm bộ đếm: Chỉ thực hiện khi lệnh `find_one_and_delete` xác nhận file bị xóa đang ở trạng thái `READY`.
-- Công nghệ: Sử dụng `$inc` của MongoDB để đảm bảo tính nhất quán ngay cả khi có nhiều request đồng thời.
+Backfill:
+- Chạy trong background job có guard in-process chống chạy đồng thời.
+- Reset links, index từng READY file chưa xóa và từng FAQ chưa xóa.
+- Khi tree rỗng, CorpusLinker có thể đề xuất root topics mới.
 
-
-================================================================================
-14. FILTER BUILDER & PRE-FILTER LOGIC (METADATA PRE-FILTERING)
-================================================================================
-
-Chịu trách nhiệm chuyển đổi JSON Metadata Filter sang các điều kiện tìm kiếm và kiểm tra quyền truy cập (Pre-filter) trên MongoDB để lấy danh sách File IDs và FAQ IDs được phép truy cập trước khi duyệt cây chủ đề.
-
-CƠ CHẾ LỌC DỮ LIỆU:
-Hệ thống pre-filter trước khi duyệt cây Corpus Topic Tree. Chỉ những tài liệu và FAQ thỏa mãn metadataFilter và vai trò người dùng (user role) mới được đưa vào danh sách hợp lệ. Nếu một nút chủ đề không chứa tài liệu hay FAQ hợp lệ nào trong toàn bộ nhánh con của nó, LLM sẽ bỏ qua nhánh đó (không đưa vào catalog lựa chọn).
-
-THUẬT TOÁN RANGE-OVERLAP:
-- Hệ thống hỗ trợ tìm kiếm theo khoảng năm: `enrollmentYear: {"fromYear": 2020, "toYear": 2022}`.
--Logic: Tìm kiếm các tài liệu có khoảng năm giao thoa với khoảng yêu cầu.
+Traversal:
+1. Build typed cached Corpus snapshot.
+2. Prefilter allowed file/FAQ IDs theo metadata và role.
+3. LLM duyệt/inspect topic tree với giới hạn cấu hình.
+4. Trả typed FileCandidate và Corpus FaqCandidate seeds theo thứ tự chọn.
 
 
-================================================================================
-15. RAG SERVICE (STRATEGY & CORPUS TREE TRAVERSAL FLOW)
+8. SHARED RAG QUERY PIPELINE
 ================================================================================
 
-`app/modules/rag/query` là shared query package cho chat non-stream, chat stream và email inquiry. Package này chịu trách nhiệm từ câu hỏi đã normalize/analyze đến answer/events, nhưng không chịu trách nhiệm HTTP DTO, SSE JSON formatting, session persistence, rich text HTML hay gRPC commit.
+app/modules/rag/query/pipeline.py phục vụ:
+- answer_chat;
+- stream_chat;
+- answer_email.
 
-PUBLIC METHODS:
-- `answer_chat(input)`: chat non-stream, có chat analyzer/direct reply, trả `RagQueryResult.answer_markdown`.
-- `stream_chat(input)`: chat stream, cùng lifecycle với `answer_chat` nhưng yield internal events để ChatStreamService map sang SSE.
-- `answer_email(input)`: email inquiry, dùng input đã được `EmailQueryAnalyzerService` chuẩn hóa, không direct reply và dùng chung citation document viewer với chat.
+Luồng non-stream:
+1. Analyze câu hỏi.
+   - Chat: rewrite, needsRag gate, metadata filter và enrollment fallback.
+   - Email: normalize subject/body, inquiryTypes và metadata filter; luôn chạy RAG.
+2. Nếu chat là small talk, generate direct reply và trả source=llm.
+3. Traverse Corpus Tree để lấy FAQ/file seeds.
+4. Hydrate và Cohere-rerank FAQ.
+5. FAQ answering LLM đọc một hoặc nhiều FAQ.
+6. Nếu đủ bao phủ: trả source=faq, không hydrate/rerank file.
+7. Nếu chưa đủ: hydrate và Cohere-rerank file.
+8. Không có file: trả no-candidate message, source=bypass.
+9. Có file: PageIndex agent dùng get_document_structure/get_page_content, trả answer,
+   steps, sources, tokenUsage và maxTurnsReached.
 
-QUY TRÌNH CHUNG:
-1.  Analyze:
-    - Chat: `ChatQueryAnalyzerService` rewrite câu hỏi, quyết định `needs_rag`, trích xuất metadata filter; nếu thiếu enrollment year thì fallback từ JWT.
-    - Email: không chạy chat analyzer; metadata/question đến từ email analyzer/workflow.
-2.  Direct reply:
-    - Chỉ chat/chat_stream được phép trả lời trực tiếp khi `needs_rag=false`.
-    - Direct-answer instruction được truyền bằng Gemini `system_instruction`; user prompt chỉ chứa lịch sử hội thoại gần nhất và tin nhắn hiện tại.
-3.  Retrieval:
-    - Pre-filter MongoDB theo metadata + user role để có file/FAQ allowed.
-    - Corpus Tree Traversal dùng LLM chọn topic/subtree liên quan.
-    - Nếu traversal hết `CORPUS_TRAVERSAL_MAX_TURNS` mà chưa select/no-match rõ ràng, pipeline coi là `no_match` và trả no-candidate message thay vì ném lỗi 502.
-    - Hydrate supporting FAQ docs trước, rồi Cohere rerank FAQ riêng.
-4.  FAQ answering:
-    - LLM đọc một hoặc nhiều FAQ đã retrieval/rerank.
-    - Nếu FAQ đủ bao phủ toàn bộ câu hỏi, trả `source="faq"` và token usage từ FAQ LLM call.
-    - Nếu FAQ chỉ trả lời được một phần, pipeline tiếp tục PageIndex thay vì trả lời thiếu.
-    - `BASE_FAQ_ANSWER_SYSTEM_PROMPT` giữ quy tắc full-coverage, metadata và JSON schema; chat dùng `CHAT_FAQ_ANSWER_SYSTEM_PROMPT`, email dùng `EMAIL_FAQ_ANSWER_SYSTEM_PROMPT`.
-    - FAQ instruction được truyền bằng Gemini `system_instruction`; user prompt chỉ chứa câu hỏi và danh sách FAQ đã rerank.
-5.  PageIndex answering:
-    - Chỉ khi FAQ không đủ trả lời toàn bộ câu hỏi, pipeline mới hydrate và Cohere rerank file candidates.
-    - Nếu có file candidates, PageIndex agent đọc cấu trúc/nội dung tài liệu bằng tool loop và trả answer Markdown + sources.
-    - Nếu không có file candidates và FAQ không đủ, trả no-candidate fallback với `source="bypass"`.
-
-RERANK:
-- Integration Cohere nằm ở `app/integrations/cohere/client.py`.
-- RAG-specific YAML document builders nằm ở `app/modules/rag/query/retrieval/rerank/cohere_reranker.py`.
-- Config chính: `COHERE_API_KEY`, `COHERE_RERANK_ENABLED`, `COHERE_RERANK_MODEL`, `COHERE_RERANK_MAX_CANDIDATES`, `COHERE_RERANK_FILE_TOP_N`, `COHERE_RERANK_FAQ_TOP_N`, `COHERE_RERANK_MAX_TOKENS_PER_DOC`, `COHERE_RERANK_TIMEOUT_SECONDS`.
-- `inspect_topic` luôn lấy số sample từ `CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT`; tham số này không được expose cho agent.
+Chat stream dùng cùng semantic flow nhưng phát SSE events trong lúc traversal và
+PageIndex agent chạy. Adapter chat chịu trách nhiệm JSON/SSE, session persistence và
+faqRecommendation; email adapter chịu trách nhiệm rich text và gRPC side effects.
 
 
-================================================================================
-16. PAGEINDEX INTEGRATION — AGENTIC TOOLS
+9. FAQ-FIRST ANSWERING
 ================================================================================
 
-PageIndex cung cấp 3 công cụ \"mắt thần\" cho AI Agent, giúp nó chủ động điều hướng tài liệu lớn:
+FAQ module hiện chỉ gồm:
+- CRUD, list/search;
+- bulk JSON;
+- Excel/CSV import preview và apply;
+- soft-delete/restore/purge;
+- admin debug POST /api/faqs/match.
 
-1.  TOOL: `get_document(doc_id: str)`
-    - Mô tả: Lấy thông tin chứng minh thư của file.
-    - Output: {name, page_count, description}.
+FaqDocument fields public chính:
+- faqId, question, answerRichText;
+- metadataFilter, lecturerOnly;
+- viewCount, source;
+- createdAt, updatedAt, deletedAt, deletedBy.
 
-2.  TOOL: `get_document_structure(doc_id: str)`
-    - Mô tả: Yêu cầu PageIndex trả về mục lục MD phân cấp.
-    - Ý nghĩa: AI dùng cái này để biết thông tin tuyển sinh nằm ở Chương 2, dòng 100-200.
+source mới: manual | bulk_import | seed. Giá trị synthesized có thể còn trên dữ
+liệu lịch sử và được giữ nguyên như provenance.
 
-3.  TOOL: `get_page_content(doc_id, pages)`
-    - Mô tả: Đọc text thô tại các trang/dòng cụ thể.
-    - Ý nghĩa: Giúp AI lấy được con số chính xác (vd: 50% học phí) từ văn bản mà không cần nạp context khổng lồ.
+Không còn candidateId, faq_candidates, interaction_logs, synthesis scheduler hoặc
+synthesis/candidate endpoints. faqRecommendation trong chat chỉ là DTO prefill và
+không tự tạo FAQ.
 
 
-17. CHAT SERVICE & AGENTIC RAG LOGIC
+10. RERANK VÀ ENTITY HYDRATION
 ================================================================================
 
-Chat layer là adapter mỏng quanh shared `RagQueryPipeline`.
+RetrievalService xử lý FAQ và file riêng:
 
-CHAT NON-STREAM:
-- `ChatService.generate_chat_response()` load chat history, build `RagQueryInput(mode="chat")`, gọi `answer_chat`.
-- Response trả `answer`; nếu `to_rich_text=True`, service convert Markdown sang HTML ở chat layer.
-- Interaction logging dùng Markdown gốc, không log HTML.
+- FAQ: hydrate -> Cohere rerank -> COHERE_RERANK_FAQ_TOP_N.
+- File: chỉ hydrate khi FAQ chưa trả lời -> rerank -> COHERE_RERANK_FILE_TOP_N.
+- Nếu Cohere bị tắt/thiếu key/lỗi, giữ thứ tự Corpus traversal.
+- Candidate pool lớn hơn COHERE_RERANK_MAX_CANDIDATES bị từ chối bởi contract.
 
-CHAT STREAM:
-- `ChatStreamService.stream_chat_response()` gọi `stream_chat` và map internal events sang JSON SSE hiện tại.
-- Stream giữ Markdown/text event realtime, không hỗ trợ rich text conversion.
-- Raw Gemini thought/tool output không được persist. Corpus reasoning là một câu ngắn công khai nhưng cũng không lưu MongoDB.
-
-STEPS/SOURCES:
-- `query_analysis`: step public có dạng `{type, content}`; `content` hiển thị `effective_question` đã chuẩn hóa nhưng không nhắc riêng `original_question`; dữ liệu phân tích chi tiết còn lại là contract nội bộ của RagQueryPipeline.
-- `corpus_tree`: event node-only đã lọc, có `content` mô tả chung, phát một lần cho chat stream và không đưa vào final steps/persistence.
-- `corpus_traversal`: step tối giản cho expand/inspect/select/no-match. Expand/inspect dùng `nodeKey`; select dùng `nodeKeys` để chứa toàn bộ topic được chọn. Root topics được inject thẳng vào prompt, không còn tool/list-roots step.
-- `faq_retrieval` và `faq_answer`: chỉ xuất hiện khi Corpus traversal trả FAQ candidates; FAQ được chọn và kết quả đủ/chưa đủ để trả lời.
-- `file_retrieval`: file candidates sau Cohere rerank; `document_read`: PageIndex đọc cấu trúc hoặc nội dung tài liệu.
-- `sources`: citation metadata từ PageIndex tool usage, tiếp tục giữ `originalUrl` và `markdownUrl`; link trong answer luôn dùng `DOCUMENT_VIEW_URL_PREFIX + fileId`.
-- `faqRecommendation`: payload typed để FE prefill bản nháp FAQ từ answer đã được admin duyệt. Payload dùng `effectiveQuestion`, metadata FAQ đầy đủ (`0-9999` cho khoảng không xác định) và `lecturerOnly` là phép OR trên matched FAQ cùng file thực sự được PageIndex mở; direct reply trả `null`.
-- Candidate file giữ `lecturer_only` ở payload nội bộ để tính recommendation nhưng public `sources` không đổi. Recommendation được persist cùng assistant message và trả lại qua history API.
-
-17.1. SSE (SERVER-SENT EVENTS) PROTOCOL:
-- Content-Type: `text/event-stream`.
-- Format thông thường: `data: {"type": "text|reasoning|query_analysis|corpus_traversal|faq_retrieval|faq_answer|file_retrieval|document_read", "content": "...", "done": false}`.
-- `corpus_tree` mang thêm `tree`; `corpus_traversal` mang thêm `action` và `nodeKey` hoặc `nodeKeys`.
-- Final: `data: {"done": true, "sources": [...], "steps": [...], "faqRecommendation": {...}|null, "tokenUsage": {...}, "processingTimeMs": N}`.
-- Luồng thường gặp: query_analysis → corpus_tree → reasoning/corpus_traversal × N → faq_retrieval → faq_answer → text → done nếu FAQ đủ; hoặc tiếp tục file_retrieval → document_read × N → text → done.
-- CHAT_SYSTEM_PROMPT & EMAIL_SYSTEM_PROMPT dùng base prompt chung, rồi bổ sung khác biệt văn phong/format theo kênh.
-- Corpus traversal và document_read activities được stream realtime; non-stream trả toàn bộ timeline trong response cuối.
-- [NEW] Error Handling: Khi gặp lỗi 429 (Rate Limit) từ Gemini, hệ thống đẩy chunk lỗi định dạng SSE để Client hiển thị cảnh báo thay vì lỗi 500.
+File entity cache gồm retrieval/source fields từ FileDocument + FileTocTree.
+FAQ entity cache gồm question, answer, metadata và visibility cần cho answering.
+MGET miss chỉ batch-query MongoDB cho IDs miss và giữ candidate order.
+Presigned/public URL không nằm trong entity cache.
 
 
-================================================================================
-18. AUTH SERVICE & SECURITY LAYER (GRPC)
+11. REDIS CACHE CONTRACT
 ================================================================================
 
-Dự án tuyệt đối không lưu Password. Mọi bảo mật dựa trên Nest-api gRPC.
+Revision keys không TTL:
+- rag:revision:corpus
+- rag:revision:file_eligibility
+- rag:revision:faq_eligibility
 
-CƠ CHẾ GUARD (RequireAuth & RequireAdmin):
-1.  AI Service nhận JWT token từ Header.
-2.  Gửi gRPC request: `AuthService.VerifyToken(VerifyTokenRequest(token=token))`.
-3.  Nest-api thực hiện verify nội bộ. Kết quả trả về `VerifyTokenResponse`.
-4.  Payload mapping:
-    - `userId` -> sub
-    - `user_role` -> role (admin/lecture/student)
-    - `access_metadata` -> cohort/department của chính user đó.
-5.  Logic:
-    - Token lỗi/hết hạn -> 401 Unauthorized.
-    - Role != admin (khi gọi endpoint admin) -> 403 Forbidden.
-    - Timeout/Service sập -> 503 Service Unavailable.
+Payload keys:
+- rag:corpus:{corpusRevision}                         TTL 300s
+- rag:allowed:file:{revision}:{scope}:{metadataHash} TTL 120s
+- rag:allowed:faq:{revision}:{scope}:{metadataHash}  TTL 120s
+- rag:file:{fileId}                                  TTL 600s
+- rag:faq:{faqId}                                    TTL 600s
+- pageindex:doc:{docId}                              TTL 3600s
 
+scope chỉ là student hoặc privileged. Metadata hash dùng canonical sorted JSON.
 
-================================================================================
-19. CAU TRUC MONGODB SCHEMA (DETAILED FIELD-BY-FIELD)
-================================================================================
+Invalidation:
+- File mutation: delete rag:file:{fileId}; eligibility mutation tăng file revision.
+- FAQ mutation: delete rag:faq:{faqId}; eligibility mutation tăng FAQ revision.
+- Corpus mutation/reindex/unindex: tăng corpus revision.
+- TOC mutation: invalidate file entity và warm/evict PageIndex metadata.
 
-17.1. Collection: `files`
-  - _id                 : ObjectId (Phát sinh bởi Mongo)
-  - display_name        : str (Tên đẹp hiển thị UI)
-  - original_filename   : str (Tên file vật lý lúc lên R2)
-  - storage_path        : str (Đường link tới file gốc R2)
-  - markdown_storage_path: str (Đường link tới bản bóc tách .md R2)
-  - storage_bucket      : str (Tên bucket R2)
-  - file_size           : int (Bytes của file gốc)
-  - markdown_file_size  : int (Bytes của file MD)
-  - mime_type           : str (vd: application/pdf)
-  - table_of_contents   : list (Mảng các tiêu đề văn bản phẳng)
-  - summary             : str (Tóm tắt ngắn gọn nội dung tài liệu)
-  - customMetadata     : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}, "type": "cong_van"})
-  - status              : str (uploading, processing, ready, failed)
-  - deletedAt / deletedBy: Soft-delete audit; null khi file đang hoạt động.
-  - deletedCorpusNodeKeys: Topic assignments nội bộ dùng khi restore.
-  - createdAt / updatedAt: datetime.
-
-17.2. Collection: `file_toc_trees`
-  - _id                 : ObjectId
-  - fileId             : str (Mapping sang id của `files`, unique index)
-  - doc_name            : str (Tiêu đề tài liệu theo PageIndex)
-  - doc_description     : str (Tóm tắt 1 câu nội dung)
-  - structure           : array (Mảng các node JSON cây phân cấp mục lục)
-
-17.3. Collection: `metadata_types` (Core Schema)
-  - key                 : str (Mã duy nhất, vd: academicYear, unique index)
-  - displayName         : str (Tên UI, vd: Năm học)
-  - description         : str (Mô tả nhãn)
-  - allowedValues       : array [
-      {
-        "value": str (Mã giá trị),
-        "displayName": str (Tên hiển thị),
-        "totalFiles": int (Biến đếm tệp),
-        "color": str (Mã hex),
-        "isActive": bool
-      }
-    ]
-  - totalFiles          : int (Tổng tệp mang tag cha này)
-  - isSystem            : bool (Nếu true, cấm xóa nhãn này)
-  - isActive            : bool (Soft delete toàn bộ nhãn)
-
-17.4. Collection: `faqs`
-  - _id                 : ObjectId
-  - question            : str (Câu hỏi gốc có dấu)
-  - question_unaccented : str (Câu hỏi không dấu - Dùng cho FTS)
-  - answer_rich_text    : str (HTML/Rich text trả lời)
-  - answer_markdown     : str (Markdown trả lời)
-  - answer_unaccented   : str (Nội dung trả lời không dấu - Dùng cho FTS)
-  - metadataFilter      : dict (Dạng {"academicYear": {"fromYear": 2024}, "enrollmentYear": {"fromYear": 2020, "toYear": 2020}})
-  - deletedAt / deletedBy: Soft-delete audit; null khi FAQ đang hoạt động.
-  - deletedCorpusNodeKeys: Topic assignments nội bộ dùng khi restore.
-  - viewCount          : int
-  - source              : str (manual, synthesized, seed)
-
-17.5. Collection: `faq_candidates`
-  - _id                 : ObjectId
-  - question            : str
-  - question_unaccented : str
-  - answer_draft_rich_text : str
-  - answer_draft_unaccented: str
-  - status              : str (pending, approved, rejected)
-  - similarity_count    : int (Số lượng log tương đồng gom cụm)
-  - source_log_ids      : array (Danh sách IDs interaction logs)
+Redis client/cache là best-effort. Query fallback MongoDB; mutation chính vẫn thành
+công nếu INCR/DELETE cache thất bại và warning được ghi log.
 
 
-================================================================================
-20. REPOSITORY LAYER & BASE REPOSITORY CRUD
+12. CHAT VÀ SESSION PERSISTENCE
 ================================================================================
 
-Dự án áp dụng Repository Pattern (app/repositories/base.py) để bao bọc Motor (async pymongo).
+POST /api/chat/query:
+- Nhận question, optional sessionId và toRichText.
+- Tạo session nếu thiếu ID, đọc tối đa 6 history messages, persist user message.
+- Persist assistant answer cùng sources/steps/tokenUsage/faqRecommendation.
 
-CÁC HÀM CƠ BẢN:
-- `create(data)` : Thêm record, tự động gán Timestamp.
-- `find_by_id(id)` : Trả về dict, map _id sang string.
-- `update_by_id(id, data)` : Cập nhật bằng toán tử `$set`.
-- `delete_by_id(id)` : Xóa vật lý (Hard delete).
-- `find_many(filter, skip, limit, sort)` : Tìm kiếm có phân trang và sắp xếp.
-- `count(filter)` : Đếm số lượng record theo tiêu chí.
+POST /api/chat/stream:
+- Nhận question và optional sessionId.
+- SSE `data: <JSON>\n\n`.
+- Event đầu tiên có sessionId.
+- Có events query_analysis, corpus_tree, corpus_traversal,
+  corpus_traversal_end, FAQ/file pipeline steps, PageIndex call/text.
+- Event cuối có done=true, source, sources, steps, tokenUsage,
+  processingTimeMs và faqRecommendation.
+- Không hỗ trợ toRichText ở stream.
 
-LỚP KẾ THỪA ĐẶC BIỆT:
-- MetadataRepository: Triển khai hàm `sync_metadata_counters` sử dụng $inc với filter động để cập nhật mảng lồng nhau (Nested array update) cho `allowed_values`.
-
-
-================================================================================
-21. STORAGE MANAGEMENT (CLOUDFLARE R2 & LOCAL CACHE)
-================================================================================
-
-19.1. R2 STORAGE:
-- Lưu trữ 2 bucket chính: original-files và markdown-artifacts.
-- Mọi truy cập file MD đều qua một lớp Cache logic.
-
-19.2. ARTIFACT CACHING STRATEGY (PageIndex Integration):
-Hệ thống sử dụng chiến lược \"Double-Fetch\" để tối ưu hiệu năng và chi phí:
-1.  Check Local: Khi cần file MD (cho Agent đọc), hệ thống kiểm tra thư mục `PAGEINDEX_WORKSPACE/artifacts`.
-2.  TTL Logic: File cached tại local sẽ tồn tại trong 60 phút (3600s).
-3.  Background Invalidation: Một background task kiểm tra và xóa file sau khi quá hạn.
-4.  R2 Fallback: Nếu không thấy local cache, hệ thống tải từ R2 về local rồi mới cung cấp cho PageIndex Tool.
-
-Client: r2_storage (app/integrations/storage/client.py).
-Giao tiếp thông qua `aioboto3` (Async AWS SDK).
-
-LOGIC QUAN TRỌNG:
-- MIME AUTO-REGISTRATION: 
-  Trong `FileService`, hệ thống tự động gán Mime Types cho Word/Excel (.docx, .xlsx, .pptx) vì các hệ điều hành Linux tối giản (Docker) thường không nhận diện được các file Office mặc định.
-- PATH GENERATION:
-  File được lưu theo: `uploads/YYYY/MM/timestamp_original.pdf`. Ngăn chặn việc ghi đè nếu hai người cùng upload file tên \"tailieu.pdf\".
+Session APIs chỉ cho owner của JWT: list, messages, rename, archive, unarchive, delete.
 
 
-================================================================================
-22. RABBITMQ CONSUMER (CONSUMER RESILIENCE)
+13. EMAIL INGEST VÀ WORKFLOWS
 ================================================================================
 
-- Thread Model: Chạy trên `threading.Thread` riêng.
-- Retry Loop: 
-  Trong hàm `_run()`, nếu connection RabbitMQ bị mất, hệ thống dùng vòng lặp For 1-10 lần, delay tăng dần (`min(5s * attempt, 60s)`) để thử kết nối lại.
-- Poison Loop Protection: Nếu parse JSON payload hỏng ngay từ đầu -> Ack message luôn (loại bỏ khỏi hàng chờ) chứ không requeue để tránh kẹt queue mãi mãi.
+RabbitMQ consumer chạy trong daemon thread, chuyển coroutine sang main event loop
+bằng asyncio.run_coroutine_threadsafe và chờ tối đa 300 giây.
+
+Message flow:
+1. Invalid JSON/schema: ACK để tránh poison loop.
+2. Nếu gRPC bật, GetState phải cho biết message current và chưa có records.
+3. Phát email_processing_started qua WebSocket channels.
+4. EmailWorkflowOrchestrator phân loại và chạy workflow.
+5. Thành công: phát done và ACK.
+6. Retryable/commit error: republish với retry header đến
+   RABBITMQ_EMAIL_MAX_RETRIES; hết retry thì NACK requeue=false vào DLQ.
+7. Permanent/unexpected error: DLQ.
+
+InquiryService gọi RagQueryPipeline.answer_email. FAQ/file retrieval giống chat;
+citation file được resolve bằng DOCUMENT_VIEW_URL_PREFIX + fileId. gRPC create/commit
+vẫn nằm trong email workflow, không nằm trong RAG pipeline.
 
 
-================================================================================
-23. HE THONG EXCEPTION HIERARCHY
-================================================================================
-
-Mỗi Exception được map vào một mã lỗi HTTP tương ứng trong Middleware hoặc trả về trực tiếp.
-
-MÃ LỖI & Ý NGHĨA:
-- 400 Bad Request (ValidationException): Upload sai định dạng, metadata thiếu.
-- 401 Unauthorized: JWT token sai, gRPC Nest-api reject token.
-- 403 Forbidden (ForbiddenException): Student cố tình gọi API Admin, Xóa system metadata.
-- 404 Not Found (NotFoundException): Không tìm thấy File, Metadata Key.
-- 409 Conflict (ConflictException): Upload file trùng tên, Xóa nhãn đang có tài liệu sử dụng.
-- 500/502/503 (StorageException, GeminiException, RabbitMQException): Lỗi hạ tầng hoặc API bên thứ ba.
-
-
-================================================================================
-24. DANH LUC REST API ENDPOINTS ĐẦY ĐỦ
+14. METADATA
 ================================================================================
 
-PHÂN HỆ FILES:
-- GET /api/files                : List file (Metadata search, Keyword search, Phân trang).
-- POST /api/files               : Upload file (Quick flow, trả về fileId ngay).
-- GET /api/files/{id}           : Chi tiết file (Metadata, status).
-- PATCH /api/files/{id}         : Cập nhật tên hiển thị và metadata (Sync Corpus Index).
-- GET /api/files/{id}/download   : Download file (Stream dữ liệu trực tiếp từ Server).
-- DELETE /api/files/{id}        : Xóa mềm file, gỡ Corpus và giữ artifact.
-- GET /api/files/trash          : Danh sách file đã xóa mềm.
-- POST /api/files/{id}/restore  : Khôi phục file và Corpus assignment.
-- DELETE /api/files/{id}/purge  : Xóa vĩnh viễn file trong trash.
+Year range public:
+{
+  "fromYear": 0,
+  "toYear": 9999
+}
 
-PHÂN HỆ FAQ:
-- GET/POST /api/faqs            : List hoặc tạo FAQ chưa xóa; `isActive` đã bị loại bỏ.
-- GET/PATCH /api/faqs/{id}      : Xem hoặc cập nhật FAQ chưa xóa.
-- DELETE /api/faqs/{id}         : Xóa mềm FAQ và gỡ khỏi Corpus.
-- GET /api/faqs/trash           : Danh sách FAQ đã xóa mềm.
-- POST /api/faqs/{id}/restore   : Khôi phục FAQ và Corpus assignment.
-- DELETE /api/faqs/{id}/purge   : Xóa vĩnh viễn FAQ trong trash.
+0 và 9999 là sentinel mở. fromYear phải <= toYear.
 
-SOFT-DELETE ROLLOUT:
-- Dừng API/background workers trong cửa sổ maintenance, checkout code mới rồi chạy
-  `.venv/bin/python scripts/migrate_soft_delete.py` trước khi khởi động app mới.
-- Migration bỏ `isActive` của FAQ; mọi FAQ cũ, kể cả `isActive=false`, trở thành active.
-- Migration drop/recreate các named soft-delete indexes theo định nghĩa canonical, nên có thể chạy lại để sửa index direction/options cũ mà không xóa document.
-- Chạy `POST /api/corpus/backfill` sau migration để đồng bộ lại Corpus links/counts.
-- R2 vẫn dùng public domain: soft delete ẩn File khỏi API/RAG nhưng không thu hồi URL public cũ.
+File metadata:
+- enrollmentYear;
+- academicYear;
+- type: ctdt | cong_van | quyet_dinh.
 
-PHÂN HỆ CHAT:
-- POST /api/chat/query          : Chat QA đồng bộ.
-- POST /api/chat/stream         : Chat QA streaming (SSE).
+FAQ metadata chỉ gồm enrollmentYear và academicYear.
+Unified retrieval filter có thể thêm type array.
 
-- GET /api/chat/sessions            : Danh sách Chat Sessions (status: active/archived).
-- POST /api/chat/sessions/{session_id}/archive  : Archive chat session.
-- POST /api/chat/sessions/{session_id}/unarchive  : Unarchive chat session.
-- GET /api/chat/sessions/{session_id}/messages : Lịch sử (bao gồm thought/thinking và text).
-
-PHÂN HỆ METADATA (Hardened):
-- GET /api/metadata/schema      : Lấy định nghĩa Schema metadata hiện tại của hệ thống.
-
-PHÂN HỆ CORPUS:
-- GET /api/corpus/stats         : Thống kê Corpus Tree theo node/root node và direct links.
-- GET /api/corpus/tree          : Lấy cây topic; directFiles/directFaqs gồm id, name, typed metadata, lecturerOnly và updatedAt. File ref có thêm originalFilename để FE lấy đuôi file. Raw/subtree ID arrays và các trường tree suy ra được không được trả về. Nhận `metadataFilter` JSON (cùng format List FAQ/File) và `lecturerOnly`; khi lọc, counts được tính lại và nhánh rỗng bị ẩn.
-- GET /api/corpus/topics        : List topic dạng flat, chỉ gồm identity/parent/counts.
-- GET /api/corpus/topics/{topicKey} : Chi tiết topic, gồm childKeys và direct payload refs.
-- GET/PUT /api/corpus/files/{fileId}/topics : Xem hoặc thay thế topic assignments của file.
-- GET/PUT /api/corpus/faqs/{faqId}/topics : Xem hoặc thay thế topic assignments của FAQ.
-- POST /api/corpus/topics       : Tạo topic.
-- PATCH /api/corpus/topics/{topicKey} : Cập nhật topic.
-- POST /api/corpus/topics/{sourceKey}/merge : Merge topic vào target.
-- DELETE /api/corpus/topics/{topicKey} : Xóa topic.
-- POST /api/corpus/backfill     : Backfill READY files và FAQ chưa xóa vào Corpus Tree.
-- POST /api/debug/corpus/traverse : Preview traversal typed candidates (`fileCandidates`, `faqCandidates`) cùng trace `status`, `selectedTopics`, `expandedNodeKeys`, `inspectedNodeKeys`, `terminationReason`, `turnCount`, `tokenUsage`. Request chỉ nhận `metadataFilter` cho metadata.
-- POST /api/debug/corpus/chat-preview : Preview đầy đủ luồng RagQueryPipeline.answer_chat với answer, analysis, candidates, FAQ, citations, steps và token usage.
-
-PHÂN HỆ HEALTH & SYSTEM:
-- GET /health                   : Trạng thái kết nối DB, R2, RabbitMQ, gRPC.
-- GET /                         : Root check.
-- POST /api/email/process       : Manual trigger Email Orchestrator (dùng cho debug/test).
-- POST /api/email/test/ingested  : Test RabbitMQ payload via HTTP.
+GET /api/metadata/schema trả documentTypes, yearMin, yearMax và không đọc DB.
 
 
-
-================================================================================
-25. REAL-TIME NOTIFICATIONS (WEBSOCKET)
+15. FORMS
 ================================================================================
 
-Hệ thống cung cấp kênh WebSocket `/api/files/progress/{clientId}` để theo dõi các bước xử lý file nặng.
+Forms lưu documentType, contentLink rich text và optional notes.
+API hỗ trợ list/search, CRUD, Excel/CSV import preview và apply.
+Excel helpers chuẩn hóa numeric cell, giữ rich text/hyperlink khi parser hỗ trợ và
+thêm target/rel an toàn cho link ở output workflow tương ứng.
 
-CO CHE HOAT DONG:
-1. Singleton `FileStatusNotifier` lưu trữ các kết nối đang hoạt động.
-2. Khi `FileService` thực hiện các bước (R2 upload, LlamaParse, PageIndex), nó gọi `progress_callback`.
-3. Callback này gửi JSON payload tới các client đang lắng nghe clientId tương ứng.
-4. Payload Format: `{"step": "string", "message": "string", "fileId": "string"}`
 
-================================================================================
-26. CAU HINH HE THONG (SETTINGS TABLE & .env IMPACTS)
+16. PUBLIC DATA MODELS
 ================================================================================
 
-Các biến môi trường quan trọng:
-- `PAGEINDEX_AGENT_MAX_TURNS`: Số vòng lặp tối đa của PageIndex answering agent (Mặc định: 7).
-- `MONGODB_URL`: Link kết nối cơ sở dữ liệu.
-- `R2_BUCKET_NAME`: Tên kho lưu trữ tài liệu.
+MongoDB collections đang đăng ký runtime:
+- files
+- file_toc_trees
+- faqs
+- chat_sessions
+- chat_messages
+- forms
+- corpus_nodes
 
-| Biến .env             | Giá trị mặc định     | Mô tả |
-| :---                  | :---                 | :---  |
-| LLM_API_KEY           | (Required)           | API key của provider được chọn trong `LLM_MODEL`; dùng chung cho gateway và PageIndex |
-| MONGODB_URL           | mongodb://...        | Connection string |
-| PAGEINDEX_WORKSPACE   | storage/pageindex_workspace | Nơi cache PageIndex workspace/artifacts |
-| DOCUMENT_VIEW_URL_PREFIX | https://vaa.hcmus.app/?viewDocumentId= | Prefix link citation; hệ thống nối thêm fileId |
-| GRPC_URL              | localhost:5000       | Link tới Nest-api Backend |
-| MAX_FILE_SIZE_MB      | 20                   | Chặn dung lượng upload |
-| LLM_MODEL             | gemini/gemini-2.5-flash | Model LiteLLM dùng chung cho application LLM calls và PageIndex |
-| LLM_TIMEOUT_SECONDS   | 60                   | Timeout dùng chung cho mỗi LLM request |
-| LLM_MAX_ATTEMPTS      | 3                    | Tổng số attempt cho transient LLM errors |
-| LLM_DETERMINISTIC_TEMPERATURE | 0.0          | Sampling cho structured output, classification/extraction, synthesis và tool agents |
-| LLM_DIRECT_REPLY_TEMPERATURE | 0.5           | Sampling cho direct conversational reply |
-| PAGEINDEX_AGENT_MAX_TURNS | 7                | Số vòng lặp tối đa của PageIndex answering agent |
-| LLAMA_CLOUD_API_KEY   | (Required)           | Dùng cho LlamaParse PDF Parsing |
-| COHERE_API_KEY        | (Optional)           | Dùng cho Cohere Rerank v2; thiếu key thì giữ thứ tự retrieval |
-| COHERE_RERANK_ENABLED | true                 | Bật/tắt rerank file candidates và FAQ docs |
-| COHERE_RERANK_MODEL   | rerank-v4.0-fast     | Model Cohere rerank mặc định cho online chat/email |
-| COHERE_RERANK_MAX_CANDIDATES | 1000          | Kích thước candidate pool tối đa cho mỗi lượt rerank |
-| COHERE_RERANK_FILE_TOP_N | 5                 | Số file tối đa giữ lại sau rerank |
-| COHERE_RERANK_FAQ_TOP_N | 3                  | Số FAQ tối đa giữ lại sau rerank |
-| CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT | 5       | Số file và FAQ sample tối đa khi agent inspect topic |
+Repository base là app/core/base_beanie_repository.py và trả Beanie documents thay
+vì raw dictionary.
+
+Snapshot export bỏ system collections. Snapshot restore hiện dùng scripts/snapshot.py
+và scripts/init_db.py; không export retired synthesis collections nếu chúng tồn tại
+trong snapshot source logic hiện hành.
 
 
-================================================================================
-27. SCRIPTS HO TRO BAO TRI (MAINTENANCE)
+17. API GROUPS VÀ ACCESS
 ================================================================================
 
-1. scripts/init_db.py: 
-   Sử dụng cờ `--skip-confirm` để chạy tự động. Lệnh sẽ:
-   - Thử drop database hiện tại.
-   - Xóa sạch toàn bộ objects trong R2 bucket.
-   - Xóa sạch thư mục workspace địa phương.
-   - Khởi tạo lại Indexes MongoDB.
-   - Seed metadata, FAQ mẫu và Corpus Topic Tree theo dữ liệu cấu hình hiện tại.
-   - Có thể gọi backfill để nạp dữ liệu cho Corpus Topic Tree.
+Public:
+- GET /
+- GET /health
 
-2. scripts/seed_faqs.py:
-   - Nạp FAQ mẫu từ `scripts/sample_faqs.json` hoặc file JSON được truyền vào.
+Authenticated:
+- Chat query/stream/session APIs
+- File list/detail/download
+- FAQ list/detail
+- Forms list/detail
+- Metadata schema
+- TOC tree
 
-3. POST /api/corpus/backfill:
-   - Là entry point duy nhất để index lại toàn bộ READY files và FAQ chưa xóa.
-   - Không tự seed và không yêu cầu catalog có sẵn; khi cây rỗng, CorpusLinker cho phép LLM đề xuất và tạo root topics mới.
+Admin:
+- File/FAQ/Forms mutations và import
+- File/FAQ trash, restore, purge
+- Corpus admin/backfill/debug
+- FAQ match debug, file parse preview
+- Manual/test email endpoints
+
+WebSocket:
+- /api/files/progress/{clientId}: authenticated
+- /api/email/progress/{clientId}: admin
+
+Danh sách method/path đầy đủ nằm trong docs/api.txt.
 
 
-================================================================================
-28. AI PROMPTS TAP TRUNG HOA
-================================================================================
-
-Tất cả các prompt tại dự án được viết theo cấu trúc:
-- ĐỐI TƯỢNG (Bạn là ai?)
-- NGỮ CẢNH (Bạn đang giúp ai?)
-- RÀNG BUỘC (Định dạng output, điều không được làm).
-- HƯỚNG DẪN TRÍCH DẪN (Phải ghi rõ File ID, Trang nào).
-
-LƯU Ý QUAN TRỌNG:
-Prompt hiện được đặt gần domain sử dụng:
-- PageIndex prompt builder: `app/modules/rag/query/answering/pageindex_agent/prompt_builder.py`.
-- PageIndex answering prompts: `app/modules/rag/query/answering/pageindex_agent/prompts.py`.
-- FAQ answering prompts: `app/modules/rag/query/answering/faq_answering/prompts.py`.
-- Corpus traversal prompts: `app/modules/rag/query/retrieval/traversal/prompts.py`.
-- Email/chat analyzers: `app/modules/rag/query/analyzer/*_query_analyzer_service.py`.
-- Email classification/workflow prompts vẫn nằm trong module email tương ứng.
-
-Chat stream giữ reasoning/tool events realtime. Chat non-stream trả reasoning trong steps nhưng repository không persist; email không bật Corpus reasoning. Chat/email non-stream trả final answer Markdown, sau đó service layer có thể convert sang HTML nếu `to_rich_text=True`.
-
---------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.6.0 (Corpus API/DTO Refactor).
---------------------------------------------------------------------------------
-
-================================================================================
-29. HE THONG SNAPSHOT & RESTORE (DATA PERSISTENCE)
+18. SETTINGS QUAN TRỌNG
 ================================================================================
 
-Hệ thống hỗ trợ cơ chế Snapshot để tránh nạp lại dữ liệu qua AI tốn phí khi cần khởi tạo lại database. Snapshot bao gồm dữ liệu và trạng thái trong MongoDB.
+Application/LLM:
+- APP_NAME, APP_VERSION, DEBUG, LOG_LEVEL
+- LLM_API_KEY, LLM_MODEL
+- LLM_TIMEOUT_SECONDS, LLM_MAX_ATTEMPTS
+- LLM_DETERMINISTIC_TEMPERATURE, LLM_DIRECT_REPLY_TEMPERATURE
 
-QUY TRÌNH BẢO TRÌ NHANH:
+Ingestion/PageIndex:
+- LLAMA_CLOUD_API_KEY và LLAMA_PARSE_*
+- PAGEINDEX_WORKSPACE, PAGEINDEX_AGENT_MAX_TURNS
+- PAGEINDEX_TOC_CHECK_PAGE_NUM, PAGEINDEX_MAX_PAGE_NUM_EACH_NODE
+- PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE, PAGEINDEX_SUMMARY_TOKEN_THRESHOLD
+- PAGEINDEX_DOC_CACHE_TTL_SECONDS, PAGEINDEX_MARKDOWN_CACHE_TTL_SECONDS
 
-Tác vụ                | Câu lệnh
-----------------------|----------------------------------------------------------------------
-Sao lưu dữ liệu      | python scripts/snapshot.py export scripts/uploads_result/rag_backup.json
-Khôi phục dữ liệu    | python scripts/init_db.py --restore scripts/uploads_result/rag_backup.json
-Khởi tạo gốc (AI)    | python scripts/init_db.py --skip-confirm
+Retrieval:
+- COHERE_API_KEY, COHERE_RERANK_ENABLED, COHERE_RERANK_MODEL
+- COHERE_RERANK_MAX_CANDIDATES, COHERE_RERANK_FILE_TOP_N
+- COHERE_RERANK_FAQ_TOP_N, COHERE_RERANK_MAX_TOKENS_PER_DOC
+- CORPUS_TRAVERSAL_MAX_TURNS, CORPUS_TRAVERSAL_MAX_SELECTED_TOPICS
+- CORPUS_TRAVERSAL_SOFT_FILE_LIMIT, CORPUS_TRAVERSAL_SOFT_FAQ_LIMIT
+- CORPUS_TRAVERSAL_TOPIC_SAMPLE_LIMIT
 
-LƯU Ý KỸ THUẬT:
-- Snapshot lưu trữ dữ liệu MongoDB giúp khôi phục nhanh cấu trúc mục lục và các câu hỏi thường gặp.
-- Thư mục lưu trữ mặc định được khuyến nghị: scripts/uploads_result/.
-- Quá trình Restore được tích hợp trực tiếp vào init_db.py qua cờ --restore, giúp dọn sạch môi trường cũ trước khi nạp Snapshot.
+Infrastructure:
+- MONGODB_*, R2_*, GRPC_*, RABBITMQ_*, JWT_*, REDIS_*
+- RAG_CORPUS_CACHE_TTL_SECONDS
+- RAG_ALLOWED_IDS_CACHE_TTL_SECONDS
+- RAG_ENTITY_CACHE_TTL_SECONDS
 
---------------------------------------------------------------------------------
-Xác nhận bản thảo Overview Version 5.5.0 (Chat Customization & CSV support).
---------------------------------------------------------------------------------
+Debug endpoint-specific limit không được cấu hình trong .env/config. Ví dụ giới hạn
+catalog của /api/faqs/match là hằng nội bộ trong FAQ service.
 
+
+19. MAINTENANCE VÀ TEST
 ================================================================================
-30. PHU LUC: QUY CHUAN XU LY EXCEL & RICH TEXT
-================================================================================
 
-Để đảm bảo tính nhất quán giữa các module FAQ và Forms, hệ thống sử dụng một bộ tiện ích chung tại `app/integrations/excel/utils.py`.
+Reset toàn bộ (phá huỷ dữ liệu):
+  python scripts/init_db.py --skip-confirm
 
-CÁC QUY TẮC XỬ LÝ CHÍNH:
-1.  Numeric Normalization: 
-    - Excel thường lưu số nguyên dưới dạng float (vd: 2020 thành 2020.0).
-    - Hệ thống tự động chuyển đổi các giá trị này về chuỗi số nguyên sạch (vd: "2020").
-2.  Rich Text Preservation:
-    - Sử dụng `openpyxl` để duyệt từng `InlineFont` fragment trong ô Excel.
-    - Chuyển đổi các định dạng (Bold, Italic, Underline, Color) sang HTML tương ứng.
-3.  Hyperlink Extraction:
-    - Tự động trích xuất URL từ các ô có gắn Link.
-    - Gộp URL và text hiển thị thành thẻ `<a>`.
-4.  Security & UX:
-    - Tất cả các thẻ `<a>` được gán `target="_blank"` và `rel="noopener noreferrer"` (xử lý ở tầng Frontend hoặc API Response).
-5.  Pydantic Compatibility:
-    - Mọi dữ liệu bóc tách từ Excel được ép kiểu về `str` trước khi đưa vào Pydantic model để tránh lỗi `Input should be a valid string`.
+Seed:
+  python scripts/seed_corpus.py
+  python scripts/seed_faqs.py --file scripts/sample_faqs.json
+
+Snapshot:
+  python scripts/snapshot.py export scripts/uploads_result/rag_backup.json
+  python scripts/init_db.py --restore scripts/uploads_result/rag_backup.json
+
+Compile/regression:
+  .venv/bin/python -m compileall -q app scripts
+  .venv/bin/python -m pytest tests/modules/corpus tests/modules/rag \
+      tests/modules/chat tests/modules/email tests/modules/faq tests/modules/files
+  bash scripts/test/run_all.sh
+
+Lưu ý: repository hiện không có scripts/remove_faq_synthesis_data.py hoặc
+scripts/migrate_soft_delete.py; không dùng các lệnh đó trong runbook hiện tại.

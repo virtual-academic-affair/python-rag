@@ -22,3 +22,6 @@ Use this when touching parsing, indexing, metadata/linking, or code that prepare
 - Query depends on stable file IDs, metadata, descriptions, PageIndex artifacts, and Corpus topic links.
 - Topic assignment changes can alter retrieval recall; update Corpus/RAG tests when changing linker behavior.
 - Description/content shape changes can affect Cohere rerank and PageIndex prompt quality.
+- `index_md_content()` returns ingestion results but must not cache the transient parser path.
+- Warm `pageindex:doc:{docId}` only after Markdown has been uploaded to R2 and the TOC document has been upserted with its stable `markdown_storage_path`.
+- Successful READY/index/link changes invalidate the exact file entity, bump eligibility when visibility changes, and bump the Corpus revision when the indexed Corpus payload changes. Invalidation remains best-effort.

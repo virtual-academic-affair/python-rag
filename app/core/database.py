@@ -22,8 +22,6 @@ class Database:
     FILES = "files"
     FILE_TOC_TREES = "file_toc_trees"
     FAQS = "faqs"
-    FAQ_CANDIDATES = "faq_candidates"
-    INTERACTION_LOGS = "interaction_logs"
     FORMS = "forms"
     CHAT_SESSIONS = "chat_sessions"
     CHAT_MESSAGES = "chat_messages"

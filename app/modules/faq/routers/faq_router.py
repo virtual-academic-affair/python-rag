@@ -8,11 +8,6 @@ from app.modules.faq.dtos import (
     FaqUpdateRequest,
     FaqResponse,
     FaqListResponse,
-    FaqCandidateResponse,
-    FaqCandidateListResponse,
-    FaqReviewRequest,
-    FaqSynthesisRequest,
-    FaqSynthesisResponse,
     FaqMatchRequest,
     FaqMatchResponse,
     FaqImportPreviewResponse,
@@ -151,76 +146,6 @@ async def debug_match_faq(
         answer_markdown=result.answer_markdown,
         faq_ids=[str(getattr(faq, "id", "")) for faq in result.matched_faqs],
         questions=[getattr(faq, "question", "") for faq in result.matched_faqs],
-    )
-
-
-# ==========================================
-# Admin Candidate Endpoints
-# ==========================================
-@router.get("/candidates/list", response_model=FaqCandidateListResponse)
-async def list_candidates(
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status (pending, approved, rejected). If not provided, returns all."),
-    search: Optional[str] = Query(None, description="Search keyword for candidates"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    admin: JWTPayload = Depends(require_admin),
-    faq_svc: FaqService = Depends(get_faq_service)
-):
-    """List FAQ candidates from synthesis."""
-    result = await faq_svc.list_candidates(status=status_filter, search=search, page=page, limit=limit)
-    return FaqCandidateListResponse(
-        items=[FaqCandidateResponse.from_document(item) for item in result.items],
-        total=result.total,
-        page=result.page,
-        limit=result.limit
-    )
-
-
-@router.get("/candidates/{candidate_id}", response_model=FaqCandidateResponse)
-async def get_candidate(
-    candidate_id: str,
-    admin: JWTPayload = Depends(require_admin),
-    faq_svc: FaqService = Depends(get_faq_service)
-):
-    """Get a specific FAQ candidate by ID."""
-    candidate = await faq_svc.get_candidate(candidate_id)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    return FaqCandidateResponse.from_document(candidate)
-
-
-@router.post("/candidates/{candidate_id}/review", response_model=FaqCandidateResponse)
-async def review_candidate(
-    candidate_id: str,
-    request: FaqReviewRequest,
-    admin: JWTPayload = Depends(require_admin),
-    faq_svc: FaqService = Depends(get_faq_service)
-):
-    """Approve or reject an FAQ candidate."""
-    try:
-        result = await faq_svc.review_candidate(
-            candidate_id=candidate_id,
-            action=request.action,
-            reviewer_id=admin.user_id,
-            question_override=request.question_override,
-            answer_rich_text_override=request.answer_rich_text_override,
-            metadata_filter_override=request.metadata_filter_override.model_dump(by_alias=False) if request.metadata_filter_override else None,
-            note=request.note
-        )
-        return FaqCandidateResponse.from_document(result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/synthesis", response_model=FaqSynthesisResponse)
-async def trigger_synthesis(
-    request: FaqSynthesisRequest,
-    admin: JWTPayload = Depends(require_admin)
-):
-    """Manually trigger FAQ synthesis background job."""
-    raise HTTPException(
-        status_code=501,
-        detail="FAQ synthesis is temporarily disabled pending architecture migration"
     )
 
 

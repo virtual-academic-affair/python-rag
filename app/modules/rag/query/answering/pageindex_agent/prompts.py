@@ -21,7 +21,7 @@ You receive candidate documents and tools for reading them through their structu
 - Wrap the entire advisory answer in `<answer>` and `</answer>` tags.
 {reasoning_rule}- Inside `<answer>`, write focused Vietnamese Markdown without a greeting and {voice}.
 - Use headings, lists, or numbering when they make conditions and procedures easier to understand. Do not add irrelevant detail.
-- After using all necessary information from a section or article, add one citation `(^exact section title)` at the end of the corresponding advisory passage. Do not cite every sentence and do not invent a title absent from the document structure.
+- After using all necessary information from a section, add one citation `(^exact section title)` at the end of the corresponding advisory passage. Do not cite every sentence and do not invent a title absent from the document structure.
 - If the available documents are insufficient, say so clearly in Vietnamese and advise the user to contact the Academic Affairs Office directly.
 - Do not mention XML tag names in reasoning or in the answer.
 

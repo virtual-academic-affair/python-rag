@@ -19,7 +19,6 @@ def _faq(**overrides):
         "answer_rich_text": "<p>Trả lời</p>",
         "view_count": 0,
         "source": "manual",
-        "candidate_id": None,
         "deleted_at": None,
         "deleted_by": None,
         "deleted_corpus_node_keys": [],
@@ -49,7 +48,7 @@ async def test_delete_faq_soft_deletes_before_unindex():
     linker = MagicMock()
     linker.unindex_faq = AsyncMock()
 
-    with patch("app.modules.corpus.services.corpus_service.get_corpus_service", return_value=corpus), patch(
+    with patch("app.modules.faq.services.faq_service.get_corpus_service", return_value=corpus), patch(
         "app.modules.faq.services.faq_service.get_corpus_linker", return_value=linker
     ):
         assert await service.delete_faq("faq1", "admin1") is True
@@ -74,7 +73,6 @@ async def test_restore_faq_uses_llm_when_saved_topics_are_missing():
     repo = MagicMock()
     repo.find_by_id_including_deleted = AsyncMock(return_value=deleted)
     repo.find_by_unaccented_question = AsyncMock(return_value=None)
-    repo.find_by_candidate_id = AsyncMock(return_value=None)
     repo.restore = AsyncMock(return_value=True)
     repo.find_by_id = AsyncMock(return_value=restored)
     service._faq_repo = repo
@@ -85,7 +83,7 @@ async def test_restore_faq_uses_llm_when_saved_topics_are_missing():
     linker.index_faq = AsyncMock(return_value=["new-topic"])
     linker.unindex_faq = AsyncMock()
 
-    with patch("app.modules.corpus.services.corpus_service.get_corpus_service", return_value=corpus), patch(
+    with patch("app.modules.faq.services.faq_service.get_corpus_service", return_value=corpus), patch(
         "app.modules.faq.services.faq_service.get_corpus_linker", return_value=linker
     ):
         result = await service.restore_faq("faq1")

@@ -9,6 +9,7 @@ Khởi tạo gốc (AI)    | python scripts/init_db.py --skip-confirm
 """
 
 import asyncio
+import logging
 import json
 import os
 import sys
@@ -17,34 +18,30 @@ from pathlib import Path
 import time
 from datetime import datetime
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from scripts.snapshot import SnapshotManager
-from scripts.seed_faqs import main as seed_faqs_main
-
-from app.core.config import settings
-
+from beanie import init_beanie
 from dotenv import load_dotenv
-load_dotenv(project_root / ".env")
-
-import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, TEXT
 
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+load_dotenv(project_root / ".env")
+
+from scripts.snapshot import SnapshotManager
+from scripts.seed_faqs import main as seed_faqs_main
+from app.core.config import settings
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
 from app.modules.corpus.models.corpus_node import CorpusNodeDocument
 from app.modules.corpus.repositories.corpus_node_repository import CorpusNodeRepository
 from scripts.seed_corpus import seed_corpus
-from beanie import init_beanie
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ====================================
 # Configuration
@@ -188,24 +185,6 @@ async def create_database_indexes(skip_seeding: bool = False):
         [("deleted_at", ASCENDING), ("created_at", DESCENDING)],
         name="idx_faqs_deleted_created",
     )
-    await db[Database.FAQS].create_index(
-        [("candidate_id", ASCENDING)],
-        unique=True,
-        partialFilterExpression={
-            "candidate_id": {"$type": "string"},
-            "deleted_at": None,
-        },
-        name="idx_faqs_candidate_id_unique"
-    )
-
-    # FAQ Candidate collection indexes — names must match Settings.indexes in faq_candidate.py
-    await db[Database.FAQ_CANDIDATES].create_index(
-        [("question_unaccented", TEXT), ("answer_draft_unaccented", TEXT)],
-        name="idx_faq_candidates_text"
-    )
-    await db[Database.FAQ_CANDIDATES].create_index([("status", ASCENDING)], name="status_1")
-    await db[Database.FAQ_CANDIDATES].create_index([("synthesis_batch_id", ASCENDING)], name="synthesis_batch_id_1")
-
     # Corpus Nodes collection indexes
     await db["corpus_nodes"].create_index(
         [("node_key", ASCENDING)],

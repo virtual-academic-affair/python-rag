@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
-from bson import ObjectId
 
-logger = logging.getLogger(__name__)
+from bson import ObjectId
 
 from app.core.base_beanie_repository import BeanieRepository
 from app.modules.faq.models.faq import FaqDocument
+
+logger = logging.getLogger(__name__)
 
 
 class FaqRepository(BeanieRepository[FaqDocument]):
@@ -42,9 +43,6 @@ class FaqRepository(BeanieRepository[FaqDocument]):
             "question_unaccented": question_unaccented,
             "deleted_at": None,
         })
-
-    async def find_by_candidate_id(self, candidate_id: str) -> Optional[FaqDocument]:
-        return await FaqDocument.find_one({"candidate_id": candidate_id, "deleted_at": None})
 
     async def list_faqs(
         self,
