@@ -66,6 +66,14 @@ class ChatStreamService(ChatService):
                 pipeline_steps.append(step)
                 yield json.dumps({**simplify_step(step, candidate_files), "done": False})
                 continue
+            if event.get("type") == "_corpus_traversal_end":
+                yield json.dumps({
+                    "type": "corpus_traversal_end",
+                    "traversalComplete": bool(event.get("traversal_complete", True)),
+                    "content": "Hoàn tất duyệt cây chủ đề.",
+                    "done": False,
+                })
+                continue
             if event.get("type") == "_pipeline_step":
                 candidate_files = event.get("candidate_files") or []
                 step = event.get("step") or {}

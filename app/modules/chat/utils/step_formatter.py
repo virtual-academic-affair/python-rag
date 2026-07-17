@@ -42,10 +42,12 @@ def simplify_step(step: dict, candidate_files: list[dict] | None = None) -> dict
             "action": action,
             "content": step.get("content", ""),
         }
-        if step.get("node_key"):
-            result["nodeKey"] = step["node_key"]
-        if step.get("node_keys"):
-            result["nodeKeys"] = step["node_keys"]
+        node_key = step.get("node_key") or step.get("nodeKey")
+        if node_key:
+            result["nodeKey"] = node_key
+        node_keys = step.get("node_keys") or step.get("nodeKeys")
+        if node_keys:
+            result["nodeKeys"] = node_keys
         return result
 
     elif step_type == "reasoning":

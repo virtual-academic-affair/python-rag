@@ -22,11 +22,16 @@ from app.utils.retry import async_retry
 logger = logging.getLogger(__name__)
 
 _TERMINAL_TOOLS = {"select_topics", "select_no_match"}
+_LLM_UNAVAILABLE_MESSAGE = "Dịch vụ AI tạm thời gặp sự cố. Vui lòng thử lại sau."
 
 
-def _upstream_status_code(exc: Exception) -> int:
-    status_code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    return status_code if isinstance(status_code, int) and status_code in (429, 503) else 502
+def _raise_llm_unavailable(exc: Exception | None = None) -> None:
+    """Gemini/LLM failure that is not a corpus miss — surface a clean AI outage to FE."""
+    if exc is not None:
+        logger.warning("[traversal.llm.unavailable] %s", exc)
+    else:
+        logger.warning("[traversal.llm.unavailable] empty or non-tool LLM response")
+    raise CorpusTraversalError(_LLM_UNAVAILABLE_MESSAGE, status_code=502) from exc
 
 
 async def run_corpus_traversal(
@@ -86,10 +91,7 @@ async def run_corpus_traversal(
                 retryable_exceptions=(genai_errors.ServerError,),
             )
         except Exception as exc:
-            raise CorpusTraversalError(
-                f"Corpus traversal LLM call failed: {exc}",
-                status_code=_upstream_status_code(exc),
-            ) from exc
+            _raise_llm_unavailable(exc)
 
         usage = getattr(response, "usage_metadata", None)
         if usage:
@@ -97,13 +99,13 @@ async def run_corpus_traversal(
             total_completion_tokens += getattr(usage, "candidates_token_count", 0) or 0
 
         if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-            raise CorpusTraversalError("Corpus traversal agent returned an empty response")
+            _raise_llm_unavailable()
 
         model_parts = response.candidates[0].content.parts
         history.append(types.Content(role="model", parts=model_parts))
         tool_calls = [part.function_call for part in model_parts if part.function_call]
         if not tool_calls:
-            raise CorpusTraversalError("Corpus traversal agent stopped without explicit selection")
+            _raise_llm_unavailable()
 
         logger.info(
             "[RAG][%s][traversal.turn.tools] turn=%d calls=%s duration_ms=%d",

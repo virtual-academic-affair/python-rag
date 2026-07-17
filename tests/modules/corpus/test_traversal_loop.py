@@ -138,18 +138,21 @@ async def test_run_corpus_traversal_emits_reasoning_only_for_valid_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_run_corpus_traversal_llm_failure_raises_app_exception():
+async def test_run_corpus_traversal_llm_failure_raises_unavailable():
     snapshot = build_filtered_snapshot_from_nodes([], {"file-ok"}, set())
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(side_effect=RuntimeError("gemini down"))):
         with pytest.raises(CorpusTraversalError) as exc:
             await run_corpus_traversal("Câu hỏi", snapshot)
     assert exc.value.status_code == 502
+    assert "tạm thời gặp sự cố" in exc.value.message
 
 
 @pytest.mark.asyncio
-async def test_run_corpus_traversal_no_tool_call_is_failure():
+async def test_run_corpus_traversal_no_tool_call_raises_unavailable():
     snapshot = build_filtered_snapshot_from_nodes([], {"file-ok"}, set())
     response = SimpleNamespace(candidates=[SimpleNamespace(content=types.Content(role="model", parts=[types.Part.from_text(text="done")]))])
     with patch("app.modules.rag.query.retrieval.traversal.loop.async_retry", AsyncMock(return_value=response)):
-        with pytest.raises(CorpusTraversalError, match="without explicit selection"):
+        with pytest.raises(CorpusTraversalError) as exc:
             await run_corpus_traversal("Câu hỏi", snapshot)
+    assert exc.value.status_code == 502
+    assert "tạm thời gặp sự cố" in exc.value.message

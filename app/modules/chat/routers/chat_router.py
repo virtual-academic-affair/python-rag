@@ -56,15 +56,33 @@ def _stream_api_error_payload(exc: APIError, session_id: str) -> dict:
     if ai_code == 500 and ("500 INTERNAL" in str(exc) or "Internal error encountered" in str(exc)):
         return {
             "error": "ai_service_error",
-            "message": "Google internal server error",
-            "statusCode": 500,
+            "message": "Dịch vụ AI tạm thời gặp sự cố. Vui lòng thử lại sau.",
+            "statusCode": 502,
             "done": True,
             "sessionId": session_id,
         }
     return {
         "error": "ai_service_error",
-        "message": str(exc),
+        "message": "Dịch vụ AI tạm thời gặp sự cố. Vui lòng thử lại sau.",
         "statusCode": ai_code,
+        "done": True,
+        "sessionId": session_id,
+    }
+
+
+def _stream_app_error_payload(exc: AppException, session_id: str) -> dict:
+    if exc.status_code == 429:
+        return {
+            "error": "rate_limit_exceeded",
+            "message": "Quá tải hệ thống AI. Vui lòng thử lại sau.",
+            "statusCode": 429,
+            "done": True,
+            "sessionId": session_id,
+        }
+    return {
+        "error": "app_error",
+        "message": exc.message,
+        "statusCode": exc.status_code,
         "done": True,
         "sessionId": session_id,
     }
@@ -151,13 +169,7 @@ async def chat_stream(
             yield _sse_event(_stream_api_error_payload(exc, session_id))
         except AppException as exc:
             logger.error("[Chat-Stream] AppException for user %s: %s", user_context.user_id, exc)
-            yield _sse_event({
-                "error": "app_error",
-                "message": exc.message,
-                "statusCode": exc.status_code,
-                "done": True,
-                "sessionId": session_id,
-            })
+            yield _sse_event(_stream_app_error_payload(exc, session_id))
         except Exception as exc:
             logger.error(
                 "[Chat-Stream] Unexpected error for user %s: %s",

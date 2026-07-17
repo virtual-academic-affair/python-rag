@@ -168,6 +168,7 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
                     "content": 'Chọn các chủ đề: "Gốc", "Khác".',
                 },
             }
+            yield {"type": "_corpus_traversal_end", "traversal_complete": True}
             yield {
                 "type": "_pipeline_step",
                 "step": {
@@ -224,6 +225,13 @@ async def test_chat_stream_service_formats_agent_events_and_final_payload():
         "action": "select",
         "nodeKeys": ["root", "other"],
         "content": 'Chọn các chủ đề: "Gốc", "Khác".',
+        "done": False,
+    }
+    traversal_end = next(row for row in rows if row.get("type") == "corpus_traversal_end")
+    assert traversal_end == {
+        "type": "corpus_traversal_end",
+        "traversalComplete": True,
+        "content": "Hoàn tất duyệt cây chủ đề.",
         "done": False,
     }
     assert any(row.get("content") == "Câu trả lời" for row in rows)

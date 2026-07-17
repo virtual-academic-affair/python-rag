@@ -299,6 +299,8 @@ class RagQueryPipeline:
                     await traversal_task
             raise
 
+        yield {"type": "_corpus_traversal_end", "traversal_complete": True}
+
         faq_docs: list[Any] = []
         faq_answer = None
         if seeds.faq_candidates:
