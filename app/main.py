@@ -28,7 +28,7 @@ from app.modules.email import EmailWorkflowOrchestrator
 from app.core.database import Database
 from app.integrations.storage.client import r2_storage
 from app.integrations.rabbitmq.client import get_rabbitmq_service
-from app.integrations.llm.gemini import gemini_client
+from app.integrations.llm.gateway import get_llm_gateway
 from app.integrations.redis.client import get_redis_client
 from app.integrations.pageindex.client import get_page_index_client
 from app.modules.email.consumer import start_email_ingest_consumer
@@ -40,7 +40,7 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -145,7 +145,6 @@ async def lifespan(_: FastAPI):
     print("=" * 80)
     print(f"📡 Server: {settings.HOST}:{settings.PORT}")
     print(f"🤖 LLM Model: {settings.LLM_MODEL}")
-    print(f"🤖 Gemini Model: {settings.GEMINI_MODEL}")
     print(f"💾 Database: {settings.MONGODB_DB_NAME}")
     print(f"📦 Storage: R2 ({settings.R2_ENDPOINT})")
     print(
@@ -433,7 +432,7 @@ async def health_check(request: Request):
         email_consumer_running = consumer_thread.is_alive() if consumer_thread is not None else False
 
     try:
-        gemini_connected = gemini_client.client is not None
+        gemini_connected = get_llm_gateway() is not None
     except Exception as e:
         logger.debug(f"Health check: gemini probe failed: {e}")
 

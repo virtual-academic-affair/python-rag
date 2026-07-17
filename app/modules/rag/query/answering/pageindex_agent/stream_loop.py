@@ -5,11 +5,9 @@ import re
 import time
 from typing import Any, AsyncGenerator
 
-from google.genai import types
-from google.genai import errors as genai_errors
-
 from app.core.config import settings
-from app.integrations.llm.gemini import gemini_client
+from app.integrations.llm.contracts import LLMStreamAccumulator
+from app.integrations.llm.gateway import get_llm_gateway
 from app.modules.rag.query.answering.pageindex_agent.citations import (
     CitationStreamFormatter,
     build_sources_from_steps,
@@ -18,7 +16,6 @@ from app.modules.rag.query.answering.pageindex_agent.loop import get_agent_confi
 from app.modules.rag.query.answering.pageindex_agent.parser import parse_agent_response
 from app.modules.rag.query.answering.pageindex_agent.prompts import CHAT_SYSTEM_PROMPT
 from app.utils.format_utils import sanitize_latex_in_markdown
-from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +34,20 @@ async def stream_pageindex_agent_loop(
     Yields public SSE-ready reasoning/text events, raw call steps for caller-side
     formatting, and a final internal `_agent_result` event with sources/steps/usage.
     """
-    tools, tool_map, config = get_agent_config(
+    tools, tool_map = get_agent_config(
         candidate_files,
         system_prompt=system_prompt,
         include_reasoning=include_reasoning,
     )
 
     if isinstance(prompt_contents, str):
-        history = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_contents)])]
-    elif isinstance(prompt_contents, types.Content):
+        history = [{"role": "user", "content": prompt_contents}]
+    elif isinstance(prompt_contents, dict):
         history = [prompt_contents]
     else:
         history = list(prompt_contents)
+    history.insert(0, {"role": "system", "content": system_prompt})
+    llm_gateway = get_llm_gateway()
 
     stream_steps: list[dict] = []
     stream_formatter: CitationStreamFormatter | None = None
@@ -63,97 +62,83 @@ async def stream_pageindex_agent_loop(
     logger.info(
         "[RAG][%s][pageindex.stream.start] max_turns=%d candidates=%s",
         trace_id,
-        settings.AGENT_MAX_TURNS,
+        settings.PAGEINDEX_AGENT_MAX_TURNS,
         [file.get("file_id") for file in candidate_files],
     )
 
-    for turn_idx in range(settings.AGENT_MAX_TURNS):
+    for turn_idx in range(settings.PAGEINDEX_AGENT_MAX_TURNS):
         last_turn_idx = turn_idx
         start_turn = time.perf_counter()
-        tool_calls_in_turn = []
-        model_response_parts = []
         turn_text_buffer = ""
         in_answer_block = False
         yielded_text_length = 0
+        accumulator = LLMStreamAccumulator()
 
-        stream = await async_retry(
-            gemini_client.client.aio.models.generate_content_stream,
-            model=settings.GEMINI_MODEL,
-            contents=history,
-            config=config,
-            retryable_exceptions=(genai_errors.ServerError,),
-        )
-
-        turn_prompt_tokens = 0
-        turn_candidates_tokens = 0
-
-        async for chunk in stream:
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                turn_prompt_tokens = getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0
-                turn_candidates_tokens = getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0
-
-            if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
+        async for chunk in llm_gateway.stream(
+            model=settings.LLM_MODEL,
+            messages=history,
+            temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+            tools=tools,
+        ):
+            accumulator.add(chunk)
+            if not chunk.text_delta:
                 continue
-            for part in chunk.candidates[0].content.parts:
-                model_response_parts.append(part)
 
-                if hasattr(part, "thought") and part.thought:
-                    continue
+            turn_text_buffer += chunk.text_delta
+            if not in_answer_block:
+                match = re.search(r"<answer>", turn_text_buffer, flags=re.IGNORECASE)
+                if match:
+                    pre_think = turn_text_buffer[:match.start()].strip()
+                    if pre_think:
+                        logger.debug("[RAG][%s][pageindex.stream.reasoning] text=%r", trace_id, pre_think[:300])
+                        stream_steps.append({"type": "conclude", "content": pre_think})
+                    in_answer_block = True
 
-                if part.function_call:
-                    call = part.function_call
-                    tool_calls_in_turn.append(call)
+            if in_answer_block:
+                if stream_formatter is None:
+                    current_sources = await build_sources_from_steps(stream_steps, candidate_files)
+                    stream_formatter = CitationStreamFormatter(current_sources)
 
-                    args = dict(call.args)
-                    reason_val = args.pop("reasoning", None)
-                    if reason_val:
-                        yield {"type": "reasoning", "content": f"{reason_val}\n", "done": False}
-                        stream_steps.append({"type": "reasoning", "content": reason_val})
+                match = re.search(r"<answer>\r?\n?(.*)", turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
+                if match:
+                    inside_content = match.group(1)
+                    end_match = re.search(r"</answer>", inside_content, flags=re.IGNORECASE)
+                    if end_match:
+                        final_to_yield = inside_content[:end_match.start()]
+                        new_text = final_to_yield[yielded_text_length:]
+                        if new_text:
+                            formatted = stream_formatter.process_chunk(new_text)
+                            formatted_flush = stream_formatter.flush()
+                            combined = formatted + formatted_flush
+                            if combined:
+                                final_answer_accumulated += combined
+                                yield {"type": "text", "content": combined, "done": False}
+                            yielded_text_length += len(new_text)
+                    else:
+                        safe_len = len(inside_content) - 15
+                        if safe_len > yielded_text_length:
+                            new_text = inside_content[yielded_text_length:safe_len]
+                            formatted = stream_formatter.process_chunk(new_text)
+                            if formatted:
+                                final_answer_accumulated += formatted
+                                yield {"type": "text", "content": formatted, "done": False}
+                            yielded_text_length += len(new_text)
 
-                    call_step = {"type": "call", "name": call.name, "args": args}
-                    stream_steps.append(call_step)
-                    yield {"type": "call", "step": call_step, "done": False}
+        model_response = accumulator.response()
+        tool_calls_in_turn = model_response.tool_calls
+        turn_prompt_tokens = model_response.usage.prompt_tokens if model_response.usage else 0
+        turn_candidates_tokens = model_response.usage.completion_tokens if model_response.usage else 0
 
-                if part.text:
-                    turn_text_buffer += part.text
-                    if not in_answer_block:
-                        match = re.search(r"<answer>", turn_text_buffer, flags=re.IGNORECASE)
-                        if match:
-                            pre_think = turn_text_buffer[:match.start()].strip()
-                            if pre_think:
-                                logger.debug("[RAG][%s][pageindex.stream.reasoning] text=%r", trace_id, pre_think[:300])
-                                stream_steps.append({"type": "conclude", "content": pre_think})
-                            in_answer_block = True
+        for call in tool_calls_in_turn:
+            args = dict(call.arguments)
+            reason_val = args.pop("reasoning", None)
+            if reason_val:
+                yield {"type": "reasoning", "content": f"{reason_val}\n", "done": False}
+                stream_steps.append({"type": "reasoning", "content": reason_val})
 
-                    if in_answer_block:
-                        if stream_formatter is None:
-                            current_sources = await build_sources_from_steps(stream_steps, candidate_files)
-                            stream_formatter = CitationStreamFormatter(current_sources)
-
-                        match = re.search(r"<answer>\r?\n?(.*)", turn_text_buffer, flags=re.DOTALL | re.IGNORECASE)
-                        if match:
-                            inside_content = match.group(1)
-                            end_match = re.search(r"</answer>", inside_content, flags=re.IGNORECASE)
-                            if end_match:
-                                final_to_yield = inside_content[:end_match.start()]
-                                new_text = final_to_yield[yielded_text_length:]
-                                if new_text:
-                                    formatted = stream_formatter.process_chunk(new_text)
-                                    formatted_flush = stream_formatter.flush()
-                                    combined = formatted + formatted_flush
-                                    if combined:
-                                        final_answer_accumulated += combined
-                                        yield {"type": "text", "content": combined, "done": False}
-                                    yielded_text_length += len(new_text)
-                            else:
-                                safe_len = len(inside_content) - 15
-                                if safe_len > yielded_text_length:
-                                    new_text = inside_content[yielded_text_length:safe_len]
-                                    formatted = stream_formatter.process_chunk(new_text)
-                                    if formatted:
-                                        final_answer_accumulated += formatted
-                                        yield {"type": "text", "content": formatted, "done": False}
-                                    yielded_text_length += len(new_text)
+            call_step = {"type": "call", "name": call.name, "args": args}
+            stream_steps.append(call_step)
+            yield {"type": "call", "step": call_step, "done": False}
 
         if not tool_calls_in_turn and turn_text_buffer and in_answer_block:
             _pre_think, final_text = parse_agent_response(turn_text_buffer)
@@ -170,19 +155,7 @@ async def stream_pageindex_agent_loop(
                     final_answer_accumulated += combined
                     yield {"type": "text", "content": combined, "done": False}
 
-        clean_parts = []
-        current_text_segments = []
-        for part in model_response_parts:
-            if part.text:
-                current_text_segments.append(part.text)
-            else:
-                if current_text_segments:
-                    clean_parts.append(types.Part.from_text(text="".join(current_text_segments)))
-                    current_text_segments = []
-                clean_parts.append(part)
-        if current_text_segments:
-            clean_parts.append(types.Part.from_text(text="".join(current_text_segments)))
-        history.append(types.Content(role="model", parts=clean_parts))
+        history.append(model_response.assistant_message)
 
         total_prompt_tokens += turn_prompt_tokens
         total_candidates_tokens += turn_candidates_tokens
@@ -200,7 +173,7 @@ async def stream_pageindex_agent_loop(
             last_tool_calls = []
             break
 
-        tool_response_parts = []
+        tool_response_messages = []
         for call in tool_calls_in_turn:
             try:
                 tool_func = tool_map.get(call.name)
@@ -209,10 +182,10 @@ async def stream_pageindex_agent_loop(
                     trace_id,
                     turn_idx + 1,
                     call.name,
-                    dict(call.args),
+                    call.arguments,
                 )
                 tool_started_at = time.perf_counter()
-                result = await tool_func(**call.args) if tool_func else f"Error: Tool {call.name} not found."
+                result = await tool_func(**call.arguments) if tool_func else f"Error: Tool {call.name} not found."
                 logger.info(
                     "[RAG][%s][pageindex.stream.tool.result] turn=%d tool=%s duration_ms=%d result=%s",
                     trace_id,
@@ -221,9 +194,12 @@ async def stream_pageindex_agent_loop(
                     int((time.perf_counter() - tool_started_at) * 1000),
                     str(result)[:500],
                 )
-                tool_response_parts.append(
-                    types.Part.from_function_response(name=call.name, response={"result": result})
-                )
+                tool_response_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": str(result),
+                })
             except Exception as e:
                 logger.exception(
                     "[RAG][%s][pageindex.stream.tool.error] turn=%d tool=%s",
@@ -231,22 +207,25 @@ async def stream_pageindex_agent_loop(
                     turn_idx + 1,
                     call.name,
                 )
-                tool_response_parts.append(
-                    types.Part.from_function_response(name=call.name, response={"error": str(e)})
-                )
+                tool_response_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": f"Error: {e}",
+                })
 
-        history.append(types.Content(role="user", parts=tool_response_parts))
+        history.extend(tool_response_messages)
         last_tool_calls = tool_calls_in_turn
 
     if current_sources is None:
         current_sources = await build_sources_from_steps(stream_steps, candidate_files)
 
-    max_turns_reached = last_turn_idx == settings.AGENT_MAX_TURNS - 1 and bool(last_tool_calls)
+    max_turns_reached = last_turn_idx == settings.PAGEINDEX_AGENT_MAX_TURNS - 1 and bool(last_tool_calls)
     if max_turns_reached:
         logger.warning(
             "[RAG][%s][pageindex.stream.max_turns] max_turns=%d",
             trace_id,
-            settings.AGENT_MAX_TURNS,
+            settings.PAGEINDEX_AGENT_MAX_TURNS,
         )
 
     final_answer_accumulated = sanitize_latex_in_markdown(final_answer_accumulated)

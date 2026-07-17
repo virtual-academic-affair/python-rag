@@ -2,13 +2,10 @@
 import logging
 from typing import Optional, List, Dict, Any
 
-from google.genai import types
-
 from app.core.config import settings
-from app.integrations.llm.gemini import gemini_client
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
 from app.modules.chat.dtos import ChatHistoryItem
 from app.utils.json_utils import parse_json_safely
-from app.utils.retry import async_retry
 from app.modules.metadata.services.extraction_service import extract_metadata_from_text
 from app.modules.rag.query.analyzer.contracts import ChatQueryAnalysis
 
@@ -35,35 +32,34 @@ def _normalize_needs_rag(value: Any) -> bool:
     return True
 
 ANALYZE_SYSTEM_PROMPT = """
-Bạn là chuyên gia phân tích ngữ cảnh hội thoại cho hệ thống tư vấn Phòng Giáo vụ.
+You analyze conversation context for a university Academic Affairs advisory system.
 
-Dựa vào lịch sử hội thoại (nếu có) và câu hỏi hiện tại, hãy thực hiện 3 nhiệm vụ:
+Use the recent conversation, when present, and the current message to perform three tasks:
 
-**NHIỆM VỤ 1 — effective_question:**
-Viết lại câu hỏi thành câu HOÀN CHỈNH, TỰ LẬP (không cần ngữ cảnh để hiểu).
-- Điền đầy đủ thông tin ngầm hiểu từ lịch sử (khóa học, năm học, chủ đề đang hỏi).
-- Giữ nguyên Tiếng Việt. KHÔNG thay đổi ý nghĩa gốc.
-- Nếu câu hỏi đã rõ ràng, trả về nguyên văn.
+**TASK 1 — effective_question**
+Rewrite the question as a complete, standalone Vietnamese question that can be understood without the conversation history.
+- Resolve implicit details from history, such as cohort, academic year, and the subject being discussed.
+- Preserve the original meaning and language.
+- If the question is already clear and standalone, return it unchanged.
 
-**NHIỆM VỤ 2 — needs_rag:**
-Câu hỏi (sau khi rewrite) có cần tra cứu tài liệu quy chế, thủ tục, thông báo học vụ không?
-- true: Hỏi về quy định, điều kiện, thủ tục, học phần, tốt nghiệp, học bổng, học phí, lịch học...
-- false: Lời chào hỏi, cảm ơn, xã giao thông thường, câu hỏi hoàn toàn ngoài phạm vi học vụ.
+**TASK 2 — needs_rag**
+Decide whether the rewritten question requires consulting academic regulations, procedures, notices, or institutional documents.
+- true: regulations, eligibility conditions, procedures, courses, graduation, scholarships, tuition, schedules, or similar academic matters.
+- false: greetings, thanks, ordinary small talk, or questions wholly outside academic affairs.
 
-**NHIỆM VỤ 3 — metadata_filter:**
-Trích xuất thông tin lọc từ TOÀN BỘ ngữ cảnh (câu hỏi + lịch sử):
-- enrollment_year: Khóa sinh viên. Quy tắc BẮT BUỘC: "K22" hoặc "Khóa 22" -> from_year=2022, to_year=2022.
-  Công thức: năm = 2000 + số sau K (ví dụ K20 -> 2020, K19 -> 2019, K22 -> 2022). TUYỆT ĐỐI KHÔNG suy diễn khác.
-- academic_year: Năm học.
-  + Nếu có dạng cụ thể như "NH 2024-2025" hoặc "năm học 24-25" -> from_year=2024, to_year=2025.
-  + Nếu chỉ có dạng "năm học 2024" -> from_year=2024, to_year=2024.
-  + QUY TẮC ĐẶC BIỆT KHI CÓ NIÊN KHÓA: Nếu trích xuất được enrollment_year (K) và người dùng đề cập đến năm học thứ N (năm nhất/1, năm hai/2,...) của khóa đó:
-    * Tính toán: from_year = K + N - 1, to_year = K + N.
-    * Ví dụ: Năm nhất (năm 1) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2022, to_year=2023 (Năm học 2022-2023).
-    * Ví dụ: Năm tư (năm 4) của khóa 22 (enrollment_year=2022) -> academic_year: from_year=2025, to_year=2026 (Năm học 2025-2026).
-- Nếu không tìm thấy thông tin tương ứng -> null.
+**TASK 3 — metadata_filter**
+Extract filters from the entire context, including the current message and conversation history:
+- enrollment_year is the student's admission cohort. Mandatory mapping: "K22" or "Khóa 22" means from_year=2022 and to_year=2022.
+  Formula: year = 2000 + the number after K. For example, K20=2020, K19=2019, and K22=2022. Do not infer any alternative mapping.
+- academic_year is the school year.
+  + A specific range such as "NH 2024-2025" or "năm học 24-25" means from_year=2024 and to_year=2025.
+  + A single year such as "năm học 2024" means from_year=2024 and to_year=2024.
+  + When enrollment_year K is known and the user mentions study year N for that cohort, calculate from_year = K + N - 1 and to_year = K + N.
+    * First study year of cohort 22 means academic year 2022-2023.
+    * Fourth study year of cohort 22 means academic year 2025-2026.
+- Use null when the corresponding information is absent.
 
-**OUTPUT FORMAT — Chỉ trả về JSON hợp lệ theo schema sau:**
+**OUTPUT FORMAT — Return only valid JSON matching this schema:**
 {
   "needs_rag": true | false,
   "effective_question": "...",
@@ -75,13 +71,16 @@ Trích xuất thông tin lọc từ TOÀN BỘ ngữ cảnh (câu hỏi + lịch
 """
 
 GENERATE_REPLY_SYSTEM_PROMPT = """
-Bạn là tư vấn viên hỗ trợ sinh viên của trường đại học.
-Hãy trả lời câu hỏi/lời nhắn của sinh viên một cách lịch sự, ngắn gọn và thân thiện.
-KHÔNG dùng lời chào đầu câu. Đi thẳng vào nội dung phản hồi.
-Giới hạn: 2-3 câu.
+You are a student support advisor at a university.
+Reply in Vietnamese in a polite, concise, and friendly manner.
+Do not begin with a greeting. Respond directly to the student's message.
+Limit the response to two or three sentences.
 """
 
 class ChatQueryAnalyzer:
+    def __init__(self, llm_gateway: LLMGateway | None = None):
+        self._llm_gateway = llm_gateway or get_llm_gateway()
+
     async def analyze_query(
         self,
         question: str,
@@ -109,20 +108,19 @@ class ChatQueryAnalyzer:
             history_str = _format_history(history)
             
             prompt = (
-                f"{ANALYZE_SYSTEM_PROMPT}\n\n"
-                f"Lịch sử hội thoại:\n{history_str}\n\n"
-                f"Câu hỏi hiện tại: \"{question}\"\n"
-                f"Trả về kết quả dưới dạng JSON:"
+                f"Conversation history:\n{history_str}\n\n"
+                f"Current question: \"{question}\"\n"
+                "Return the JSON analysis:"
             )
 
-            resp = await async_retry(
-                gemini_client.client.aio.models.generate_content,
-                model=settings.GEMINI_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    response_mime_type="application/json"
-                )
+            resp = await self._llm_gateway.complete(
+                messages=[
+                    {"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
             )
 
             if not resp.text:
@@ -159,13 +157,7 @@ class ChatQueryAnalyzer:
                     else:
                         metadata_filter = regex_filter
 
-            usage = None
-            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-                usage = {
-                    "prompt_tokens": getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0,
-                    "completion_tokens": getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0,
-                    "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0) or 0,
-                }
+            usage = resp.usage.as_dict() if resp.usage else None
 
             return ChatQueryAnalysis(
                 needs_rag=needs_rag,
@@ -190,28 +182,21 @@ class ChatQueryAnalyzer:
         try:
             history_str = _format_history(history)
             prompt = (
-                f"Lịch sử hội thoại:\n{history_str}\n\n"
-                f"Tin nhắn hiện tại của sinh viên: \"{effective_question}\"\n"
-                f"Câu phản hồi của bạn:"
+                f"Conversation history:\n{history_str}\n\n"
+                f"Current student message: \"{effective_question}\"\n"
+                "Your Vietnamese response:"
             )
 
-            resp = await async_retry(
-                gemini_client.client.aio.models.generate_content,
-                model=settings.GEMINI_MODEL,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.5,
-                    system_instruction=GENERATE_REPLY_SYSTEM_PROMPT,
-                )
+            resp = await self._llm_gateway.complete(
+                messages=[
+                    {"role": "system", "content": GENERATE_REPLY_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DIRECT_REPLY_TEMPERATURE,
             )
 
-            usage = None
-            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-                usage = {
-                    "prompt_tokens": getattr(resp.usage_metadata, 'prompt_token_count', 0) or 0,
-                    "completion_tokens": getattr(resp.usage_metadata, 'candidates_token_count', 0) or 0,
-                    "total_tokens": getattr(resp.usage_metadata, 'total_token_count', 0) or 0,
-                }
+            usage = resp.usage.as_dict() if resp.usage else None
 
             return ((resp.text or "").strip() or "Phòng Giáo vụ sẵn sàng hỗ trợ. Bạn cần tra cứu thông tin gì?", usage)
         except Exception as e:

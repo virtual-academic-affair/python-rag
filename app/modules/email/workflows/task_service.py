@@ -1,18 +1,9 @@
 """Workflow service for task label."""
-import json
 import logging
-import re
-
-from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import settings
-from app.integrations.llm.gemini import (
-    build_extraction_llm,
-    chain_prompt,
-    env_thinking_level,
-)
-from app.utils.retry import async_retry
-from app.integrations.grpc.client import get_grpc_client
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
+from app.integrations.llm.prompts import render_messages
 from app.modules.email.models.email_types import TaskPayload
 from app.utils.json_utils import parse_json_safely
 
@@ -22,19 +13,13 @@ logger = logging.getLogger(__name__)
 class TaskService:
     """Extract structured task payload from email."""
 
-    def __init__(self):
-        self.llm = build_extraction_llm(
-            api_key=settings.GOOGLE_API_KEY,
-            model=settings.GEMINI_MODEL,
-            temperature=0.1,
-            thinking_level=env_thinking_level(),
-        )
+    def __init__(self, llm_gateway: LLMGateway | None = None):
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
-        self.extract_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You are an information extraction engine for task-related emails.
+        self.extract_prompt = [
+            (
+                "system",
+                """You are an information extraction engine for task-related emails.
 Your job is to produce ONE strict JSON object following this exact schema (ALL keys required, even if empty):
 
 {{
@@ -84,10 +69,10 @@ Output constraints:
 - No markdown, no code fence, no explanation, no trailing text.
 - All keys must be exactly as schema (camelCase).
 """,
-                ),
-                (
-                    "human",
-                    """Extract task payload from this email.
+            ),
+            (
+                "user",
+                """Extract task payload from this email.
 
 [INPUT_MESSAGE_ID]
 {message_id}
@@ -98,15 +83,15 @@ Output constraints:
 [EMAIL_CONTENT]
 {content}
 """,
-                ),
-            ]
-        )
+            ),
+        ]
 
         # Removed local JSON extraction and repair helpers. Using app.utils.json_utils instead.
 
     async def process(self, title: str, content: str, message_id: int | None = None) -> TaskPayload:
         try:
-            rendered_messages = self.extract_prompt.format_messages(
+            rendered_messages = render_messages(
+                self.extract_prompt,
                 title=title,
                 content=content,
                 message_id=message_id,
@@ -116,18 +101,19 @@ Output constraints:
                 logger.info(
                     "[TASK EXTRACT PROMPT][%d][%s]\n%s",
                     idx,
-                    msg.__class__.__name__,
-                    getattr(msg, "content", ""),
+                    msg["role"],
+                    msg["content"],
                 )
 
-            chain = chain_prompt(self.extract_prompt, self.llm)
-            result = await async_retry(
-                chain.ainvoke,
-                {"title": title, "content": content, "message_id": message_id},
+            result = await self._llm_gateway.complete(
+                messages=rendered_messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
             )
-            logger.info("[TASK EXTRACT RESULT] raw=%r", result.content)
+            logger.info("[TASK EXTRACT RESULT] raw=%r", result.text)
 
-            payload_dict = parse_json_safely(result.content or "", repair=True)
+            payload_dict = parse_json_safely(result.text or "", repair=True)
             logger.info("[TASK EXTRACT RESULT] parsed_dict=%s", payload_dict)
 
             payload = TaskPayload.model_validate(payload_dict)
@@ -137,4 +123,3 @@ Output constraints:
         except Exception as e:
             logger.error("Task extraction failed: %s", str(e), exc_info=True)
             return TaskPayload(messageId=message_id)
-

@@ -1,32 +1,18 @@
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from google.genai import types
 
+from app.integrations.llm.contracts import LLMStreamChunk, LLMToolCallDelta, LLMUsage
 from app.modules.rag.query.answering.pageindex_agent.stream_loop import stream_pageindex_agent_loop
 
 
-class _AsyncStream:
-    def __init__(self, chunks):
-        self._chunks = chunks
+class _Gateway:
+    def __init__(self, streams):
+        self._streams = iter(streams)
 
-    def __aiter__(self):
-        self._iter = iter(self._chunks)
-        return self
-
-    async def __anext__(self):
-        try:
-            return next(self._iter)
-        except StopIteration:
-            raise StopAsyncIteration
-
-
-def _chunk(parts):
-    return SimpleNamespace(
-        candidates=[SimpleNamespace(content=types.Content(role="model", parts=parts))],
-        usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1),
-    )
+    async def stream(self, **_kwargs):
+        for chunk in next(self._streams):
+            yield chunk
 
 
 @pytest.mark.asyncio
@@ -34,23 +20,30 @@ async def test_stream_pageindex_agent_loop_emits_tool_text_and_final_result():
     async def tool(**_kwargs):
         return "{}"
 
-    call_part = types.Part.from_function_call(
-        name="get_document_structure",
-        args={"file_id": "1", "reasoning": "Cần xem mục lục"},
-    )
-    text_part = types.Part.from_text(text="<answer>Câu trả lời</answer>")
-
-    retry_mock = AsyncMock(side_effect=[
-        _AsyncStream([_chunk([call_part])]),
-        _AsyncStream([_chunk([text_part])]),
+    gateway = _Gateway([
+        [
+            LLMStreamChunk(
+                tool_call_deltas=[LLMToolCallDelta(
+                    index=0,
+                    id="call-1",
+                    name="get_document_structure",
+                    arguments_delta='{"file_id":"1","reasoning":"Cần xem mục lục"}',
+                )],
+            ),
+            LLMStreamChunk(usage=LLMUsage(1, 1, 2), finish_reason="tool_calls"),
+        ],
+        [
+            LLMStreamChunk(text_delta="<answer>Câu trả lời</answer>"),
+            LLMStreamChunk(usage=LLMUsage(1, 1, 2), finish_reason="stop"),
+        ],
     ])
 
     with patch(
         "app.modules.rag.query.answering.pageindex_agent.stream_loop.get_agent_config",
-        return_value=([], {"get_document_structure": tool}, object()),
+        return_value=([], {"get_document_structure": tool}),
     ), patch(
-        "app.modules.rag.query.answering.pageindex_agent.stream_loop.async_retry",
-        retry_mock,
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.get_llm_gateway",
+        return_value=gateway,
     ), patch(
         "app.modules.rag.query.answering.pageindex_agent.stream_loop.build_sources_from_steps",
         AsyncMock(return_value=[]),

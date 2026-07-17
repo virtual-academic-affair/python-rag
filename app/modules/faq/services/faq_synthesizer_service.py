@@ -5,12 +5,12 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
+from app.integrations.llm.prompts import render_messages
 from app.utils.format_utils import markdown_to_rich_text
 from app.modules.faq.repositories.interaction_log_repository import InteractionLogRepository
 from app.modules.faq.repositories.faq_candidate_repository import FaqCandidateRepository
-from app.integrations.llm.gemini import build_extraction_llm, chain_prompt
 from app.utils.text_utils import remove_accents
 from app.utils.json_utils import parse_json_safely
 from app.modules.metadata.services.metadata_service import get_metadata_service
@@ -22,39 +22,35 @@ from app.modules.faq.services.faq_service import get_faq_service
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_TEXT = """Bạn là một chuyên gia tư vấn học vụ xuất sắc. Nhiệm vụ của bạn là phân tích một nhóm (cluster) các câu hỏi tương tự nhau của sinh viên và các câu trả lời tương ứng từ hệ thống để tổng hợp thành một mục FAQ (Câu hỏi thường gặp) duy nhất, toàn diện và chất lượng cao.
+SYSTEM_TEXT = """You synthesize high-quality university academic-affairs FAQs from clusters of similar student questions and the corresponding system answers.
 
-Dựa trên dữ liệu nhóm được cung cấp:
-1. Xây dựng một 'question' (câu hỏi) chung, rõ ràng và ngắn gọn, nắm bắt được ý định cốt lõi của tất cả các câu hỏi trong nhóm.
-2. Tổng hợp một 'answer_draft' (bản nháp câu trả lời) toàn diện dựa trên các câu trả lời của hệ thống bằng định dạng Markdown (in đậm, danh sách...). Đảm bảo câu trả lời chính xác, định dạng tốt, dễ hiểu.
-3. Xác định 'metadata_filter_suggestion' (gợi ý bộ lọc) phù hợp (gồm academic_year và enrollment_year) dựa trên ngữ cảnh. Nếu câu trả lời áp dụng chung, hãy để null.
+Using the supplied cluster data:
+1. Create one clear, concise Vietnamese 'question' that captures the shared core intent of the cluster.
+2. Create one comprehensive Vietnamese 'answer_draft' derived only from the supplied system answers. Use readable Markdown when useful, including emphasis and lists, and preserve factual accuracy.
+3. Infer an applicable 'metadata_filter_suggestion' containing academic_year and enrollment_year. Use null when the answer applies generally.
 
-Trả về kết quả dưới dạng JSON với CHÍNH XÁC các khóa (keys) sau:
+Return JSON with exactly these keys:
 {{
-    "question": "Câu hỏi tổng hợp",
-    "answer_draft": "Câu trả lời tổng hợp",
+    "question": "Synthesized Vietnamese question",
+    "answer_draft": "Synthesized Vietnamese answer",
     "metadata_filter_suggestion": {{
         "academic_year": {{ "from_year": 2024, "to_year": 2025 }},
         "enrollment_year": {{ "from_year": 2020, "to_year": {YEAR_MAX} }}
     }}
 }}""".replace("{YEAR_MAX}", str(YEAR_MAX))
 
-# Prompt for Gemini to synthesize FAQ
-SYNTHESIS_PROMPT = ChatPromptTemplate.from_messages([
+# Prompt for the LLM gateway to synthesize FAQ
+SYNTHESIS_PROMPT = [
     ("system", SYSTEM_TEXT),
-    ("human", "Các FAQ gần đây nhất trong hệ thống (tham khảo để đảm bảo tính nhất quán về văn phong và nội dung):\n{recent_faqs}\n\nDữ liệu nhóm (Cluster Data):\n{cluster_data}")
-])
+    ("user", "Recent system FAQs for style and content consistency:\n{recent_faqs}\n\nCluster data:\n{cluster_data}"),
+]
 
 
 class FaqSynthesisService:
-    def __init__(self):
+    def __init__(self, llm_gateway: LLMGateway | None = None):
         self._log_repo = InteractionLogRepository()
         self._candidate_repo = FaqCandidateRepository()
-        self._llm = build_extraction_llm(
-            api_key=settings.GOOGLE_API_KEY,
-            model=settings.LLM_MODEL,
-            temperature=0.1
-        )
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
     def _cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
         """Calculate cosine similarity between two vectors."""
@@ -159,15 +155,21 @@ class FaqSynthesisService:
             for idx, faq in enumerate(recent_faqs):
                 recent_faqs_text += f"FAQ {idx+1}:\nQ: {faq.question}\nA: {faq.answer_markdown}\n\n"
         else:
-            recent_faqs_text = "Chưa có FAQ nào trong hệ thống.\n\n"
+            recent_faqs_text = "No existing FAQs are available.\n\n"
 
         try:
-            chain = chain_prompt(SYNTHESIS_PROMPT, self._llm)
-            response = await chain.ainvoke({
-                "recent_faqs": recent_faqs_text,
-                "cluster_data": cluster_text
-            })
-            result = parse_json_safely(response.content or "")
+            messages = render_messages(
+                SYNTHESIS_PROMPT,
+                recent_faqs=recent_faqs_text,
+                cluster_data=cluster_text,
+            )
+            response = await self._llm_gateway.complete(
+                messages=messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
+            )
+            result = parse_json_safely(response.text or "")
             
             if not result or "question" not in result or "answer_draft" not in result:
                 logger.warning(f"Failed to synthesize cluster {batch_id}. Invalid LLM output.")
@@ -203,7 +205,7 @@ class FaqSynthesisService:
             return candidate
             
         except Exception as e:
-            logger.error(f"Error during LLM synthesis: {e}")
+            logger.error("Error during LLM synthesis: %s", e, exc_info=True)
             return None
 
     async def run(self, date_from_str: Optional[str] = None, date_to_str: Optional[str] = None, sources: Optional[List[str]] = None) -> Dict[str, Any]:

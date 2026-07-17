@@ -195,21 +195,36 @@ RÀNG BUỘC CỦA PROMPT:
 
 
 ================================================================================
-7. LLM FACTORY (GEMINI INTEGRATION)
+7. LLM GATEWAY (LITELLM)
 ================================================================================
 
-Dự án sử dụng Gemini (Google GenAI Python SDK v1.x) làm engine AI duy nhất.
+Dự án dùng `LLMGateway` in-process trên LiteLLM Python SDK cho toàn bộ LLM call application-owned:
+- Chat/email query analysis và direct reply.
+- Corpus topic assignment và Corpus traversal.
+- FAQ answering.
+- PageIndex answering agent (non-stream và stream).
+- Email classification, mixed-intent split và payload extraction.
+- FAQ candidate synthesis.
 
-7.1. THINKING LEVELS (QUẢN LÝ SUY LUẬN):
-- none : Không dùng Thinking, rẻ và nhanh nhất. Thích hợp phân loại email ngắn.
-- low/medium: Bật `ThinkingConfig` với tokens giới hạn (~1024-4096). Tăng độ chính xác khi trích xuất Ticket đăng ký học phần từ email dài.
-- high: Dùng cho các tác vụ phân tích tài liệu (PageIndex description generation).
+Contract nội bộ dùng message/tool-call format trung lập provider; LiteLLM model phải có prefix,
+ví dụ `gemini/gemini-2.5-flash`. Credential của provider active được cấu hình một lần qua `LLM_API_KEY`.
+`app/integrations/pageindex/**` là integration bên ngoài và không đi qua gateway này, nhưng dùng chung
+`LLM_MODEL` để tránh một alias model riêng cho PageIndex. Project chỉ dùng gateway chung cho
+application-owned LLM calls, không còn prompt framework hoặc direct Gemini wrapper.
 
-7.2. MODEL SETTINGS (CẤU HÌNH API):
-- Temperature 0.1: Dùng cho triết xuất (Extraction) để tránh AI \"sáng tạo\" thêm thông tin SV.
-- Temperature 0.7: Dùng cho Chat/Email Draft để câu trả lời tự nhiên.
-- Timeout 60-90s: Đảm bảo app không bị treo nếu Gemini phản hồi chậm.
-- Model Pass-through: Hỗ trợ tự động thêm tiền tố \"gemini/\" cho model nếu dùng qua LiteLLM gateway.
+7.1. RETRY, TIMEOUT VÀ USAGE:
+- Gateway là nơi duy nhất retry application LLM calls; LiteLLM internal retry bị tắt để tránh retry nhân đôi.
+- Timeout dùng chung qua `LLM_TIMEOUT_SECONDS`.
+- Usage được chuẩn hóa thành `prompt_tokens`, `completion_tokens`, `total_tokens`.
+- Streaming ghép các tool-call argument delta hoàn chỉnh trước khi validate và chạy tool.
+
+7.2. MODEL SETTINGS:
+- `LLM_MODEL`: model dùng chung cho application LLM calls và các LLM call nội bộ của PageIndex.
+- `LLM_DETERMINISTIC_TEMPERATURE=0.0`: structured output, classification/extraction, FAQ answer/synthesis và tool agents.
+- `LLM_DIRECT_REPLY_TEMPERATURE=0.5`: direct conversational reply khi không cần RAG.
+- System prompt, response format, tools, reasoning và max turns là behavior từng use case, không phải model config chung.
+- Các ngưỡng xây cây như `PAGEINDEX_MAX_TOKEN_NUM_EACH_NODE` và giới hạn vòng lặp như
+  `PAGEINDEX_AGENT_MAX_TURNS` vẫn là config riêng vì chúng điều khiển thuật toán, không phải sampling của model.
 
 
 ================================================================================
@@ -725,20 +740,24 @@ CO CHE HOAT DONG:
 ================================================================================
 
 Các biến môi trường quan trọng:
-- `AGENT_MAX_TURNS`: Số vòng lặp tối đa của RAG Agent (Mặc định: 7). Tránh Agent bị lặp vô tận.
+- `PAGEINDEX_AGENT_MAX_TURNS`: Số vòng lặp tối đa của PageIndex answering agent (Mặc định: 7).
 - `MONGODB_URL`: Link kết nối cơ sở dữ liệu.
 - `R2_BUCKET_NAME`: Tên kho lưu trữ tài liệu.
 
 | Biến .env             | Giá trị mặc định     | Mô tả |
 | :---                  | :---                 | :---  |
-| GOOGLE_API_KEY        | (Required)           | Dùng cho Gemini query analysis, extraction, FAQ answering và PageIndex agent |
+| LLM_API_KEY           | (Required)           | API key của provider được chọn trong `LLM_MODEL`; dùng chung cho gateway và PageIndex |
 | MONGODB_URL           | mongodb://...        | Connection string |
 | PAGEINDEX_WORKSPACE   | storage/pageindex_workspace | Nơi cache PageIndex workspace/artifacts |
 | DOCUMENT_VIEW_URL_PREFIX | https://vaa.hcmus.app/?viewDocumentId= | Prefix link citation; hệ thống nối thêm fileId |
 | GRPC_URL              | localhost:5000       | Link tới Nest-api Backend |
 | MAX_FILE_SIZE_MB      | 20                   | Chặn dung lượng upload |
-| LLM_MODEL             | gemini-2.5-flash     | Model dùng cho Email Classification |
-| GEMINI_MODEL          | gemini-2.5-flash     | Model dùng cho RAG Agentic Chat |
+| LLM_MODEL             | gemini/gemini-2.5-flash | Model LiteLLM dùng chung cho application LLM calls và PageIndex |
+| LLM_TIMEOUT_SECONDS   | 60                   | Timeout dùng chung cho mỗi LLM request |
+| LLM_MAX_ATTEMPTS      | 3                    | Tổng số attempt cho transient LLM errors |
+| LLM_DETERMINISTIC_TEMPERATURE | 0.0          | Sampling cho structured output, classification/extraction, synthesis và tool agents |
+| LLM_DIRECT_REPLY_TEMPERATURE | 0.5           | Sampling cho direct conversational reply |
+| PAGEINDEX_AGENT_MAX_TURNS | 7                | Số vòng lặp tối đa của PageIndex answering agent |
 | LLAMA_CLOUD_API_KEY   | (Required)           | Dùng cho LlamaParse PDF Parsing |
 | COHERE_API_KEY        | (Optional)           | Dùng cho Cohere Rerank v2; thiếu key thì giữ thứ tự retrieval |
 | COHERE_RERANK_ENABLED | true                 | Bật/tắt rerank file candidates và FAQ docs |

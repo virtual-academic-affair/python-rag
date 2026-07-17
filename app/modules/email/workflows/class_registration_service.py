@@ -1,16 +1,11 @@
 """Workflow service for classRegistration label."""
 import logging
 
-from langchain_core.prompts import ChatPromptTemplate
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.integrations.llm.gemini import (
-    build_extraction_llm,
-    chain_prompt,
-    env_thinking_level,
-)
-from app.utils.retry import async_retry
+from app.integrations.llm.gateway import LLMGateway, get_llm_gateway
+from app.integrations.llm.prompts import render_messages
 from app.modules.email.exceptions import PermanentEmailError, RetryableEmailError
 from app.modules.email.models.email_types import ClassRegistrationPayload
 from app.utils.json_utils import parse_json_safely
@@ -21,19 +16,13 @@ logger = logging.getLogger(__name__)
 class ClassRegistrationService:
     """Extract structured class registration payload from email."""
 
-    def __init__(self):
-        self.llm = build_extraction_llm(
-            api_key=settings.GOOGLE_API_KEY,
-            model=settings.GEMINI_MODEL,
-            temperature=0.1,
-            thinking_level=env_thinking_level(),
-        )
+    def __init__(self, llm_gateway: LLMGateway | None = None):
+        self._llm_gateway = llm_gateway or get_llm_gateway()
 
-        self.extract_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You are an information extraction engine for university class registration emails.
+        self.extract_prompt = [
+            (
+                "system",
+                """You are an information extraction engine for university class registration emails.
 Your job is to produce ONE strict JSON object following this exact schema:
 
 {{
@@ -92,10 +81,10 @@ Output constraints (must follow):
 - No markdown, no code fence, no explanation, no trailing text.
 - All keys must be exactly as schema (camelCase).
 """,
-                ),
-                (
-                    "human",
-                    """Extract class registration payload from this email.
+            ),
+            (
+                "user",
+                """Extract class registration payload from this email.
 
 [INPUT_MESSAGE_ID]
 {message_id}
@@ -106,15 +95,15 @@ Output constraints (must follow):
 [EMAIL_CONTENT]
 {content}
 """,
-                ),
-            ]
-        )
+            ),
+        ]
 
         # Removed local JSON extraction helper. Using app.utils.json_utils instead.
 
     async def process(self, title: str, content: str, message_id: int | None) -> ClassRegistrationPayload:
         try:
-            rendered_messages = self.extract_prompt.format_messages(
+            rendered_messages = render_messages(
+                self.extract_prompt,
                 title=title,
                 content=content,
                 message_id=message_id,
@@ -124,18 +113,19 @@ Output constraints (must follow):
                 logger.info(
                     "[EXTRACT PROMPT][%d][%s]\n%s",
                     idx,
-                    msg.__class__.__name__,
-                    getattr(msg, "content", ""),
+                    msg["role"],
+                    msg["content"],
                 )
 
-            chain = chain_prompt(self.extract_prompt, self.llm)
-            result = await async_retry(
-                chain.ainvoke,
-                {"title": title, "content": content, "message_id": message_id},
+            result = await self._llm_gateway.complete(
+                messages=rendered_messages,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                response_format={"type": "json_object"},
             )
-            logger.info("[EXTRACT RESULT] raw=%r", result.content)
+            logger.info("[EXTRACT RESULT] raw=%r", result.text)
 
-            payload_dict = parse_json_safely(result.content or "", repair=True)
+            payload_dict = parse_json_safely(result.text or "", repair=True)
             logger.info("[EXTRACT RESULT] parsed_dict=%s", payload_dict)
 
             payload = ClassRegistrationPayload.model_validate(payload_dict)

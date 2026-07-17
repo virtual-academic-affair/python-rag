@@ -5,19 +5,16 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
-from google.genai import errors as genai_errors
-from google.genai import types
-
 from app.core.config import settings
 from app.core.exceptions import CorpusTraversalError
+from app.integrations.llm.contracts import LLMTool
+from app.integrations.llm.gateway import get_llm_gateway
 from app.modules.corpus.contracts import TraversalResult
 from app.modules.rag.query.retrieval.traversal.prompts import CORPUS_TRAVERSAL_PROMPT
 from app.modules.rag.query.retrieval.traversal.contracts import FilteredCorpusSnapshot, TraversalSession
 from app.modules.rag.query.retrieval.traversal.runtime.activity import build_traversal_activity_steps
 from app.modules.rag.query.retrieval.traversal.runtime.presentation import node_payload
 from app.modules.rag.query.retrieval.traversal.tools import build_traversal_tools
-from app.integrations.llm.gemini import gemini_client
-from app.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +29,22 @@ def _raise_llm_unavailable(exc: Exception | None = None) -> None:
     else:
         logger.warning("[traversal.llm.unavailable] empty or non-tool LLM response")
     raise CorpusTraversalError(_LLM_UNAVAILABLE_MESSAGE, status_code=502) from exc
+
+
+def _tool_argument_error(tool: LLMTool, arguments: dict) -> str | None:
+    """Return an agent-recoverable error for malformed tool arguments."""
+    parameters = tool.parameters or {}
+    required = parameters.get("required") or []
+    missing = [name for name in required if name not in arguments or arguments[name] is None]
+    if missing:
+        return f"missing required arguments: {', '.join(missing)}"
+
+    if parameters.get("additionalProperties") is False:
+        allowed = set((parameters.get("properties") or {}).keys())
+        unexpected = sorted(set(arguments) - allowed)
+        if unexpected:
+            return f"unexpected arguments: {', '.join(unexpected)}"
+    return None
 
 
 async def run_corpus_traversal(
@@ -49,24 +62,23 @@ async def run_corpus_traversal(
         revealed_node_keys=set(snapshot.visible_root_keys),
     )
     tools = build_traversal_tools(session, include_reasoning=include_reasoning)
-    tool_map = {tool.__name__: tool for tool in tools}
-
-    config = types.GenerateContentConfig(
-        system_instruction=CORPUS_TRAVERSAL_PROMPT,
-        tools=tools,
-        temperature=0.0,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-    )
+    tool_map = {tool.name: tool.handler for tool in tools}
+    tool_definitions = {tool.name: tool for tool in tools}
+    llm_gateway = get_llm_gateway()
     root_topics = [node_payload(snapshot, key) for key in snapshot.visible_root_keys]
     history = [
-        types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=(
-                f'Hãy tìm chủ đề liên quan đến câu hỏi: "{question}"\n\n'
-                "Các root topic hợp lệ đã được cung cấp sẵn:\n"
+        {
+            "role": "system",
+            "content": CORPUS_TRAVERSAL_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": (
+                f'Find topics relevant to this question: "{question}"\n\n'
+                "Available root topics:\n"
                 f"{json.dumps(root_topics, ensure_ascii=False)}"
-            ))],
-        )
+            ),
+        },
     ]
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -83,27 +95,21 @@ async def run_corpus_traversal(
         started_at = time.perf_counter()
         logger.info("[RAG][%s][traversal.turn.start] turn=%d", trace_id, turn_idx + 1)
         try:
-            response = await async_retry(
-                gemini_client.client.aio.models.generate_content,
-                model=settings.CORPUS_TOPIC_MODEL or settings.GEMINI_MODEL,
-                contents=history,
-                config=config,
-                retryable_exceptions=(genai_errors.ServerError,),
+            response = await llm_gateway.complete(
+                messages=history,
+                model=settings.LLM_MODEL,
+                temperature=settings.LLM_DETERMINISTIC_TEMPERATURE,
+                tools=tools,
             )
         except Exception as exc:
             _raise_llm_unavailable(exc)
 
-        usage = getattr(response, "usage_metadata", None)
-        if usage:
-            total_prompt_tokens += getattr(usage, "prompt_token_count", 0) or 0
-            total_completion_tokens += getattr(usage, "candidates_token_count", 0) or 0
+        if response.usage:
+            total_prompt_tokens += response.usage.prompt_tokens
+            total_completion_tokens += response.usage.completion_tokens
 
-        if not response.candidates or not response.candidates[0].content or not response.candidates[0].content.parts:
-            _raise_llm_unavailable()
-
-        model_parts = response.candidates[0].content.parts
-        history.append(types.Content(role="model", parts=model_parts))
-        tool_calls = [part.function_call for part in model_parts if part.function_call]
+        history.append(response.assistant_message)
+        tool_calls = response.tool_calls
         if not tool_calls:
             _raise_llm_unavailable()
 
@@ -116,20 +122,22 @@ async def run_corpus_traversal(
         )
 
         terminal_calls = [call for call in tool_calls if call.name in _TERMINAL_TOOLS]
-        tool_response_parts = []
+        tool_response_messages = []
         if terminal_calls and len(tool_calls) != 1:
             for call in tool_calls:
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=call.name,
-                        response={"error": "A terminal selection/no-match tool must be the only call in its turn."},
-                    )
-                )
-            history.append(types.Content(role="user", parts=tool_response_parts))
+                tool_response_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": json.dumps({
+                        "error": "A terminal selection/no-match tool must be the only call in its turn."
+                    }),
+                })
+            history.extend(tool_response_messages)
             continue
 
         for call in tool_calls:
-            call_args = dict(call.args)
+            call_args = dict(call.arguments)
             reason_val = call_args.get("reasoning")
             if include_reasoning and call.name == "select_no_match":
                 reason_val = call_args.get("reason")
@@ -137,12 +145,16 @@ async def run_corpus_traversal(
             if tool_func is None:
                 result: dict = {"status": "invalid", "reason": f"unknown tool: {call.name}"}
             else:
-                try:
-                    result = await tool_func(**call_args)
-                except Exception as exc:
-                    raise CorpusTraversalError(
-                        f"Corpus traversal tool '{call.name}' failed: {exc}",
-                    ) from exc
+                argument_error = _tool_argument_error(tool_definitions[call.name], call_args)
+                if argument_error:
+                    result = {"status": "invalid", "reason": argument_error}
+                else:
+                    try:
+                        result = await tool_func(**call_args)
+                    except Exception as exc:
+                        raise CorpusTraversalError(
+                            f"Corpus traversal tool '{call.name}' failed: {exc}",
+                        ) from exc
 
             logger.info(
                 "[RAG][%s][traversal.tool.result] turn=%d tool=%s status=%s result=%s",
@@ -157,9 +169,12 @@ async def run_corpus_traversal(
                 },
             )
 
-            tool_response_parts.append(
-                types.Part.from_function_response(name=call.name, response={"result": result})
-            )
+            tool_response_messages.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "name": call.name,
+                "content": json.dumps({"result": result}, ensure_ascii=False, default=str),
+            })
             if isinstance(result, dict):
                 new_activity_steps = build_traversal_activity_steps(snapshot, call.name, result)
                 if new_activity_steps:
@@ -223,7 +238,7 @@ async def run_corpus_traversal(
                 )
                 return traversal_result
 
-        history.append(types.Content(role="user", parts=tool_response_parts))
+        history.extend(tool_response_messages)
 
     # Exhausting traversal turns is a normal no-match outcome. The session is
     # created eagerly above because root topics are revealed without a tool call.

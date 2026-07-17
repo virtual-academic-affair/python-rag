@@ -1,2 +1,1 @@
-"""Email LangChain Application"""
-
+"""Academic email and retrieval application."""
