@@ -39,6 +39,7 @@ Các nguyên tắc quan trọng:
 - FAQ và file được rerank riêng, không trộn chung candidate pool.
 - Nếu không có candidate phù hợp, pipeline trả `source="bypass"`.
 - Chat small talk có thể trả trực tiếp với `source="llm"` mà không chạy retrieval.
+- Bot chỉ trả lời nội dung thuộc phạm vi Giáo vụ đại học; câu hỏi ngoài phạm vi được từ chối ngắn gọn và hướng người dùng về các chủ đề học vụ liên quan.
 - Redis là best-effort: lỗi Redis không được làm query hoặc mutation nghiệp vụ thất bại.
 
 ## Công nghệ

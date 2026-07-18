@@ -241,7 +241,9 @@ Luồng non-stream:
 1. Analyze câu hỏi.
    - Chat: rewrite, needsRag gate, metadata filter và enrollment fallback.
    - Email: normalize subject/body, inquiryTypes và metadata filter; luôn chạy RAG.
-2. Nếu chat là small talk, generate direct reply và trả source=llm.
+2. Nếu chat không cần retrieval, generate direct reply và trả source=llm:
+   - greeting/thanks được phản hồi ngắn gọn;
+   - câu hỏi ngoài phạm vi Giáo vụ bị từ chối, không trả lời kiến thức tổng quát.
 3. Traverse Corpus Tree để lấy FAQ/file seeds.
 4. Hydrate và Cohere-rerank FAQ.
 5. FAQ answering LLM đọc một hoặc nhiều FAQ.

@@ -424,6 +424,8 @@ FILE LIST ITEM RESPONSE:
 │   2. Tự động load lịch sử trò chuyện (6 tin nhắn gần nhất) từ MongoDB.       │
 │   3. QueryAnalyzer phân tích câu hỏi + history để tạo câu hỏi tối ưu         │
 │      (rewritten question) và trích xuất thêm các bộ lọc năm học động.        │
+│      Greeting/thanks được trả lời ngắn; câu hỏi ngoài phạm vi Giáo vụ bị    │
+│      từ chối và không được trả lời như một trợ lý kiến thức tổng quát.      │
 │   4. Chạy shared RagQueryPipeline: retrieval Corpus Tree, Cohere rerank,     │
 │      FAQ answering bằng LLM, rồi PageIndex nếu FAQ chưa đủ.                  │
 │      Traversal hết giới hạn lượt được xử lý như no-match và trả thông báo    │
@@ -1261,7 +1263,7 @@ LƯU Ý VỀ LƯU TRỮ VÀ CACHING (STORAGE & CACHE):
 - `get_document_structure` không truy cập filesystem/R2; chỉ `get_page_content` tải lại từ R2 khi local miss hoặc hết TTL.
 - Corpus nodes (300 giây), allowed IDs (120 giây) và file/FAQ entity hydration (600 giây) được cache bằng Redis revision/exact keys. Cache tách `student` và `privileged`; Redis lỗi sẽ fallback MongoDB.
 - Agent Control: Số vòng lặp tối đa của PageIndex answering agent được cấu hình qua `PAGEINDEX_AGENT_MAX_TURNS` (mặc định: 7).
-- Application LLM calls đi qua in-process `LLMGateway` dùng LiteLLM; PageIndex giữ integration riêng nhưng dùng cùng `LLM_MODEL` và `LLM_API_KEY`. Model có provider prefix, ví dụ `gemini/gemini-2.5-flash` hoặc `openrouter/<model-id>`.
+- Application LLM calls đi qua in-process `LLMGateway` dùng LiteLLM; các lỗi tạm thời gồm `APIConnectionError`, timeout, rate limit, service unavailable và internal server error được retry theo `LLM_MAX_ATTEMPTS`. PageIndex dùng cùng `LLM_MODEL` và `LLM_API_KEY`. Model có provider prefix, ví dụ `gemini/gemini-2.5-flash` hoặc `openrouter/<model-id>`.
 - Performance Logging: Hệ thống ghi chi tiết thời gian xử lý (Ingestion phases, Retrieval, Agent/Tool duration) vào logs phục vụ tối ưu hóa.
 
 LƯU Ý VỀ RETRIEVAL (CORPUS TREE ARCHITECTURE):
