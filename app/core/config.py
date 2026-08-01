@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # LiteLLM model names include provider prefix.
     LLM_MODEL: str = "gemini/gemini-2.5-flash"
+    # Optional custom base URL for OpenAI-compatible gateways
+    LLM_BASE_URL: Optional[str] = None
     LLM_TIMEOUT_SECONDS: int = 60
     LLM_MAX_ATTEMPTS: int = 3
     LLM_DETERMINISTIC_TEMPERATURE: float = 0.0

@@ -41,3 +41,17 @@ def test_email_prompt_uses_english_numbered_document_context():
     assert "Enrollment years: 2022-2022" in prompt
     assert "soạn" not in prompt.lower()
     assert "trả lời email" not in prompt.lower()
+
+
+def test_build_system_prompt_for_mode_with_contact_info():
+    from app.modules.rag.query.answering.pageindex_agent.prompts import build_system_prompt_for_mode
+
+    contact_info = "Giáo vụ: giaovu@hcmus.edu.vn"
+    chat_prompt = build_system_prompt_for_mode("chat", contact_info=contact_info)
+    email_prompt = build_system_prompt_for_mode("email", contact_info=contact_info)
+
+    assert "Giáo vụ: giaovu@hcmus.edu.vn" in chat_prompt
+    assert "Giáo vụ: giaovu@hcmus.edu.vn" in email_prompt
+    assert "conversation history" in chat_prompt
+    assert "normalized question" in email_prompt
+

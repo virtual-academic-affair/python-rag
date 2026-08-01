@@ -8,10 +8,12 @@ import time
 from typing import Any, AsyncGenerator
 from uuid import uuid4
 
+from app.modules.forms.services.form_service import get_form_service
 from app.modules.rag.query.answering.pageindex_agent import (
     run_pageindex_agent_loop,
     stream_pageindex_agent_loop,
 )
+from app.modules.rag.query.answering.pageindex_agent.prompts import build_system_prompt_for_mode
 from app.modules.rag.query.answering.pageindex_agent.prompt_builder import (
     build_chat_prompt_contents,
     build_email_prompt_text,
@@ -485,10 +487,19 @@ class RagQueryPipeline:
                 faq_docs=faq_docs,
             )
 
+        try:
+            form_service = await get_form_service()
+            contact_info = await form_service.get_email_contacts_text()
+        except Exception as err:
+            logger.warning("[RAG][%s][form_contacts.failed] %s", trace_id, err)
+            contact_info = ""
+
+        system_prompt = build_system_prompt_for_mode(behavior.mode, contact_info=contact_info)
+
         return RagPreparedContext(
             candidate_files=candidate_files,
             prompt_contents=prompt_contents,
-            system_prompt=behavior.system_prompt,
+            system_prompt=system_prompt,
         )
 
     async def _try_answer_from_faqs(

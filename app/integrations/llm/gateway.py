@@ -80,13 +80,17 @@ class LLMGateway:
     ) -> dict[str, Any]:
         resolved_model = model or settings.LLM_MODEL
         kwargs: dict[str, Any] = {
-            "model": resolved_model,
             "messages": messages,
             "api_key": settings.LLM_API_KEY,
             "timeout": settings.LLM_TIMEOUT_SECONDS,
             "num_retries": 0,
             "stream": stream,
         }
+        if settings.LLM_BASE_URL:
+            kwargs["api_base"] = settings.LLM_BASE_URL
+            if "/" not in resolved_model:
+                resolved_model = f"openai/{resolved_model}"
+        kwargs["model"] = resolved_model
         if temperature is not None:
             kwargs["temperature"] = temperature
         if response_format is not None:

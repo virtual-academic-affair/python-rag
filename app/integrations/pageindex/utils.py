@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import os
+import re
 import textwrap
 import time
 from datetime import datetime
@@ -25,18 +26,29 @@ def count_tokens(text, model=None):
     return litellm.token_counter(model=model, text=text)
 
 
+def _resolve_model_and_kwargs(model: str | None) -> tuple[str, dict[str, str]]:
+    resolved = (model or settings.LLM_MODEL).removeprefix("litellm/")
+    kwargs: dict[str, str] = {}
+    if settings.LLM_BASE_URL:
+        kwargs["api_base"] = settings.LLM_BASE_URL
+        if "/" not in resolved:
+            resolved = f"openai/{resolved}"
+    return resolved, kwargs
+
+
 def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
-    if model:
-        model = model.removeprefix("litellm/")
+    resolved_model, extra_kwargs = _resolve_model_and_kwargs(model)
     max_retries = 10
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
             response = litellm.completion(
-                model=model,
+                model=resolved_model,
                 messages=messages,
                 api_key=settings.LLM_API_KEY,
                 temperature=0,
+                timeout=settings.LLM_TIMEOUT_SECONDS,
+                **extra_kwargs,
             )
             content = response.choices[0].message.content
             if return_finish_reason:
@@ -57,17 +69,18 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
 
 
 async def llm_acompletion(model, prompt):
-    if model:
-        model = model.removeprefix("litellm/")
+    resolved_model, extra_kwargs = _resolve_model_and_kwargs(model)
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
             response = await litellm.acompletion(
-                model=model,
+                model=resolved_model,
                 messages=messages,
                 api_key=settings.LLM_API_KEY,
                 temperature=0,
+                timeout=settings.LLM_TIMEOUT_SECONDS,
+                **extra_kwargs,
             )
             return response.choices[0].message.content
         except Exception as e:

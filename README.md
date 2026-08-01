@@ -102,6 +102,7 @@ Các biến bắt buộc hoặc thường dùng:
 
 - `LLM_API_KEY`: API key của provider trong `LLM_MODEL`.
 - `LLM_MODEL`: tên model có provider prefix, mặc định `gemini/gemini-2.5-flash`.
+- `LLM_BASE_URL`: không bắt buộc; base URL của gateway tương thích OpenAI. Khi đặt giá trị này, model không có provider prefix sẽ tự dùng prefix `openai/`; để trống thì LiteLLM route theo provider prefix của `LLM_MODEL`.
 - `MONGODB_URL`, `MONGODB_DB_NAME`.
 - `LLAMA_CLOUD_API_KEY` cho ingestion.
 - `R2_ENDPOINT`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME`.

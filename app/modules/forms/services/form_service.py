@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import re
 from typing import List, Optional
 
 from app.modules.forms.dtos import FormImportRow
@@ -75,6 +76,23 @@ class FormService:
                 count += 1
         return count
 
+    async def get_email_contacts_text(self) -> str:
+        """Retrieve form items where contentLink contains '@' and format as 'Type: email'."""
+        try:
+            items, _ = await self._repo.list_forms(skip=0, limit=100)
+            contacts = []
+            for item in items:
+                link = item.contentLink or ""
+                if "@" in link:
+                    clean_link = re.sub(r"<[^>]+>", "", link).strip()
+                    clean_type = re.sub(r":$", "", (item.documentType or "").strip()).strip()
+                    if clean_type and clean_link:
+                        contacts.append(f"{clean_type}: {clean_link}")
+            return ", ".join(contacts)
+        except Exception as e:
+            logger.warning("Failed to fetch email contacts from forms database: %s", e)
+            return ""
+
 async def get_form_service() -> FormService:
     global _form_service_instance, _form_service_lock
     if _form_service_instance is None:
@@ -82,3 +100,4 @@ async def get_form_service() -> FormService:
             if _form_service_instance is None:
                 _form_service_instance = FormService()
     return _form_service_instance
+

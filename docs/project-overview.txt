@@ -453,7 +453,7 @@ Danh sách method/path đầy đủ nằm trong docs/api.txt.
 
 Application/LLM:
 - APP_NAME, APP_VERSION, DEBUG, LOG_LEVEL
-- LLM_API_KEY, LLM_MODEL
+- LLM_API_KEY, LLM_MODEL, LLM_BASE_URL (optional OpenAI-compatible gateway; model không có provider prefix sẽ dùng `openai/`)
 - LLM_TIMEOUT_SECONDS, LLM_MAX_ATTEMPTS
 - LLM_DETERMINISTIC_TEMPERATURE, LLM_DIRECT_REPLY_TEMPERATURE
 
