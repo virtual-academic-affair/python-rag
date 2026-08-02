@@ -5,7 +5,7 @@ Version `5.0.0`. Service này xử lý email nghiệp vụ giáo vụ, quản l�
 ## Chức năng chính
 
 - Email automation: nhận message từ RabbitMQ, phân loại `classRegistration | inquiry`, trích xuất payload và gọi workflow gRPC khi được bật.
-- File ingestion: lưu file gốc trên R2, dùng LlamaParse tạo Markdown, PageIndex tạo TOC/description và CorpusLinker gán tài liệu vào cây chủ đề.
+- File ingestion: quy trình 2 phase — Phase 1 (LlamaParse bóc tách PDF thành Markdown draft, chuyển status `awaiting_review`), Admin xem/chỉnh sửa draft qua API `/ocr-review` và approve, Phase 2 (PageIndex tạo TOC/description và CorpusLinker gán tài liệu vào cây chủ đề, chuyển status `ready`).
 - RAG query: phân tích câu hỏi, duyệt Corpus Tree, thử trả lời bằng FAQ trước; chỉ hydrate/rerank file và chạy PageIndex agent khi FAQ chưa đủ.
 - Chat: non-stream, SSE stream, session/message persistence, archive/unarchive/rename/delete và `faqRecommendation` để frontend prefill form tạo FAQ thủ công.
 - Catalog: FAQ CRUD/import, Forms CRUD/import, file soft-delete/restore/purge và Corpus admin APIs.

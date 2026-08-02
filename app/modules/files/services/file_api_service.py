@@ -298,6 +298,8 @@ class FileApiService:
 
     @staticmethod
     def to_file_list_item_response(file_doc) -> FileListItemResponse:
+        file_status = file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status)
+        is_ready = file_status == FileStatus.READY.value
         return FileListItemResponse(
             file_id=str(file_doc.id),
             original_filename=file_doc.original_filename,
@@ -305,11 +307,11 @@ class FileApiService:
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
-            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+            status=file_status,
             lecturer_only=bool(file_doc.lecturer_only),
             custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
-            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if is_ready and file_doc.markdown_storage_path else None,
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
             deleted_at=file_doc.deleted_at.isoformat() if getattr(file_doc, "deleted_at", None) else None,
@@ -318,6 +320,8 @@ class FileApiService:
 
     @staticmethod
     def to_file_detail_response(file_doc) -> FileDetailResponse:
+        file_status = file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status)
+        is_ready = file_status == FileStatus.READY.value
         return FileDetailResponse(
             file_id=str(file_doc.id),
             original_filename=file_doc.original_filename,
@@ -325,12 +329,13 @@ class FileApiService:
             file_size=file_doc.file_size,
             mime_type=file_doc.mime_type,
             storage_path=file_doc.storage_path,
-            status=file_doc.status.value if hasattr(file_doc.status, "value") else str(file_doc.status),
+            status=file_status,
             lecturer_only=file_doc.lecturer_only,
             custom_metadata=FileMetadataResponse.from_model(file_doc.custom_metadata) if file_doc.custom_metadata else None,
             file_url=get_download_url(file_doc.storage_path),
-            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if file_doc.markdown_storage_path else None,
+            markdown_file_url=get_download_url(file_doc.markdown_storage_path) if is_ready and file_doc.markdown_storage_path else None,
             table_of_contents=file_doc.table_of_contents,
+            ocr_page_count=getattr(file_doc, "ocr_page_count", None),
             created_at=file_doc.created_at.isoformat() if file_doc.created_at else "",
             updated_at=file_doc.updated_at.isoformat() if file_doc.updated_at else "",
             deleted_at=file_doc.deleted_at.isoformat() if getattr(file_doc, "deleted_at", None) else None,
@@ -338,12 +343,24 @@ class FileApiService:
         )
 
     async def process_background_task(self, task: FileBackgroundTask) -> None:
-        await self._file_service.process_file_background(
+        await self._file_service.process_ocr_background(
             file_id=task.file_id,
             file_path=task.file_path,
             display_name=task.display_name,
             custom_metadata=task.custom_metadata,
             progress_callback=task.progress_callback,
+        )
+
+    async def process_indexing_task(
+        self,
+        file_id: str,
+        display_name: str,
+        progress_callback=None,
+    ) -> None:
+        await self._file_service.process_indexing_background(
+            file_id=file_id,
+            display_name=display_name,
+            progress_callback=progress_callback,
         )
 
     @staticmethod

@@ -27,6 +27,7 @@ class FileListItemResponse(FileResponseBase):
 
 class FileDetailResponse(FileResponseBase):
     table_of_contents: List[str] = Field(default_factory=list)
+    ocr_page_count: Optional[int] = None
 
 class BulkDeleteResponse(BaseSchema):
     deleted_count: int

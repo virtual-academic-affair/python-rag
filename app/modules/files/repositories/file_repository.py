@@ -60,6 +60,87 @@ class FileRepository(BeanieRepository[FileDocument]):
             FileDocument.deleted_at == None,
         )
 
+    async def claim_ocr_start(self, file_id: str) -> Optional[FileDocument]:
+        if not ObjectId.is_valid(str(file_id)):
+            return None
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().find_one_and_update(
+            {"_id": ObjectId(file_id), "status": FileStatus.UPLOADING.value, "deleted_at": None},
+            {"$set": {"status": FileStatus.PROCESSING.value, "updated_at": now}},
+            return_document=True,
+        )
+        if not result:
+            return None
+        return FileDocument.model_validate(result)
+
+    async def mark_awaiting_review(
+        self,
+        file_id: str,
+        markdown_storage_path: str,
+        page_count: int,
+    ) -> Optional[FileDocument]:
+        if not ObjectId.is_valid(str(file_id)):
+            return None
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().find_one_and_update(
+            {"_id": ObjectId(file_id), "status": FileStatus.PROCESSING.value, "deleted_at": None},
+            {
+                "$set": {
+                    "status": FileStatus.AWAITING_REVIEW.value,
+                    "markdown_storage_path": markdown_storage_path,
+                    "ocr_page_count": page_count,
+                    "ocr_completed_at": now,
+                    "updated_at": now,
+                }
+            },
+            return_document=True,
+        )
+        if not result:
+            return None
+        return FileDocument.model_validate(result)
+
+    async def claim_for_indexing(self, file_id: str) -> Optional[FileDocument]:
+        if not ObjectId.is_valid(str(file_id)):
+            return None
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().find_one_and_update(
+            {"_id": ObjectId(file_id), "status": FileStatus.AWAITING_REVIEW.value, "deleted_at": None},
+            {"$set": {"status": FileStatus.PROCESSING.value, "updated_at": now}},
+            return_document=True,
+        )
+        if not result:
+            return None
+        return FileDocument.model_validate(result)
+
+    async def mark_back_to_review(self, file_id: str, error: str) -> Optional[FileDocument]:
+        if not ObjectId.is_valid(str(file_id)):
+            return None
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().find_one_and_update(
+            {"_id": ObjectId(file_id), "deleted_at": None},
+            {
+                "$set": {
+                    "status": FileStatus.AWAITING_REVIEW.value,
+                    "last_processing_error": error,
+                    "updated_at": now,
+                }
+            },
+            return_document=True,
+        )
+        if not result:
+            return None
+        return FileDocument.model_validate(result)
+
+    async def mark_rejected(self, file_id: str) -> bool:
+        if not ObjectId.is_valid(str(file_id)):
+            return False
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().update_one(
+            {"_id": ObjectId(file_id), "status": FileStatus.AWAITING_REVIEW.value, "deleted_at": None},
+            {"$set": {"status": FileStatus.FAILED.value, "updated_at": now}},
+        )
+        return result.modified_count == 1
+
     async def mark_processing(self, file_id: str) -> Optional[FileDocument]:
         doc = await self.find_by_id(file_id)
         if not doc:
@@ -82,14 +163,29 @@ class FileRepository(BeanieRepository[FileDocument]):
         markdown_file_size: int,
         table_of_contents: list,
     ) -> Optional[FileDocument]:
-        doc = await self.find_not_ready_by_id(file_id)
-        if not doc:
+        if not ObjectId.is_valid(str(file_id)):
             return None
-        doc.markdown_storage_path = markdown_storage_path
-        doc.markdown_file_size = markdown_file_size
-        doc.table_of_contents = table_of_contents
-        doc.status = FileStatus.READY
-        return await self.save(doc)
+        now = datetime.now(timezone.utc)
+        result = await FileDocument.get_motor_collection().find_one_and_update(
+            {
+                "_id": ObjectId(file_id),
+                "status": FileStatus.PROCESSING.value,
+                "deleted_at": None,
+            },
+            {
+                "$set": {
+                    "markdown_storage_path": markdown_storage_path,
+                    "markdown_file_size": markdown_file_size,
+                    "table_of_contents": table_of_contents,
+                    "status": FileStatus.READY.value,
+                    "updated_at": now,
+                }
+            },
+            return_document=True,
+        )
+        if not result:
+            return None
+        return FileDocument.model_validate(result)
 
     async def list_files(
         self,

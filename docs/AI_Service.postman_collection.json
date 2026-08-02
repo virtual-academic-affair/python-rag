@@ -943,6 +943,71 @@
             "description": "Download the original uploaded file or its markdown version."
           },
           "response": []
+        },
+        {
+          "name": "Get OCR review draft",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/ocr-review",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "ocr-review"]
+            },
+            "description": "Fetch OCR markdown draft for review (must be in awaiting_review status)."
+          },
+          "response": []
+        },
+        {
+          "name": "Save OCR review draft",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"markdown\": \"# Updated Markdown Draft\\n\\nCorrected content...\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/ocr-review",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "ocr-review"]
+            },
+            "description": "Save updated OCR markdown draft (must be in awaiting_review status)."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve OCR draft for indexing",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/ocr-review/approve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "ocr-review", "approve"]
+            },
+            "description": "Approve OCR draft and start Phase 2 indexing in background."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject OCR draft",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/files/{{file_id}}/ocr-review/reject",
+              "host": ["{{base_url}}"],
+              "path": ["api", "files", "{{file_id}}", "ocr-review", "reject"]
+            },
+            "description": "Reject OCR draft and mark file as failed."
+          },
+          "response": []
         }
       ]
     },

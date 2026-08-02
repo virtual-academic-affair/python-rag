@@ -45,7 +45,7 @@ MỤC LỤC
  1. Health & Status            (2 endpoints)
  2. Email Classification       (2 endpoints)
  3. Metadata Schema APIs      (1 endpoint)  [🔒 admin / 🔒 auth]
- 4. File Management APIs       (11 endpoints) [🔒 admin / 🔒 auth]
+ 4. File Management APIs       (15 endpoints) [🔒 admin / 🔒 auth]
  5. Chat & RAG Tooling         (8 endpoints) [🔒 auth]
  6. FAQ MODULE APIs            (12 endpoints) [🔒 admin / 🔒 auth]
  7. FORMS MODULE APIs          (7 endpoints)  [🔒 admin / 🔒 auth]
@@ -53,7 +53,7 @@ MỤC LỤC
  9. Real-time Notifications    (2 websockets) [🔒 auth / 🔒 admin]
  10. Appendix: Error Codes & Formatting
 
- TỔNG: 59 REST ENDPOINTS + 2 WEBSOCKETS
+ TỔNG: 63 REST ENDPOINTS + 2 WEBSOCKETS
 
 ════════════════════════════════════════════════════════════════════════════════
                             1. HEALTH & STATUS
@@ -230,13 +230,24 @@ FILE LIST ITEM RESPONSE:
 │     "createdAt": "ISO Date"                                                  │
 │   }                                                                          │
 │                                                                              │
-│ LUỒNG XỬ LÝ (WORKFLOW):                                                      │
-│   1. FileService.upload_file_quick: Lưu tạm -> Upload R2 -> Tạo Mongo record.│
+│ LUỒNG XỬ LÝ (WORKFLOW) — 2 PHASE:                                            │
+│   1. FileService.upload_file_quick: Lưu tạm → Upload R2 → Tạo Mongo record.  │
 │   2. Trả về kết quả ngay lập tức kèm trạng thái "uploading".                 │
-│   3. Kích hoạt BackgroundTask chạy process_file_background.                  │
-│   4. Background: LlamaParse bóc tách -> PageIndex sinh TOC Tree.             │
-│   5. Hoàn tất: Sử dụng `find_one_and_update` để chuyển status sang "ready"    │
-│      nguyên tử. Chỉ khi transition thành công mới tăng bộ đếm Metadata.      │
+│   3. Kích hoạt BackgroundTask chạy process_ocr_background.                   │
+│   ─── PHASE 1 (OCR) ─────────────────────────────────────────────────────── │
+│   4. claim_ocr_start: atomic uploading → processing.                         │
+│   5. LlamaParse bóc tách PDF → Markdown draft (chưa chạy PageIndex/Corpus).  │
+│   6. Upload Markdown draft lên R2 (markdown_storage_path).                   │
+│   7. mark_awaiting_review: atomic processing → awaiting_review.              │
+│   8. WS event: review_required → admin vào duyệt qua /ocr-review endpoints.  │
+│   ─── PHASE 2 (Indexing sau khi admin approve) ─────────────────────────── │
+│   9. claim_for_indexing: atomic awaiting_review → processing.                │
+│  10. Đọc Markdown đã chỉnh sửa từ R2.                                        │
+│  11. PageIndex sinh TOC Tree; warm_doc_cache.                                 │
+│  12. CorpusLinker gán file vào Corpus topic (LLM-assisted).                  │
+│  13. mark_ready: atomic processing → ready.                                  │
+│  14. WS event: completed.                                                    │
+│  Nếu Phase 2 lỗi: file quay về awaiting_review để admin approve lại.         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -245,7 +256,7 @@ FILE LIST ITEM RESPONSE:
 │ MÔ TẢ: Liệt kê tệp tin với bộ lọc. Kết quả được lọc tự động theo role.       │
 │                                                                              │
 │ QUERY PARAMETERS:                                                            │
-│   - fileStatus: string (uploading|processing|ready|failed)                   │
+│   - fileStatus: string (uploading|processing|awaiting_review|ready|failed)    │
 │   - metadataFilter: JSON string (VD: {"enrollmentYear":{"fromYear":2020}, "type": ["ctdt"]})│
 │   - lecturerOnly: bool optional                                              │
 │   - keywords: string (Tìm theo tên tệp)                                      │
@@ -377,6 +388,59 @@ FILE LIST ITEM RESPONSE:
 │ MÔ TẢ: Xóa vĩnh viễn file đang nằm trong trash.                             │
 │ RESPONSE 204; 409 nếu file chưa được xóa mềm.                               │
 │ WORKFLOW: Corpus/PageIndex → TOC → R2 → MongoDB document cuối cùng.          │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ GET /api/files/{file_id}/ocr-review       [🔒 ADMIN]                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lấy nội dung Markdown draft OCR để admin xem / chỉnh sửa.            │
+│ CHỈ hợp lệ khi file ở trạng thái awaiting_review; 409 nếu sai trạng thái.   │
+│                                                                              │
+│ RESPONSE 200:                                                                │
+│   {                                                                          │
+│     "fileId": "67...",                                                       │
+│     "status": "awaiting_review",                                             │
+│     "markdown": "# Nội dung OCR...",                                         │
+│     "ocrPageCount": 10,                                                      │
+│     "ocrCompletedAt": "2026-08-02T05:00:00Z",                                │
+│     "lastProcessingError": null                                              │
+│   }                                                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ PUT /api/files/{file_id}/ocr-review       [🔒 ADMIN]                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Lưu bản chỉnh sửa Markdown draft OCR lên R2.                         │
+│ CHỈ hợp lệ khi file ở trạng thái awaiting_review.                           │
+│                                                                              │
+│ REQUEST BODY: { "markdown": "# Nội dung đã chỉnh..." }                       │
+│ GIỚI HẠN: Markdown body không được rỗng và không vượt MAX_FILE_SIZE_MB.      │
+│ RESPONSE 204 No Content.                                                     │
+│ WS event review_saved gửi cho X-Client-ID nếu truyền vào.                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/{file_id}/ocr-review/approve [🔒 ADMIN]                       │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Duyệt OCR draft và kích hoạt Phase 2 (indexing) ở background.        │
+│ Atomic claim ngăn double-approve: lần 2 trả 409 ngay.                        │
+│                                                                              │
+│ RESPONSE 202 Accepted: FileDetailResponse với status="processing".           │
+│ WORKFLOW:                                                                    │
+│   1. claim_for_indexing (atomic awaiting_review → processing).               │
+│   2. Đăng ký process_indexing_background vào BackgroundTask.                 │
+│   3. Trả FileDetailResponse ngay (background chạy PageIndex/Corpus/ready).  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ POST /api/files/{file_id}/ocr-review/reject [🔒 ADMIN]                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ MÔ TẢ: Từ chối OCR draft — chuyển file sang trạng thái failed và xóa draft. │
+│ CHỈ hợp lệ khi file ở trạng thái awaiting_review.                           │
+│                                                                              │
+│ REQUEST BODY: (không cần body)                                               │
+│ RESPONSE 204 No Content.                                                     │
+│ WORKFLOW: mark_rejected (→ failed) → xóa markdown_storage_path best-effort. │
 └──────────────────────────────────────────────────────────────────────────────┘
 
 

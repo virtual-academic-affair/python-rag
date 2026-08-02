@@ -121,6 +121,9 @@ class FileService(FileUploadMixin):
                 raise ConflictException("Markdown artifact is missing")
             if not toc_tree:
                 raise ConflictException("TOC tree artifact is missing")
+        elif file_doc.status == FileStatus.AWAITING_REVIEW:
+            if not file_doc.markdown_storage_path or not await r2_storage.file_exists(file_doc.markdown_storage_path):
+                raise ConflictException("OCR draft artifact is missing")
 
         reindexed = False
         try:

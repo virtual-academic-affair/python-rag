@@ -33,6 +33,99 @@ class IngestionService:
         self._toc_repo = FileTocTreeRepository()
         self._corpus_linker = get_corpus_linker()
 
+    async def parse_ocr_draft(
+        self,
+        *,
+        file_id: str,
+        display_name: str,
+        file_path: str,
+        original_storage_path: str,
+    ) -> tuple[str, int]:
+        """Phase 1 of ingestion: parse PDF with LlamaParse to Markdown and upload draft to R2."""
+        markdown_storage_path = original_storage_path.rsplit(".", 1)[0] + ".md"
+        try:
+            markdown_content, page_count = await self._document_parser.parse_to_markdown(
+                file_id=file_id,
+                file_name=display_name,
+                file_path=file_path,
+            )
+            markdown_bytes = markdown_content.encode("utf-8")
+
+            await r2_storage.upload_file(
+                file=io.BytesIO(markdown_bytes),
+                object_name=markdown_storage_path,
+                content_type="text/markdown; charset=utf-8",
+            )
+            return markdown_storage_path, page_count
+        finally:
+            await self._cleanup_local_artifacts(file_id)
+
+    async def index_approved_markdown(
+        self,
+        *,
+        file_id: str,
+        display_name: str,
+        original_storage_path: str,
+    ) -> FileIngestionResult:
+        """Phase 2 of ingestion: read approved Markdown draft, build TOC, warm cache, and index Corpus."""
+        from app.modules.files.toc_tree.models.toc_tree import TocTreeUpsertData
+        from app.integrations.pageindex.client import get_page_index_client
+
+        markdown_storage_path = original_storage_path.rsplit(".", 1)[0] + ".md"
+
+        try:
+            markdown_buf = await r2_storage.download_file(markdown_storage_path)
+            markdown_bytes = markdown_buf.read()
+            markdown_content = markdown_bytes.decode("utf-8")
+
+            toc_result = await self._document_parser.build_toc(file_id, display_name, markdown_content)
+
+            await self._toc_repo.upsert_by_file_id(
+                file_id,
+                TocTreeUpsertData(
+                    doc_name=display_name,
+                    doc_description=toc_result.get("summary", ""),
+                    line_count=toc_result.get("line_count", 0),
+                    structure=toc_result.get("toc_structure", []),
+                    markdown_storage_path=markdown_storage_path,
+                ),
+            )
+
+            await get_page_index_client().warm_doc_cache(
+                doc_id=file_id,
+                doc_name=display_name,
+                doc_description=toc_result.get("summary", ""),
+                line_count=toc_result.get("line_count", 0),
+                structure=toc_result.get("toc_structure", []),
+                markdown_storage_path=markdown_storage_path,
+            )
+            await get_rag_cache_service().invalidate_file(file_id)
+
+            logger.info(f"[Corpus] Bắt đầu index file {file_id} ('{display_name}') vào corpus tree")
+            node_keys = await self._corpus_linker.index_file(
+                file_id,
+                display_name=display_name,
+                doc_description=toc_result.get("summary", "") or "",
+                toc_headings=toc_result.get("table_of_contents", []),
+            )
+            if not node_keys:
+                raise ValueError("LLM could not assign the file to any node in the corpus catalog.")
+
+            logger.info(
+                f"[Corpus] Index file {file_id} xong — gán vào {len(node_keys)} node: {node_keys}"
+            )
+
+            return FileIngestionResult(
+                markdown_storage_path=markdown_storage_path,
+                markdown_file_size=len(markdown_bytes),
+                table_of_contents=toc_result.get("table_of_contents", []),
+                summary=toc_result.get("summary", ""),
+                line_count=toc_result.get("line_count", 0),
+                node_keys=node_keys,
+            )
+        finally:
+            await self._cleanup_local_artifacts(file_id)
+
     async def ingest_file(
         self,
         *,

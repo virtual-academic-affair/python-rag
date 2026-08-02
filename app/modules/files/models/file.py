@@ -11,6 +11,7 @@ from pymongo import IndexModel, ASCENDING, DESCENDING
 class FileStatus(str, Enum):
     UPLOADING = "uploading"
     PROCESSING = "processing"
+    AWAITING_REVIEW = "awaiting_review"
     READY = "ready"
     FAILED = "failed"
 
@@ -30,6 +31,7 @@ class FileListProjection(BaseModel):
     status: FileStatus
     lecturer_only: bool = False
     custom_metadata: Optional[FileMetadata] = None
+    ocr_page_count: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
@@ -47,6 +49,10 @@ class FileDocument(BaseDocument):
     mime_type: str = Field(..., description="MIME type")
     markdown_storage_path: Optional[str] = Field(None, description="Path of generated markdown file in R2")
     markdown_file_size: Optional[int] = Field(None, description="Generated markdown file size in bytes")
+
+    ocr_completed_at: Optional[datetime] = Field(None, description="Timestamp when OCR phase completed")
+    ocr_page_count: Optional[int] = Field(None, description="Number of pages parsed by OCR")
+    last_processing_error: Optional[str] = Field(None, description="Last error during processing/indexing")
 
     custom_metadata: Optional[FileMetadata] = Field(
         default=None,

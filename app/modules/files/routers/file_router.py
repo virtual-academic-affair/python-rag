@@ -17,9 +17,12 @@ from app.modules.files.dtos import (
     FileListResponse,
     FileUploadRequest,
     FileUploadResponse,
+    OcrReviewResponse,
+    OcrReviewUpdateRequest,
     UpdateFileRequest,
 )
 from app.modules.files.services.file_api_service import get_file_api_service
+from app.modules.files.services.ocr_review_service import get_ocr_review_service
 
 logger = logging.getLogger(__name__)
 
@@ -250,3 +253,97 @@ async def purge_file(file_id: str, _admin: JWTPayload = Depends(require_admin)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{file_id}/ocr-review",
+    response_model=OcrReviewResponse,
+    summary="Get OCR draft review data",
+)
+async def get_ocr_review(file_id: str, _admin: JWTPayload = Depends(require_admin)):
+    try:
+        return await get_ocr_review_service().get_review(file_id)
+    except HTTPException:
+        raise
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.put(
+    "/{file_id}/ocr-review",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Save edited OCR draft",
+)
+async def save_ocr_review(
+    file_id: str,
+    body: OcrReviewUpdateRequest,
+    request: Request,
+    _admin: JWTPayload = Depends(require_admin),
+):
+    try:
+        client_id = request.headers.get("X-Client-ID")
+        await get_ocr_review_service().save_draft(file_id, body.markdown, client_id=client_id)
+        return
+    except HTTPException:
+        raise
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{file_id}/ocr-review/approve",
+    response_model=FileDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Approve OCR draft and start indexing",
+)
+async def approve_ocr_review(
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    _admin: JWTPayload = Depends(require_admin),
+):
+    try:
+        claimed_doc = await get_ocr_review_service().approve(file_id)
+        client_id = request.headers.get("X-Client-ID")
+
+        async def _progress_cb(data: dict):
+            if client_id:
+                from app.modules.files.utils.notifier import get_file_status_notifier
+                await get_file_status_notifier().notify(client_id, data)
+
+        background_tasks.add_task(
+            get_file_api_service().process_indexing_task,
+            file_id=file_id,
+            display_name=claimed_doc.display_name,
+            progress_callback=_progress_cb if client_id else None,
+        )
+
+        return get_file_api_service().to_file_detail_response(claimed_doc)
+    except HTTPException:
+        raise
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{file_id}/ocr-review/reject",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Reject OCR draft and mark file as failed",
+)
+async def reject_ocr_review(file_id: str, _admin: JWTPayload = Depends(require_admin)):
+    try:
+        await get_ocr_review_service().reject(file_id)
+        return
+    except HTTPException:
+        raise
+    except AppException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+

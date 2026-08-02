@@ -82,19 +82,58 @@ async def test_find_file_ids_for_corpus_privileged_roles_include_both_visibility
 
 
 @pytest.mark.asyncio
-async def test_process_file_background_uses_ingestion_service_and_marks_ready():
+async def test_process_ocr_background_parses_to_awaiting_review():
     svc = FileService.__new__(FileService)
     doc = _make_file(storage_path="uploads/file.pdf")
     repo = MagicMock()
-    repo.find_by_id = AsyncMock(return_value=doc)
-    repo.mark_processing = AsyncMock()
-    repo.mark_ready = AsyncMock(return_value=doc)
+    repo.claim_ocr_start = AsyncMock(return_value=doc)
+    repo.mark_awaiting_review = AsyncMock(return_value=doc)
     repo.mark_failed = AsyncMock()
     repo.find_by_id_including_deleted = AsyncMock(return_value=doc)
     svc._file_repo = repo
 
     ingestion = MagicMock()
-    ingestion.ingest_file = AsyncMock(return_value=FileIngestionResult(
+    ingestion.parse_ocr_draft = AsyncMock(return_value=("uploads/file.md", 5))
+
+    with patch(
+        "app.modules.files.services.file_upload_service.get_ingestion_service",
+        return_value=ingestion,
+    ), patch("app.modules.files.services.file_upload_service.cleanup_temp_file") as cleanup_temp:
+        await svc.process_ocr_background(
+            file_id="file1",
+            file_path="/tmp/file.pdf",
+            display_name="Tài liệu",
+            custom_metadata={"ignored": True},
+        )
+
+    ingestion.parse_ocr_draft.assert_awaited_once_with(
+        file_id="file1",
+        display_name="Tài liệu",
+        file_path="/tmp/file.pdf",
+        original_storage_path="uploads/file.pdf",
+    )
+    repo.mark_awaiting_review.assert_awaited_once_with(
+        file_id="file1",
+        markdown_storage_path="uploads/file.md",
+        page_count=5,
+    )
+    repo.mark_failed.assert_not_awaited()
+    cleanup_temp.assert_called_once_with("/tmp/file.pdf")
+
+
+@pytest.mark.asyncio
+async def test_process_indexing_background_indexes_markdown_and_marks_ready():
+    svc = FileService.__new__(FileService)
+    doc = _make_file(storage_path="uploads/file.pdf")
+    repo = MagicMock()
+    repo.find_by_id = AsyncMock(return_value=doc)
+    repo.mark_ready = AsyncMock(return_value=doc)
+    repo.mark_back_to_review = AsyncMock()
+    repo.find_by_id_including_deleted = AsyncMock(return_value=doc)
+    svc._file_repo = repo
+
+    ingestion = MagicMock()
+    ingestion.index_approved_markdown = AsyncMock(return_value=FileIngestionResult(
         markdown_storage_path="uploads/file.md",
         markdown_file_size=42,
         table_of_contents=["Mục 1"],
@@ -107,18 +146,18 @@ async def test_process_file_background_uses_ingestion_service_and_marks_ready():
     with patch(
         "app.modules.files.services.file_upload_service.get_ingestion_service",
         return_value=ingestion,
-    ), patch("app.modules.files.services.file_upload_service.cleanup_temp_file") as cleanup_temp:
-        await svc.process_file_background(
+    ), patch(
+        "app.modules.files.services.file_upload_service.get_rag_cache_service",
+        return_value=MagicMock(invalidate_file=AsyncMock(), bump_file_eligibility_revision=AsyncMock()),
+    ):
+        await svc.process_indexing_background(
             file_id="file1",
-            file_path="/tmp/file.pdf",
             display_name="Tài liệu",
-            custom_metadata={"ignored": True},
         )
 
-    ingestion.ingest_file.assert_awaited_once_with(
+    ingestion.index_approved_markdown.assert_awaited_once_with(
         file_id="file1",
         display_name="Tài liệu",
-        file_path="/tmp/file.pdf",
         original_storage_path="uploads/file.pdf",
     )
     repo.mark_ready.assert_awaited_once_with(
@@ -127,44 +166,3 @@ async def test_process_file_background_uses_ingestion_service_and_marks_ready():
         markdown_file_size=42,
         table_of_contents=["Mục 1"],
     )
-    ingestion.cleanup_file_artifacts.assert_not_awaited()
-    repo.mark_failed.assert_not_awaited()
-    cleanup_temp.assert_called_once_with("/tmp/file.pdf")
-
-
-@pytest.mark.asyncio
-async def test_process_file_background_cleans_ingestion_artifacts_on_failure():
-    svc = FileService.__new__(FileService)
-    doc = _make_file(storage_path="uploads/file.pdf")
-    repo = MagicMock()
-    repo.find_by_id = AsyncMock(return_value=doc)
-    repo.mark_processing = AsyncMock()
-    repo.mark_ready = AsyncMock()
-    repo.mark_failed = AsyncMock()
-    repo.find_by_id_including_deleted = AsyncMock(return_value=doc)
-    svc._file_repo = repo
-
-    ingestion = MagicMock()
-    ingestion.ingest_file = AsyncMock(side_effect=RuntimeError("ingestion failed"))
-    ingestion.cleanup_file_artifacts = AsyncMock()
-
-    with patch(
-        "app.modules.files.services.file_upload_service.get_ingestion_service",
-        return_value=ingestion,
-    ), patch("app.modules.files.services.file_upload_service.cleanup_temp_file") as cleanup_temp:
-        await svc.process_file_background(
-            file_id="file1",
-            file_path="/tmp/file.pdf",
-            display_name="Tài liệu",
-        )
-
-    ingestion.ingest_file.assert_awaited_once_with(
-        file_id="file1",
-        display_name="Tài liệu",
-        file_path="/tmp/file.pdf",
-        original_storage_path="uploads/file.pdf",
-    )
-    ingestion.cleanup_file_artifacts.assert_awaited_once_with("file1", "uploads/file.md")
-    repo.mark_failed.assert_awaited_once_with("file1")
-    repo.mark_ready.assert_not_awaited()
-    cleanup_temp.assert_called_once_with("/tmp/file.pdf")

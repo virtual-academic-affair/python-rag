@@ -27,6 +27,25 @@ class DocumentParser:
         self._parser = get_llamaparse_client()
         self._page_index = get_page_index_client()
 
+    async def parse_to_markdown(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        file_path: str,
+    ) -> tuple[str, int]:
+        """Parse file content to Markdown via LlamaParse. Returns (markdown_content, page_count)."""
+        start_parse = time.perf_counter()
+        pages = await self._parser.parse_pdf_to_markdown(file_path)
+        markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
+        parse_dur = time.perf_counter() - start_parse
+        logger.info(f"[Ingestion] Content extraction completed in {parse_dur:.2f}s for file {file_id}")
+        return markdown_content, len(pages)
+
+    async def build_toc(self, file_id: str, file_name: str, markdown_content: str) -> dict[str, Any]:
+        """Generate TOC and Summary using PageIndex."""
+        return await self._build_toc(file_id, file_name, markdown_content)
+
     async def ingest_file(
         self,
         *,
@@ -38,11 +57,11 @@ class DocumentParser:
         start_total = time.perf_counter()
 
         # 1. Parse content to Markdown via LlamaParse
-        start_parse = time.perf_counter()
-        pages = await self._parser.parse_pdf_to_markdown(file_path)
-        markdown_content = "\n\n".join(p.markdown for p in pages if p.markdown)
-        parse_dur = time.perf_counter() - start_parse
-        logger.info(f"[Ingestion] Phase 1: Content extraction completed in {parse_dur:.2f}s")
+        markdown_content, page_count = await self.parse_to_markdown(
+            file_id=file_id,
+            file_name=file_name,
+            file_path=file_path,
+        )
 
         # 2. Build TOC/summary via PageIndex
         logger.info(f"[Ingestion] Phase 2: Building TOC/summary via PageIndex...")
@@ -53,7 +72,7 @@ class DocumentParser:
 
         return {
             "file_id": file_id,
-            "page_count": len(pages),
+            "page_count": page_count,
             "markdown_content": markdown_content,
             "table_of_contents": toc_result["table_of_contents"],
             "summary": toc_result["summary"],

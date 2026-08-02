@@ -149,18 +149,27 @@ Upload nhanh:
 3. Upload file gốc lên R2.
 4. Trả response 201 và xếp background task xử lý tiếp.
 
-Background ingestion:
-1. Chuyển status sang processing và phát progress events.
-2. LlamaParse tạo Markdown.
-3. Upload Markdown lên R2.
-4. PageIndex tạo structure, description, lineCount.
-5. Upsert FileTocTree với markdownStoragePath canonical trên R2.
-6. Warm pageindex:doc:{fileId} sau khi R2 upload và TOC upsert thành công.
-7. CorpusLinker dùng tên/description/TOC để gán topic.
-8. Cập nhật FileDocument status=ready và metadata retrieval cần thiết.
+Background ingestion (2-Phase Workflow):
+Phase 1 — OCR Parsing:
+1. claim_ocr_start: Chuyển status uploading -> processing và phát progress events.
+2. LlamaParse bóc tách PDF thành Markdown draft.
+3. Upload Markdown draft lên R2 (markdownStoragePath).
+4. mark_awaiting_review: Chuyển status processing -> awaiting_review.
+5. Phát WS event "review_required" để Admin biết file chờ duyệt.
 
-Nếu background ingestion lỗi, file chuyển failed và cleanup các artifact đã tạo
-theo best-effort.
+Phase 2 — Admin Review & Indexing:
+6. Admin gọi GET /api/files/{id}/ocr-review để xem, PUT để sửa draft nếu cần.
+7. Admin gọi POST /api/files/{id}/ocr-review/approve.
+8. claim_for_indexing: Chuyển status awaiting_review -> processing (atomic, chống race condition).
+9. Đọc Markdown draft từ R2.
+10. PageIndex tạo structure, description, lineCount và upsert FileTocTree.
+11. Warm pageindex:doc:{fileId} sau khi R2 upload và TOC upsert thành công.
+12. CorpusLinker dùng tên/description/TOC để gán topic.
+13. Cập nhật FileDocument status=ready và metadata retrieval cần thiết.
+
+Nếu Phase 1 lỗi: file chuyển sang failed.
+Nếu Admin Reject: file chuyển sang failed và xóa draft trên R2.
+Nếu Phase 2 lỗi: file quay lại awaiting_review để Admin có thể kiểm tra và approve lại.
 
 Soft delete:
 - Lưu deletedAt/deletedBy và topic assignments cũ.

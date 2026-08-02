@@ -10,6 +10,7 @@ from app.modules.files.dtos.file_out import (
     FileDetailResponse, FileListItemResponse, BulkDeleteResponse, HealthCheckResponse, ErrorResponse
 )
 from app.modules.files.dtos.list_files import FileListResponse
+from app.modules.files.dtos.ocr_review import OcrReviewResponse, OcrReviewUpdateRequest
 
 __all__ = [
     "FileUploadRequest",
@@ -26,4 +27,6 @@ __all__ = [
     "HealthCheckResponse",
     "ErrorResponse",
     "FileListResponse",
+    "OcrReviewResponse",
+    "OcrReviewUpdateRequest",
 ]
