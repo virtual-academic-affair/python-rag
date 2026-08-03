@@ -140,7 +140,7 @@ async def stream_pageindex_agent_loop(
             stream_steps.append(call_step)
             yield {"type": "call", "step": call_step, "done": False}
 
-        if not tool_calls_in_turn and turn_text_buffer and in_answer_block:
+        if not tool_calls_in_turn and turn_text_buffer:
             _pre_think, final_text = parse_agent_response(turn_text_buffer)
             if len(final_text) > yielded_text_length:
                 new_text = final_text[yielded_text_length:]

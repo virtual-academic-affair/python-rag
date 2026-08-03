@@ -63,3 +63,36 @@ async def test_stream_pageindex_agent_loop_emits_tool_text_and_final_result():
     assert final["type"] == "_agent_result"
     assert final["final_answer"] == "Câu trả lời"
     assert final["token_usage"] == {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_stream_pageindex_agent_loop_handles_text_without_answer_tags():
+    gateway = _Gateway([
+        [
+            LLMStreamChunk(text_delta="Đây là câu trả lời trực tiếp không dùng thẻ answer."),
+            LLMStreamChunk(usage=LLMUsage(1, 1, 2), finish_reason="stop"),
+        ],
+    ])
+
+    with patch(
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.get_agent_config",
+        return_value=([], {}),
+    ), patch(
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.get_llm_gateway",
+        return_value=gateway,
+    ), patch(
+        "app.modules.rag.query.answering.pageindex_agent.stream_loop.build_sources_from_steps",
+        AsyncMock(return_value=[]),
+    ):
+        events = []
+        async for event in stream_pageindex_agent_loop(
+            candidate_files=[{"file_id": "file-1", "file_name": "Quy chế", "doc_description": ""}],
+            prompt_contents=[],
+        ):
+            events.append(event)
+
+    assert any(event.get("type") == "text" and "câu trả lời trực tiếp" in event.get("content", "") for event in events)
+    final = events[-1]
+    assert final["type"] == "_agent_result"
+    assert "câu trả lời trực tiếp" in final["final_answer"]
+    assert "Hệ thống chưa tổng hợp được" not in final["final_answer"]
