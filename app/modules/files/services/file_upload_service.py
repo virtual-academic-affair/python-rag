@@ -48,7 +48,7 @@ class FileUploadMixin:
                 await progress_callback({"step": step, "message": message, "file_id": state.file_id})
 
         try:
-            await _notify("db_creating", "Đang tạo bản ghi file")
+            await _notify("db_creating", "Đang tạo bản ghi")
 
             _dn = display_name or original_filename
             file_doc = FileDocument(
@@ -68,7 +68,7 @@ class FileUploadMixin:
             state.file_id = str(file_doc.id)
             state.mark_step(UploadStep.DB_CREATED)
 
-            await _notify("uploading_original", "Đang upload file gốc lên storage")
+            await _notify("uploading_original", "Đang lưu tệp tin gốc")
             with open(file_path, "rb") as f:
                 await r2_storage.upload_file(
                     file=f,
@@ -77,7 +77,7 @@ class FileUploadMixin:
                     metadata={"file_id": state.file_id},
                 )
             state.mark_step(UploadStep.R2_UPLOADED)
-            await _notify("queued_background", "Đã lưu file lên storage, đang xử lý nền")
+            await _notify("queued_background", "Tiến hành xử lý")
 
             quick_dur = time.perf_counter() - start_quick
             logger.info(f"[Upload] Quick upload for {original_filename} (ID: {state.file_id}) completed in {quick_dur:.2f}s")
@@ -113,7 +113,7 @@ class FileUploadMixin:
             if not processing_doc:
                 raise NotFoundException("File pending upload", file_id)
 
-            await _notify("ocr_processing", "Đang xử lý OCR (LlamaParse)")
+            await _notify("ocr_processing", "Đang chuyển đổi văn bản")
             ingestion_service = get_ingestion_service()
             markdown_storage_path, page_count = await ingestion_service.parse_ocr_draft(
                 file_id=file_id,
@@ -132,7 +132,7 @@ class FileUploadMixin:
 
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] OCR processing for file {file_id} completed in {bg_dur:.2f}s")
-            await _notify("review_required", "OCR hoàn tất, chờ admin duyệt")
+            await _notify("review_required", "Cần kiểm tra văn bản đã chuyển đổi")
         except Exception as e:
             logger.error(f"OCR background processing failed for file {file_id}: {e}", exc_info=True)
             if markdown_storage_path:
@@ -142,10 +142,10 @@ class FileUploadMixin:
                     pass
             current_doc = await self.file_repo.find_by_id_including_deleted(file_id)
             if current_doc and current_doc.deleted_at is not None:
-                await _notify("deleted", "Tệp đã bị xóa trong khi đang xử lý")
+                await _notify("deleted", "Tệp đã bị xóa khi đang chuyển đổi")
             else:
                 await self.file_repo.mark_failed(file_id)
-                await _notify("failed", f"Xử lý OCR thất bại: {str(e)}")
+                await _notify("failed", f"Xử lý chuyển đổi thất bại: {str(e)}")
         finally:
             cleanup_temp_file(file_path)
 
@@ -167,7 +167,7 @@ class FileUploadMixin:
             if not file_doc:
                 raise NotFoundException("File", file_id)
 
-            await _notify("indexing", "Đang index RAG, tạo TOC và Corpus link")
+            await _notify("indexing", "Đang bổ sung vào kho tri thức")
             ingestion_service = get_ingestion_service()
             ingest_result = await ingestion_service.index_approved_markdown(
                 file_id=file_id,
@@ -190,17 +190,17 @@ class FileUploadMixin:
 
             bg_dur = time.perf_counter() - start_bg
             logger.info(f"[Upload] Indexing background for file {file_id} completed in {bg_dur:.2f}s")
-            await _notify("completed", "Index RAG hoàn tất")
+            await _notify("completed", "Bổ sung vào kho tri thức thành công")
         except Exception as e:
             logger.error(f"Indexing background failed for file {file_id}: {e}", exc_info=True)
             if ingestion_service:
                 await ingestion_service.cleanup_file_artifacts(file_id, markdown_storage_path=None)
             current_doc = await self.file_repo.find_by_id_including_deleted(file_id)
             if current_doc and current_doc.deleted_at is not None:
-                await _notify("deleted", "Tệp đã bị xóa trong khi đang xử lý")
+                await _notify("deleted", "Tệp đã bị xóa khi đang xử lý")
             else:
                 await self.file_repo.mark_back_to_review(file_id, str(e))
-                await _notify("failed", f"Index RAG thất bại: {str(e)}")
+                await _notify("failed", f"Bổ sung vào kho tri thức thất bại: {str(e)}")
 
     async def _prepare_upload_state(
         self,
