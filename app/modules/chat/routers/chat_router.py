@@ -111,12 +111,12 @@ async def chat_query(
     except APIError as exc:
         ai_code = getattr(exc, "code", 500)
         if ai_code == 429:
-            logger.warning("[Chat] Rate limit exceeded (429) for user %s", user.user_id)
+            logger.warning("[Chat] Rate limit exceeded (429) for user %s: %s", user.user_id, exc)
         else:
-            logger.error("[Chat] Gemini APIError (%s) for user %s: %s", ai_code, user.user_id, exc)
+            logger.error("[Chat] Gemini APIError (%s) for user %s: %s", ai_code, user.user_id, exc, exc_info=True)
         raise handle_google_api_error(exc) from exc
     except AppException as exc:
-        logger.error("[Chat] AppException during chat_query for user %s: %s", user.user_id, exc)
+        logger.error("[Chat] AppException (statusCode=%s) for user %s: %s", exc.status_code, user.user_id, exc.message, exc_info=True)
         raise
     except Exception as exc:
         logger.error(
@@ -163,12 +163,12 @@ async def chat_stream(
         except APIError as exc:
             ai_code = getattr(exc, "code", 500)
             if ai_code == 429:
-                logger.warning("[Chat-Stream] Rate limit exceeded (429) for user %s", user_context.user_id)
+                logger.warning("[Chat-Stream] Rate limit exceeded (429) for user %s: %s", user_context.user_id, exc)
             else:
-                logger.error("[Chat-Stream] Gemini APIError (%s): %s", ai_code, exc)
+                logger.error("[Chat-Stream] Gemini APIError (%s) for user %s: %s", ai_code, user_context.user_id, exc, exc_info=True)
             yield _sse_event(_stream_api_error_payload(exc, session_id))
         except AppException as exc:
-            logger.error("[Chat-Stream] AppException for user %s: %s", user_context.user_id, exc)
+            logger.error("[Chat-Stream] AppException (statusCode=%s) for user %s: %s", exc.status_code, user_context.user_id, exc.message, exc_info=True)
             yield _sse_event(_stream_app_error_payload(exc, session_id))
         except Exception as exc:
             logger.error(
